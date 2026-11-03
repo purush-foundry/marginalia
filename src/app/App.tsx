@@ -5,6 +5,7 @@ import { library, startAutoSync } from '../drive/library'
 import { fingerDraws } from '../ink/tools'
 import { Library } from '../library/Library'
 import { Onboarding } from './Onboarding'
+import { Reader } from './Reader'
 import { route } from './route'
 import { saveSettings, settings } from './settings'
 import { Settings } from './Settings'
@@ -24,7 +25,7 @@ function Screen() {
   if (auth.status === 'signed-out') return authReady.value ? <Onboarding step="connect" /> : <div class="mg-splash" />
   if (!hasLibrary || choosingRoot.value) return <Onboarding step="root" />
   const r = route.value
-  if (r.kind === 'paper') return <Library />
+  if (r.kind === 'paper') return <Reader key={r.id} pdfId={r.id} />
   return <Library folderId={r.folderId} />
 }
 
