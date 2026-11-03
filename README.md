@@ -24,19 +24,29 @@ There is no backend. The app talks to Google Drive and the Anthropic API directl
    - Scopes: add these two:
      - `https://www.googleapis.com/auth/drive.readonly` (read your papers)
      - `https://www.googleapis.com/auth/drive.file` (create and update the sidecars Marginalia writes)
-   - Publishing status: **In production** (click "Publish app"). Leaving it in Testing makes the
-     sign-in expire every 7 days. The app stays unverified, which is fine for personal use.
+   - Publishing status: **In production** (click "Publish app"); the app stays unverified, which is
+     fine for personal use. If you leave it in **Testing**, add your Google account under
+     **Test users**, or Google refuses the sign-in.
+   - Privacy policy link (if asked): `https://purush-foundry.github.io/marginalia/privacy.html`.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type **Web application**.
    - Authorized JavaScript origins:
      - `https://purush-foundry.github.io`
      - `http://localhost:5173`
+     - `http://localhost:4173` (only if you sign in from `npm run preview`)
    - Authorized redirect URIs:
      - `https://purush-foundry.github.io/marginalia/`
      - `http://localhost:5173/`
+     - `http://localhost:4173/marginalia/` (only for `npm run preview`)
+
+   Sign-in works only from an origin listed here; otherwise test against the deployed site.
 5. Copy the client id (`….apps.googleusercontent.com`). Either paste it into Marginalia's first
    screen (it is stored on that device), or set `GOOGLE_CLIENT_ID` in `src/config.ts` so every
    device gets it.
+
+**Use the same client id on every device.** `drive.file` write access belongs to the Google Cloud
+project that created a file, so a sidecar written under one OAuth client is read-only to another
+and its uploads fail ("annotation upload(s) failed").
 
 **The one-time "unverified app" screen.** The first time you connect, Google shows "Google hasn't
 verified this app". Click **Advanced → Go to Marginalia (unsafe)**, then allow the two Drive
