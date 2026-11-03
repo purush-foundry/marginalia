@@ -51,6 +51,10 @@ afterEach(() => {
 
 describe('initAuth', () => {
   test('resolves when the GIS script cannot load and reports it unavailable', async () => {
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      queueMicrotask(() => node.dispatchEvent(new Event('error')))
+      return node
+    })
     await auth.initAuth('client-1')
     expect(auth.gisAvailable.value).toBe(false)
     expect(auth.authState.value.status).toBe('signed-out')
@@ -78,6 +82,14 @@ describe('initAuth', () => {
     expect(auth.gisAvailable.value).toBe(true)
     expect(auth.authState.value).toEqual({ status: 'ok', expiresAt })
     expect(auth.getAccessToken()).toBe('cached')
+  })
+
+  test('a cached token with under 30 s left is not handed out', async () => {
+    await idb.idbSet('meta', 'token', { accessToken: 'nearly', expiresAt: Date.now() + 20_000 })
+    stubGis()
+    await auth.initAuth('client-1')
+    expect(auth.getAccessToken()).toBeNull()
+    expect(auth.authState.value.status).toBe('expired')
   })
 
   test('a cached token past its expiry shows as expired', async () => {
@@ -191,6 +203,18 @@ describe('maybeRenew', () => {
     const gis = await connectedWith(TOKEN_RENEW_MARGIN_MS + 60_000)
     auth.maybeRenew()
     expect(gis.requests).toEqual([])
+  })
+
+  test('connect replaces an in-flight silent renewal with an interactive request', async () => {
+    const gis = await connectedWith(1000)
+    auth.maybeRenew()
+    const done = auth.connect()
+    expect(gis.requests).toHaveLength(2)
+
+    gis.config!.error_callback!({ type: 'popup_failed_to_open' })
+
+    expect(new URL(location.href).origin).toBe('https://accounts.google.com')
+    void done
   })
 
   test('does not redirect away when a silent renewal popup cannot open', async () => {

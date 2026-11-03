@@ -21,8 +21,21 @@ function openDb(): Promise<IDBDatabase> {
         if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name)
       }
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      db.onclose = () => {
+        dbPromise = null
+      }
+      db.onversionchange = () => {
+        db.close()
+        dbPromise = null
+      }
+      resolve(db)
+    }
+    req.onerror = () => {
+      dbPromise = null
+      reject(req.error)
+    }
   })
   return dbPromise
 }
@@ -81,5 +94,6 @@ export async function idbGetAll<T>(store: StoreName): Promise<Array<{ key: strin
     tx.oncomplete = () =>
       resolve(keys.result.map((key, i) => ({ key: String(key), value: values.result[i] as T })))
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }

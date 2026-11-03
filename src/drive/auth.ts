@@ -19,6 +19,7 @@ const OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const STATE_KEY = 'marginalia.oauthState'
 const DEFAULT_EXPIRES_IN_S = 3600
 const GIS_LOAD_TIMEOUT_MS = 10_000
+const TOKEN_EXPIRY_SKEW_MS = 30_000
 
 export const authState = signal<AuthState>({ status: 'signed-out' })
 /** False when the GIS script could not load (typically offline). */
@@ -110,8 +111,10 @@ function redirectToGoogle(): void {
   location.assign(`${OAUTH_URL}?${params.toString().replace(/\+/g, '%20')}`)
 }
 
+// Starts a GIS token request unless one is in flight; an interactive request supersedes a silent one.
 function requestToken(interactive: boolean): void {
-  if (!tokenClient || requesting) return
+  if (!tokenClient) return
+  if (requesting && (requesting.interactive || !interactive)) return
   requesting = { interactive }
   tokenClient.requestAccessToken({ prompt: '' })
 }
@@ -153,9 +156,10 @@ export function connect(): Promise<void> {
   })
 }
 
+/** The current token, or null when absent, expired or within TOKEN_EXPIRY_SKEW_MS of expiry. */
 export function getAccessToken(): string | null {
   if (!token || authState.peek().status !== 'ok') return null
-  if (token.expiresAt <= Date.now()) {
+  if (token.expiresAt - Date.now() <= TOKEN_EXPIRY_SKEW_MS) {
     authState.value = { status: 'expired', expiresAt: token.expiresAt }
     return null
   }
