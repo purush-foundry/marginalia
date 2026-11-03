@@ -14,7 +14,7 @@ function watch(worker: ServiceWorker): void {
   })
 }
 
-/** Registers `sw.js` next to the app; never reloads on its own. */
+/** Registers `sw.js` next to the app and checks for a new one on launch and whenever the app becomes visible; never reloads on its own. */
 export async function registerServiceWorker(): Promise<void> {
   if (!('serviceWorker' in navigator)) return
   const base = import.meta.env.BASE_URL
@@ -24,6 +24,15 @@ export async function registerServiceWorker(): Promise<void> {
   registration.addEventListener('updatefound', () => {
     if (registration?.installing) watch(registration.installing)
   })
+  checkForUpdate()
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForUpdate()
+  })
+}
+
+// Asks the browser to fetch sw.js again; a changed worker then installs and raises updateReady.
+function checkForUpdate(): void {
+  registration?.update().catch(() => undefined)
 }
 
 /** Activates the waiting worker, then reloads once it takes control. */
