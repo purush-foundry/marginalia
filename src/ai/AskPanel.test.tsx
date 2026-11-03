@@ -154,6 +154,18 @@ describe('AskPanel', () => {
     expect(root.textContent).toContain('Yes.')
   })
 
+  it('shows a neutral note when Claude declines', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse(sseAnswer([], 'refusal'))))
+    const props = mount()
+
+    await vi.waitFor(() => button('Define here'))
+    button('Define here').click()
+
+    await vi.waitFor(() => expect(props.onThreadChange).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(root.querySelector('.ask-note')?.textContent).toContain('Claude declined to answer this'))
+    expect(root.querySelector('[role=alert]')).toBeNull()
+  })
+
   it('Stop keeps and saves the partial answer', async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({

@@ -87,8 +87,10 @@ function contextText(input: AskInput): string {
   const lines: string[] = []
   if (paperTitle) lines.push(`Paper: ${paperTitle}`)
   let body = pageText.text
-  if (isArea(anchor)) {
+  if (isArea(anchor) && input.crop) {
     lines.push(`Text of page ${anchor.page}. The user selected a region of this page; it is shown in the image below.`)
+  } else if (isArea(anchor)) {
+    lines.push(`Text of page ${anchor.page}. The user is asking about the selected area on p.${anchor.page}, which is not marked in this text.`)
   } else {
     const marked = markSelection(pageText.text, anchor.text!)
     if (marked) {
@@ -121,6 +123,7 @@ export function buildRequest(input: AskInput): {
   summary: { words: number; page: number; hasImage: boolean }
 } {
   const turns = alternate([...input.history, { role: 'user', content: input.question }])
+  if (turns.length === 0) throw new Error('buildRequest needs a question: both the question and the history are empty.')
   const first: ContentBlock[] = [{ type: 'text', text: contextText(input) }]
   if (input.crop) {
     first.push({ type: 'image', source: { type: 'base64', media_type: input.crop.mediaType, data: input.crop.dataBase64 } })

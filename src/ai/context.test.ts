@@ -75,6 +75,18 @@ describe('buildRequest', () => {
     expect(summary).toEqual({ words: 4, page: 4, hasImage: true })
   })
 
+  it('does not mention an image for an area anchor sent without a crop', () => {
+    const { messages, summary } = buildRequest(input({ anchor: areaAnchor, pageText: page('Equation 1 shows it.', 4) }))
+    const text = allText(messages[0].content)
+    expect(text).not.toMatch(/image/i)
+    expect(text).toContain('the selected area on p.4')
+    expect(summary.hasImage).toBe(false)
+  })
+
+  it('rejects an empty question with no history', () => {
+    expect(() => buildRequest(input({ question: '  ' }))).toThrow(/question/i)
+  })
+
   it('has no image block for text anchors and counts the page words', () => {
     const { messages, summary } = buildRequest(input())
     expect(blocks(messages[0].content).some((b) => b.type === 'image')).toBe(false)

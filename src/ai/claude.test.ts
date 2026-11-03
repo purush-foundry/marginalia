@@ -94,7 +94,7 @@ describe('streamMessage', () => {
     expect(calls[0].url).toBe('https://api.anthropic.com/v1/messages')
     const headers = calls[0].init.headers as Record<string, string>
     expect(headers['x-api-key']).toBe('sk-ant-test')
-    expect(headers['anthropic-version']).toBeTruthy()
+    expect(headers['anthropic-version']).toBe('2026-10-21')
     expect(headers['anthropic-dangerous-direct-browser-access']).toBe('true')
     expect(headers['content-type']).toBe('application/json')
     const body = JSON.parse(calls[0].init.body as string)
@@ -104,8 +104,50 @@ describe('streamMessage', () => {
       stream: true,
       system: 'Be brief.',
       messages: [{ role: 'user', content: 'Hi' }],
+      output_config: { effort: 'low' },
     })
+    expect(headers['anthropic-beta']).toBeUndefined()
     expect(calls[0].url).not.toContain('sk-ant-test')
+  })
+
+  it('defaults max_tokens to at least 8192', async () => {
+    const calls = mockFetch(() => streamResponse([textAnswer(['ok'])]))
+    await drain(streamMessage(base))
+    expect(JSON.parse(calls[0].init.body as string).max_tokens).toBeGreaterThanOrEqual(8192)
+  })
+
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5'])('asks %s for medium effort with the server-side refusal fallback', async (model) => {
+    const calls = mockFetch(() => streamResponse([textAnswer(['ok'])]))
+    await drain(streamMessage({ ...base, model }))
+    const body = JSON.parse(calls[0].init.body as string)
+    expect(body.output_config).toEqual({ effort: 'medium' })
+    expect(body.fallbacks).toBe('default')
+    expect((calls[0].init.headers as Record<string, string>)['anthropic-beta']).toBe('server-side-fallback-2026-07-01')
+  })
+
+  it('sends medium effort and no fallback for other models', async () => {
+    const calls = mockFetch(() => streamResponse([textAnswer(['ok'])]))
+    await drain(streamMessage({ ...base, model: 'claude-fable-5-1' }))
+    const body = JSON.parse(calls[0].init.body as string)
+    expect(body.output_config).toEqual({ effort: 'medium' })
+    expect(body.fallbacks).toBeUndefined()
+    expect((calls[0].init.headers as Record<string, string>)['anthropic-beta']).toBeUndefined()
+  })
+
+  it('throws ClaudeError on a malformed event payload', async () => {
+    mockFetch(() => streamResponse(['event: content_block_delta\ndata: {"type":"content_block_delta",\n\n']))
+    await expect(drain(streamMessage(base))).rejects.toBeInstanceOf(ClaudeError)
+  })
+
+  it('throws ClaudeError when the body fails mid-stream for a reason other than abort', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new TypeError('network changed'))
+      },
+    })
+    mockFetch(() => ({ ok: true, status: 200, body, text: async () => '' }) as unknown as Response)
+    const err = await drain(streamMessage(base)).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ClaudeError)
   })
 
   it('throws ClaudeError with status and type on a 401', async () => {
@@ -169,17 +211,28 @@ describe('streamMessage', () => {
 })
 
 describe('checkApiKey', () => {
-  it('reports ok for an accepted key without sending it in the URL', async () => {
-    const calls = mockFetch(() => ({ ok: true, status: 200, text: async () => '{}' }) as unknown as Response)
+  it('counts tokens for one short message and reports ok, without the key in the URL', async () => {
+    const calls = mockFetch(() => ({ ok: true, status: 200, text: async () => '{"input_tokens":8}' }) as unknown as Response)
     expect(await checkApiKey('sk-ant-good')).toEqual({ ok: true })
+    expect(calls[0].url).toBe('https://api.anthropic.com/v1/messages/count_tokens')
     expect(calls[0].url).not.toContain('sk-ant-good')
-    expect((calls[0].init.headers as Record<string, string>)['x-api-key']).toBe('sk-ant-good')
+    expect(calls[0].init.method).toBe('POST')
+    const headers = calls[0].init.headers as Record<string, string>
+    expect(headers['x-api-key']).toBe('sk-ant-good')
+    expect(headers['anthropic-dangerous-direct-browser-access']).toBe('true')
+    const body = JSON.parse(calls[0].init.body as string)
+    expect(body.model).toBe('claude-haiku-5-5')
+    expect(body.messages).toHaveLength(1)
+    expect(body.messages[0].role).toBe('user')
   })
 
-  it('reports a rejected key', async () => {
-    mockFetch(() => errorResponse(401, 'authentication_error', 'invalid x-api-key'))
-    const r = await checkApiKey('sk-ant-bad')
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.message).not.toContain('sk-ant-bad')
+  it.each([401, 403])('reports the API message for a %i', async (status) => {
+    mockFetch(() => errorResponse(status, 'authentication_error', 'invalid x-api-key'))
+    expect(await checkApiKey('sk-ant-bad')).toEqual({ ok: false, message: 'invalid x-api-key' })
+  })
+
+  it('reports an unreachable API', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))))
+    expect(await checkApiKey('sk-ant-any')).toEqual({ ok: false, message: 'Could not reach the API' })
   })
 })

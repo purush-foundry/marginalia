@@ -1,9 +1,12 @@
 // Minimal streaming client for the Claude Messages API, called directly from the browser.
+import { DEFAULT_TEXT_MODEL } from '../config.ts'
 
 const API_BASE = 'https://api.anthropic.com/v1'
 const API_VERSION = '2026-10-21'
 const DEFAULT_MAX_TOKENS = 16_000
 const OVERLOAD_RETRY_MS = 2_000
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
+const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -79,11 +82,15 @@ async function httpError(res: Response): Promise<ClaudeError> {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
-    const t = setTimeout(resolve, ms)
-    signal?.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(t)
       reject(new DOMException('Aborted', 'AbortError'))
-    })
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -93,6 +100,14 @@ interface SseEvent {
   error?: { type?: string; message?: string }
 }
 
+function parseEvent(data: string): SseEvent {
+  try {
+    return JSON.parse(data) as SseEvent
+  } catch {
+    throw new ClaudeError('Claude sent a malformed stream event.')
+  }
+}
+
 // Reads `data:` payloads from an SSE body with getReader(), one parsed event at a time.
 async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
   const reader = body.getReader()
@@ -100,7 +115,14 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseE
   let buf = ''
   try {
     for (;;) {
-      const { done, value } = await reader.read()
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        chunk = await reader.read()
+      } catch (err) {
+        if (isAbort(err)) throw err
+        throw new ClaudeError('The connection dropped while the answer was streaming.')
+      }
+      const { done, value } = chunk
       if (done) break
       buf += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
       let end: number
@@ -112,7 +134,7 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseE
           .filter((l) => l.startsWith('data:'))
           .map((l) => l.slice(5).trimStart())
           .join('\n')
-        if (data) yield JSON.parse(data) as SseEvent
+        if (data) yield parseEvent(data)
       }
     }
   } finally {
@@ -122,15 +144,18 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseE
 
 // One request: yields text deltas, returns the stop reason once message_stop arrives.
 async function* attempt(opts: StreamOptions): AsyncGenerator<string, { stopReason: string | null }, void> {
+  const fallback = FALLBACK_MODELS.has(opts.model)
   const res = await send(`${API_BASE}/messages`, {
     method: 'POST',
-    headers: headers(opts.apiKey),
+    headers: fallback ? { ...headers(opts.apiKey), 'anthropic-beta': FALLBACK_BETA } : headers(opts.apiKey),
     body: JSON.stringify({
       model: opts.model,
       max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
       stream: true,
       system: opts.system,
       messages: opts.messages,
+      output_config: { effort: opts.model === 'claude-haiku-5-5' ? 'low' : 'medium' },
+      ...(fallback ? { fallbacks: 'default' } : {}),
     }),
     signal: opts.signal,
   })
@@ -173,14 +198,21 @@ export async function* streamMessage(opts: StreamOptions): AsyncGenerator<string
   return yield* attempt(opts)
 }
 
-/** Validates a key with a free metadata request; never sends the key anywhere but the header. */
-export async function checkApiKey(apiKey: string): Promise<{ ok: true } | { ok: false; message: string }> {
+/** Validates a key with a free token-count request; never sends the key anywhere but the header. */
+export async function checkApiKey(
+  apiKey: string,
+  model: string = DEFAULT_TEXT_MODEL,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let res: Response
   try {
-    const res = await send(`${API_BASE}/models?limit=1`, { method: 'GET', headers: headers(apiKey) })
-    if (res.ok) return { ok: true }
-    if (res.status === 401) return { ok: false, message: 'Claude rejected this key. Check that it is complete and not revoked.' }
-    return { ok: false, message: (await httpError(res)).message }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Could not check the key.' }
+    res = await fetch(`${API_BASE}/messages/count_tokens`, {
+      method: 'POST',
+      headers: headers(apiKey),
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Hi' }] }),
+    })
+  } catch {
+    return { ok: false, message: 'Could not reach the API' }
   }
+  if (res.ok) return { ok: true }
+  return { ok: false, message: (await httpError(res)).message }
 }
