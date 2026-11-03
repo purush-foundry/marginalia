@@ -157,4 +157,30 @@ describe('Reader', () => {
     expect(drive.flushPendingWrites).toHaveBeenCalled()
     expect(doc.destroy).toHaveBeenCalled()
   })
+
+  test('closing after an edit queues the store state, including a remote merge that arrived later', async () => {
+    let settle: (s: Sidecar | null) => void = () => undefined
+    drive.refreshSidecar.mockReturnValue(new Promise((resolve) => (settle = resolve)))
+    const props = await open()
+    const box = { x: 0.1, y: 0.2, w: 0.3, h: 0.02 }
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [box], text: 'mine', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => button('Green')!.click())
+    const mine = props.highlights.value[0] as TextHighlight
+    const theirs: TextHighlight = { ...mine, id: 'theirs', text: 'theirs', createdAt: 2, updatedAt: 2 }
+    await act(async () => settle({ ...emptySidecar('p1', 'attention.pdf', 1), highlights: [mine, theirs] }))
+
+    act(() => render(null, root))
+
+    expect(lastSaved().highlights.map((h) => h.id).sort()).toEqual([mine.id, 'theirs'].sort())
+    expect(drive.saveSidecar.mock.invocationCallOrder.at(-1)!).toBeLessThan(drive.flushPendingWrites.mock.invocationCallOrder.at(-1)!)
+  })
+
+  test('closing without an edit queues nothing', async () => {
+    drive.loadSidecar.mockResolvedValue({ ...emptySidecar('p1', 'attention.pdf', 1), reading: { page: 1, offset: 0, zoom: 0, status: 'reading', updatedAt: 1 } })
+    await open()
+    act(() => render(null, root))
+    expect(drive.saveSidecar).not.toHaveBeenCalled()
+  })
 })

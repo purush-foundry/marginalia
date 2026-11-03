@@ -396,12 +396,22 @@ async function persist(pdfId: string, sidecar: Sidecar): Promise<void> {
   }
 }
 
-// Persists a debounced edit now and forgets it once stored.
+// Persists a debounced edit now and forgets it once stored; on failure keeps it and retries after the debounce.
 function writePending(pdfId: string, entry: PendingSave): Promise<void> {
   clearTimeout(entry.timer)
-  entry.writing ??= persist(pdfId, entry.sidecar).finally(() => {
-    if (pendingSaves.get(pdfId) === entry) pendingSaves.delete(pdfId)
-  })
+  entry.writing ??= persist(pdfId, entry.sidecar).then(
+    () => {
+      if (pendingSaves.get(pdfId) === entry) pendingSaves.delete(pdfId)
+    },
+    (err: unknown) => {
+      entry.writing = undefined
+      if (pendingSaves.get(pdfId) === entry) {
+        entry.timer = setTimeout(() => void writePending(pdfId, entry), SIDECAR_SAVE_DEBOUNCE_MS)
+      }
+      const message = err instanceof Error ? err.message : String(err)
+      syncState.value = { status: 'error', message: `Could not save annotations on this device: ${message}`, at: Date.now() }
+    },
+  )
   return entry.writing
 }
 

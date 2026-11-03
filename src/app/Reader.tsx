@@ -467,6 +467,7 @@ export function Reader({ pdfId }: { pdfId: string }) {
     let cancelled = false
     let doc: PdfDoc | null = null
     let store: AnnotationStore | null = null
+    let edited = false
     setLoaded(null)
     setError(null)
     setProgress(0)
@@ -476,7 +477,10 @@ export function Reader({ pdfId }: { pdfId: string }) {
       doc = await openPdf(blob)
       const sidecar = await loadSidecar(pdfId)
       if (cancelled) return
-      const opened = createAnnotationStore(sidecar, (next) => saveSidecar(pdfId, next))
+      const opened = createAnnotationStore(sidecar, (next) => {
+        edited = true
+        saveSidecar(pdfId, next)
+      })
       store = opened
       const { page, offset, zoom, status } = sidecar.reading
       if (status === 'unread') opened.setReading({ status: 'reading' })
@@ -494,6 +498,7 @@ export function Reader({ pdfId }: { pdfId: string }) {
     })
     return () => {
       cancelled = true
+      if (store && edited) saveSidecar(pdfId, store.sidecar.peek())
       store?.dispose()
       doc?.destroy()
       void flushPendingWrites()

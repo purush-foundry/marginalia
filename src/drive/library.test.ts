@@ -284,6 +284,44 @@ describe('sidecars', () => {
     stop()
   })
 
+  test('a failed local write keeps the edit pending, reports it, and the retry stores it', async () => {
+    vi.resetModules()
+    let failNext = true
+    vi.doMock('../lib/idb', async (importOriginal) => {
+      const real = await importOriginal<Idb>()
+      return {
+        ...real,
+        idbSet: (store: Parameters<Idb['idbSet']>[0], key: string, value: unknown) => {
+          if (store === 'sidecars' && failNext) {
+            failNext = false
+            return Promise.reject(new Error('connection closed'))
+          }
+          return real.idbSet(store, key, value)
+        },
+      }
+    })
+    try {
+      await signIn()
+      const mocked = await import('./library')
+      const mockedIdb = await import('../lib/idb')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+      mocked.saveSidecar('p1', withHighlights('p1', 'a'))
+      await mocked.flushPendingWrites()
+
+      expect(mocked.syncState.value.status).toBe('error')
+      expect(await mockedIdb.idbGet('sidecars', 'p1')).toBeUndefined()
+      expect((await mocked.loadSidecar('p1')).highlights.map((h) => h.id)).toEqual(['a'])
+
+      await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
+      await vi.waitFor(async () => expect(await mockedIdb.idbGet('sidecars', 'p1')).toBeDefined())
+      expect((await mockedIdb.idbGet<StoredSidecar>('sidecars', 'p1'))!.sidecar.highlights.map((h) => h.id)).toEqual(['a'])
+      expect(await mockedIdb.idbKeys('queue')).toEqual(['p1'])
+    } finally {
+      vi.doUnmock('../lib/idb')
+    }
+  })
+
   test('a label rename survives save and reload', async () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
