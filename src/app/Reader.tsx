@@ -544,6 +544,7 @@ export function Reader({ pdfId }: { pdfId: string }) {
       if (store && edited) saveSidecar(pdfId, store.sidecar.peek())
       store?.dispose()
       doc?.destroy()
+      mouseDraws.value = false
       void flushPendingWrites()
     }
   }, [pdfId, attempt])

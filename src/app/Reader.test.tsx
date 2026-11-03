@@ -217,3 +217,13 @@ describe('Reader', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 })
+
+describe('Reader draw latch', () => {
+  test('closing a paper turns the mouse Draw latch off', async () => {
+    const { mouseDraws } = await import('../ink/tools')
+    await open()
+    mouseDraws.value = true
+    act(() => render(null, root))
+    expect(mouseDraws.value).toBe(false)
+  })
+})
