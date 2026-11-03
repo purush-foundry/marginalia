@@ -159,7 +159,7 @@ export interface TextLine {
 export interface PageText {
   page: number
   lines: TextLine[]
-  /** Column boxes in reading order (left to right). */
+  /** columns[0] is the box around all text (full-width lines are column 0); columns[1..] are the real columns left to right. */
   columns: Box[]
   /** Plain text in reading order with paragraph breaks. */
   text: string

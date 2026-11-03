@@ -25,3 +25,6 @@ dist-ssr
 
 # SDD scratch
 .superpowers/
+
+# pdf.js assets copied by scripts/copy-pdfjs-assets.mjs
+public/pdfjs/
