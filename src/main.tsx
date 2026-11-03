@@ -1,5 +1,4 @@
-import { render } from 'preact'
 import './app/theme.css'
-import { App } from './app/App.tsx'
+import { boot } from './app/boot.tsx'
 
-render(<App />, document.getElementById('app')!)
+void boot(document.getElementById('app')!)

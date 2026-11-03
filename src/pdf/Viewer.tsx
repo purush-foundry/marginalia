@@ -36,6 +36,8 @@ export interface ViewerHandle {
   setZoom(mode: 'fit-width' | number): void
   pageElement(page: number): HTMLElement | null
   getReadingPosition(): { page: number; offset: number }
+  /** Removes the area box and any text selection in the viewer, then reports `onSelection(null)`. */
+  clearSelection(): void
 }
 export interface PendingSelection {
   page: number
@@ -131,6 +133,8 @@ export function Viewer(props: ViewerProps) {
   }).current
   const timers = useRef({ position: 0, lastPosition: 0 }).current
   const lastPosition = useRef<{ page: number; offset: number } | null>(null)
+
+  const sink = useSelectionSink(live)
 
   const api = useMemo(() => {
     const scroller = () => scrollerRef.current
@@ -236,6 +240,15 @@ export function Viewer(props: ViewerProps) {
         return scroller()?.querySelector<HTMLElement>(`.mg-page[data-page="${page}"]`) ?? null
       },
       getReadingPosition: readingPosition,
+      clearSelection() {
+        const sel = document.getSelection()
+        const el = scroller()
+        if (sel && el && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+          sel.removeAllRanges()
+        }
+        setArea(null)
+        sink.emit(null)
+      },
     }
 
     return { handle, zoomApi, syncFromScroll, applyAnchor, schedulePosition, flushPosition }
@@ -318,7 +331,6 @@ export function Viewer(props: ViewerProps) {
     }
   }, [])
 
-  const sink = useSelectionSink(live)
   useTextSelection(scrollerRef, live, sink, flags)
   useAreaSelect(scrollerRef, live, sink, flags, setArea, areaShown)
   useHighlightTap(scrollerRef, live, sink, flags)

@@ -118,24 +118,24 @@ describe('annotation store', () => {
     expect(store.inks.value).toHaveLength(1)
   })
 
-  it('undo/redo round-trips threads and orders newest first', () => {
-    const { store } = make()
+  it('saving a thread persists without an undo step; removing one is undoable', () => {
+    const { store, persist } = make()
     store.upsertThread(thread('a', 1))
     store.upsertThread(thread('b', 2))
     expect(store.threads.value.map((t) => t.id)).toEqual(['b', 'a'])
     store.upsertThread({ ...thread('a', 1), model: 'm2' })
     expect(store.threads.value.find((t) => t.id === 'a')?.model).toBe('m2')
+    expect(persist.mock.calls.at(-1)![0].threads.find((t) => t.id === 'a')?.model).toBe('m2')
+    expect(store.canUndo.value).toBe(false)
     store.undo()
-    expect(store.threads.value.find((t) => t.id === 'a')?.model).toBe('m')
-    store.undo()
-    expect(store.threads.value.map((t) => t.id)).toEqual(['a'])
-    store.redo()
-    store.redo()
     expect(store.threads.value.find((t) => t.id === 'a')?.model).toBe('m2')
+
     store.removeThread('a')
     expect(store.threads.value.map((t) => t.id)).toEqual(['b'])
     store.undo()
-    expect(store.threads.value).toHaveLength(2)
+    expect(store.threads.value.map((t) => t.id)).toEqual(['b', 'a'])
+    store.redo()
+    expect(store.threads.value.map((t) => t.id)).toEqual(['b'])
   })
 
   it('a new mutation clears redo', () => {

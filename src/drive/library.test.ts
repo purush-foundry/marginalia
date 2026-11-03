@@ -406,4 +406,22 @@ describe('PDF cache', () => {
 
     expect((await idb.idbKeys('files')).sort()).toEqual(['older', 'p1', 'recent'])
   })
+
+  test('pdfCacheBytes sums cached PDFs and clearPdfCache empties the cache but keeps sidecars', async () => {
+    paper('p1', 'root', 'p1.pdf', '%PDF-one')
+    paper('p2', 'root', 'p2.pdf', '%PDF-twelve')
+    await lib.setRootFolder(ROOT)
+    expect(await lib.pdfCacheBytes()).toBe(0)
+    await lib.getPdfBlob('p1')
+    await lib.getPdfBlob('p2')
+    lib.saveSidecar('p1', withHighlights('p1', 'h1'))
+    await lib.flushPendingWrites()
+
+    expect(await lib.pdfCacheBytes()).toBe('%PDF-one'.length + '%PDF-twelve'.length)
+    await lib.clearPdfCache()
+
+    expect(await lib.pdfCacheBytes()).toBe(0)
+    expect(await lib.isCached('p1')).toBe(false)
+    expect((await lib.loadSidecar('p1')).highlights.map((h) => h.id)).toEqual(['h1'])
+  })
 })

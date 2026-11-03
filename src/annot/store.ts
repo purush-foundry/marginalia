@@ -162,7 +162,7 @@ export function createAnnotationStore(initial: Sidecar, persist: (sidecar: Sidec
     removeHighlight: (id) => tombstone('highlights', id),
     addStroke: (s) => change('inks', s),
     removeStroke: (id) => tombstone('inks', id),
-    upsertThread: (t) => change('threads', t),
+    upsertThread: (t) => put('threads', { ...t, updatedAt: now() }),
     removeThread: (id) => tombstone('threads', id),
     setReading(patch) {
       commit({ ...state.value, reading: { ...state.value.reading, ...patch, updatedAt: now() } })
