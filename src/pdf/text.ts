@@ -4,9 +4,12 @@ import type { Box, PageText, TextLine } from '../types.ts'
 // Column 0 is the full-width column: lines spanning the text block, and columns[0] is the box around all text.
 
 const FULL_WIDTH = 0.7
-const COLUMN_OVERLAP = 0.5
 const WIDE_LINE = 0.2
 const MIN_COLUMN_WIDTH = 0.15
+const MIN_COLUMN_LINES = 3
+const GUTTER_COVER = 0.15
+const SPAN_OVERLAP = 0.2
+const BINS = 200
 const BASELINE_TOLERANCE = 0.5
 const LINE_GAP = 1.0
 const WORD_GAP = 0.15
@@ -112,70 +115,87 @@ function splitRow(row: Glyph[]): RawLine[] {
   return lines.filter((l) => l.text)
 }
 
-function overlap(a: RawLine, b: RawLine): number {
+interface Span {
+  x0: number
+  x1: number
+}
+
+function overlap(a: Span, b: Span): number {
   return Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)
 }
 
-function sameColumn(a: RawLine, b: RawLine): boolean {
-  return overlap(a, b) > COLUMN_OVERLAP * Math.min(a.x1 - a.x0, b.x1 - b.x0)
-}
-
-function isBridge(line: RawLine, wide: RawLine[]): boolean {
-  let minRight = Infinity
-  let maxLeft = -Infinity
-  for (const w of wide) {
-    if (w === line || !sameColumn(line, w)) continue
-    minRight = Math.min(minRight, w.x1)
-    maxLeft = Math.max(maxLeft, w.x0)
+// Column x-ranges separated by interior gutters that almost no wide line crosses.
+function columnSpans(wide: RawLine[], pageW: number): Span[] {
+  if (!wide.length) return []
+  const bin = pageW / BINS
+  const cover = new Array<number>(BINS).fill(0)
+  for (const l of wide) {
+    const a = Math.max(0, Math.floor(l.x0 / bin))
+    const b = Math.min(BINS - 1, Math.ceil(l.x1 / bin) - 1)
+    for (let i = a; i <= b; i++) cover[i]++
   }
-  return minRight < maxLeft
-}
-
-function assignColumns(lines: RawLine[], pageW: number): { x0: number; x1: number }[] {
-  const full = lines.filter((l) => l.x1 - l.x0 > FULL_WIDTH * pageW)
-  const wide = lines.filter((l) => !full.includes(l) && l.x1 - l.x0 > WIDE_LINE * pageW)
-  const bridges = lines.filter((l) => !full.includes(l) && isBridge(l, wide))
-  const spanning = new Set(full)
-  if (bridges.length * 2 < wide.length - bridges.length) bridges.forEach((l) => spanning.add(l))
-  const body: RawLine[] = []
-  for (const l of lines) {
-    if (spanning.has(l)) l.column = 0
-    else body.push(l)
+  const peak = Math.max(...cover)
+  const low = Math.max(1, Math.floor(GUTTER_COVER * peak))
+  const first = cover.findIndex((c) => c > low)
+  const last = BINS - 1 - [...cover].reverse().findIndex((c) => c > low)
+  if (first < 0) {
+    return [{ x0: Math.min(...wide.map((l) => l.x0)), x1: Math.max(...wide.map((l) => l.x1)) }]
   }
-
-  const parent = body.map((_, i) => i)
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
-  for (let i = 0; i < body.length; i++)
-    for (let j = i + 1; j < body.length; j++)
-      if (sameColumn(body[i], body[j])) parent[find(i)] = find(j)
-
-  const groups = new Map<number, RawLine[]>()
-  body.forEach((l, i) => {
-    const root = find(i)
-    groups.set(root, [...(groups.get(root) ?? []), l])
-  })
-  let clusters = [...groups.values()].map((ls) => ({
-    lines: ls,
-    x0: Math.min(...ls.map((l) => l.x0)),
-    x1: Math.max(...ls.map((l) => l.x1)),
-  }))
-  const big = clusters.filter((c) => c.x1 - c.x0 >= MIN_COLUMN_WIDTH * pageW)
-  if (big.length) {
-    for (const small of clusters.filter((c) => !big.includes(c))) {
-      const mid = (small.x0 + small.x1) / 2
-      const near = big.reduce((best, c) =>
-        distance(mid, c) < distance(mid, best) ? c : best,
-      )
-      near.lines.push(...small.lines)
+  const spans: { a: number; b: number; peak: number }[] = []
+  let cur = { a: first, b: first, peak: 0 }
+  for (let i = first; i <= last; i++) {
+    if (cover[i] > low) {
+      if (i > cur.b + 1) {
+        spans.push(cur)
+        cur = { a: i, b: i, peak: 0 }
+      }
+      cur.b = i
+      cur.peak = Math.max(cur.peak, cover[i])
     }
-    clusters = big
   }
-  clusters.sort((p, q) => p.x0 - q.x0)
-  clusters.forEach((c, k) => c.lines.forEach((l) => (l.column = k + 1)))
-  return clusters.map((c) => ({ x0: c.x0, x1: c.x1 }))
+  spans.push(cur)
+  const real = spans.filter((sp) => sp.peak >= MIN_COLUMN_LINES && (sp.b - sp.a + 1) * bin >= MIN_COLUMN_WIDTH * pageW)
+  const kept = real.length ? real : [{ a: first, b: last, peak }]
+  return kept.map((sp, i) => ({
+    x0: i === 0 ? first * bin : sp.a * bin,
+    x1: i === kept.length - 1 ? (last + 1) * bin : (sp.b + 1) * bin,
+  }))
 }
 
-function distance(x: number, c: { x0: number; x1: number }): number {
+function assignColumns(lines: RawLine[], pageW: number): void {
+  const body = lines.filter((l) => l.x1 - l.x0 <= FULL_WIDTH * pageW)
+  for (const l of lines) if (!body.includes(l)) l.column = 0
+  const spans = columnSpans(
+    body.filter((l) => l.x1 - l.x0 > WIDE_LINE * pageW),
+    pageW,
+  )
+  if (!spans.length) {
+    for (const l of body) l.column = 1
+    return
+  }
+  for (const l of body) {
+    const width = Math.max(l.x1 - l.x0, 1e-6)
+    const ranked = spans
+      .map((sp, k) => ({ k, ov: overlap(l, sp) }))
+      .sort((p, q) => q.ov - p.ov)
+    if (ranked.length > 1 && ranked[1].ov > SPAN_OVERLAP * width) {
+      l.column = 0
+      continue
+    }
+    if (ranked[0].ov > 0) {
+      l.column = ranked[0].k + 1
+      continue
+    }
+    const mid = (l.x0 + l.x1) / 2
+    let best = 0
+    spans.forEach((sp, k) => {
+      if (distance(mid, sp) < distance(mid, spans[best])) best = k
+    })
+    l.column = best + 1
+  }
+}
+
+function distance(x: number, c: Span): number {
   return x < c.x0 ? c.x0 - x : x > c.x1 ? x - c.x1 : 0
 }
 
@@ -226,7 +246,7 @@ export function buildPageText(
   viewportH: number,
 ): PageText {
   const raw = groupRows(toGlyphs(items, viewportH)).flatMap(splitRow)
-  const spans = assignColumns(raw, viewportW)
+  assignColumns(raw, viewportW)
   const ordered = readingOrder(raw)
   const norm = (x0: number, top: number, x1: number, bottom: number): Box => ({
     x: x0 / viewportW,
@@ -249,7 +269,8 @@ export function buildPageText(
         Math.max(...ls.map((l) => l.bottom)),
       )
     columns.push(all(raw))
-    spans.forEach((_, k) => columns.push(all(raw.filter((l) => l.column === k + 1))))
+    const count = Math.max(...raw.map((l) => l.column))
+    for (let k = 1; k <= count; k++) columns.push(all(raw.filter((l) => l.column === k)))
   }
   return { page, lines, columns, text: plainText(ordered) }
 }

@@ -36,8 +36,8 @@ function twoColumnPage(): TextItem[] {
   return items
 }
 
-async function fixturePages(pages: number[]): Promise<Map<number, PageText>> {
-  const data = new Uint8Array(readFileSync('test/fixtures/attention.pdf'))
+async function fixturePages(pages: number[], file = 'attention.pdf'): Promise<Map<number, PageText>> {
+  const data = new Uint8Array(readFileSync(`test/fixtures/${file}`))
   const task = getDocument({ data, verbosity: 0 })
   const doc = await task.promise
   const out = new Map<number, PageText>()
@@ -143,6 +143,40 @@ describe('buildPageText on attention.pdf', () => {
       expect(l.box.y).toBeGreaterThanOrEqual(0)
       expect(l.box.y + l.box.h).toBeLessThanOrEqual(1)
     }
+  })
+})
+
+describe('buildPageText on resnet.pdf (two columns)', () => {
+  let pages: Map<number, PageText>
+  beforeAll(async () => {
+    pages = await fixturePages([1, 2], 'resnet.pdf')
+  })
+  const line = (pt: PageText, start: string) => pt.lines.find((l) => l.text.startsWith(start))
+
+  it('page 1 has a full-width title and header above two columns', () => {
+    const pt = pages.get(1)!
+    expect(pt.columns).toHaveLength(3)
+    expect(line(pt, 'Deep Residual Learning for Image Recognition')?.column).toBe(0)
+    expect(line(pt, '{kahe, v-xiangz')?.column).toBe(0)
+    expect(line(pt, 'Deeper neural networks are more difficult')?.column).toBe(1)
+    expect(line(pt, 'problem of vanishing/exploding gradients')?.column).toBe(2)
+  })
+
+  it('page 1 reads the left column before the right one', () => {
+    const t = pages.get(1)!.text
+    expect(t.indexOf('Deep Residual Learning')).toBe(0)
+    expect(t.indexOf('Abstract')).toBeGreaterThan(t.indexOf('microsoft.com'))
+    expect(t.indexOf('COCO segmentation.')).toBeLessThan(t.indexOf('Figure 1. Training error'))
+    expect(t).toContain('layers as learning residual functions')
+  })
+
+  it('page 2 is two columns read column-major', () => {
+    const pt = pages.get(2)!
+    expect(pt.columns).toHaveLength(3)
+    expect(pt.columns[1].x + pt.columns[1].w).toBeLessThan(pt.columns[2].x)
+    expect(line(pt, 'In this paper, we address the degradation')?.column).toBe(1)
+    const t = pt.text
+    expect(t.indexOf('without modifying the solvers.')).toBeLessThan(t.indexOf('2. Related Work'))
   })
 })
 
