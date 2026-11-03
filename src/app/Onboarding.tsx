@@ -1,12 +1,12 @@
 // First-run steps: client id, Google sign-in, then the root folder picker.
 import { useEffect, useState } from 'preact/hooks'
 import { listMyDriveFolders } from '../drive/api'
-import { authState, gisAvailable } from '../drive/auth'
+import { authError, authState, gisAvailable } from '../drive/auth'
 import { library, setRootFolder } from '../drive/library'
 import type { DriveNode } from '../types'
 import { Icon } from './icons'
 import { navigate } from './route'
-import { Settings, connectDrive } from './Settings'
+import { RedirectSignIn, Settings, connectDrive } from './Settings'
 import { authReady, choosingRoot, online } from './ui'
 
 function ConnectStep() {
@@ -32,9 +32,10 @@ function ConnectStep() {
       >
         Connect Google Drive
       </button>
+      {ready && !offline && <RedirectSignIn />}
       {offline && <p class="mg-error">Offline — Google sign-in unavailable</p>}
       {!ready && !offline && <p class="mg-muted">Loading Google sign-in…</p>}
-      {error && <p class="mg-error">{error}</p>}
+      {(error ?? authError.value) && <p class="mg-error">{error ?? authError.value}</p>}
     </div>
   )
 }

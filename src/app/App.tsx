@@ -14,7 +14,6 @@ import { authReady, choosingRoot, settingsOpen, toast } from './ui'
 import './app.css'
 
 function onRootPointerDown(e: PointerEvent): void {
-  maybeRenew()
   if (e.pointerType === 'pen' && !settings.peek().penSeen) void saveSettings({ penSeen: true })
 }
 
@@ -95,7 +94,7 @@ export function App() {
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
 
   return (
-    <div class="mg-app" onPointerDownCapture={onRootPointerDown}>
+    <div class="mg-app" onPointerDownCapture={onRootPointerDown} onPointerUpCapture={maybeRenew} onClickCapture={maybeRenew}>
       <Screen />
       {settingsOpen.value && (
         <div class="mg-sheet-backdrop" onClick={(e) => e.target === e.currentTarget && (settingsOpen.value = false)}>

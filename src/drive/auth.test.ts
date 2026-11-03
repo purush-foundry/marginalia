@@ -124,6 +124,43 @@ describe('connect', () => {
     expect(stored!.expiresAt).toBeGreaterThan(Date.now() + 3500_000)
   })
 
+  test('times out an unanswered interactive request after 60 s and lets the next tap try again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const gis = stubGis()
+    await auth.initAuth('client-1')
+
+    const done = auth.connect()
+    const settled = expect(done).rejects.toThrow(/redirect/)
+    await vi.advanceTimersByTimeAsync(60_000)
+    await settled
+
+    void auth.connect()
+    expect(gis.requests).toHaveLength(2)
+  })
+
+  test('an iOS home-screen app goes straight to the redirect flow and comes back to the same route', async () => {
+    const gis = stubGis()
+    await auth.initAuth('client-1')
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true })
+    location.hash = '#/p/paper-1'
+    try {
+      void auth.connect()
+    } finally {
+      delete (navigator as Navigator & { standalone?: boolean }).standalone
+    }
+
+    expect(gis.requests).toEqual([])
+    const state = new URL(location.href).searchParams.get('state')!
+    expect(new URL(location.href).origin).toBe('https://accounts.google.com')
+
+    ;(window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(
+      `${HOME}#access_token=redir&expires_in=3599&state=${state}`,
+    )
+    expect(auth.consumeRedirectToken()).toBe(true)
+    expect(location.hash).toBe('#/p/paper-1')
+    expect(auth.getAccessToken()).toBe('redir')
+  })
+
   test('rejects when the user closes the popup', async () => {
     const gis = stubGis()
     await auth.initAuth('client-1')
@@ -177,6 +214,17 @@ describe('consumeRedirectToken', () => {
     expect(auth.getAccessToken()).toBeNull()
   })
 
+  test('surfaces the error Google sends back instead of dropping it', () => {
+    sessionStorage.setItem('marginalia.oauthState', 's1')
+    location.hash = '#error=access_denied&state=s1'
+
+    expect(auth.consumeRedirectToken()).toBe(false)
+
+    expect(location.hash).toBe('')
+    expect(auth.authError.value).toContain('access_denied')
+    expect(auth.authState.value.status).toBe('signed-out')
+  })
+
   test('ignores an unrelated fragment', () => {
     location.hash = '#page=3'
     expect(auth.consumeRedirectToken()).toBe(false)
@@ -206,15 +254,45 @@ describe('maybeRenew', () => {
   })
 
   test('connect replaces an in-flight silent renewal with an interactive request', async () => {
-    const gis = await connectedWith(1000)
+    const gis = await connectedWith(TOKEN_RENEW_MARGIN_MS - 1000)
     auth.maybeRenew()
     const done = auth.connect()
     expect(gis.requests).toHaveLength(2)
 
     gis.config!.error_callback!({ type: 'popup_failed_to_open' })
+    expect(location.href).toBe(HOME)
+    gis.config!.error_callback!({ type: 'popup_failed_to_open' })
 
     expect(new URL(location.href).origin).toBe('https://accounts.google.com')
     void done
+  })
+
+  test('the superseded silent request’s error does not settle an interactive connect', async () => {
+    const gis = await connectedWith(TOKEN_RENEW_MARGIN_MS - 1000)
+    auth.maybeRenew()
+    let outcome = 'pending'
+    const done = auth.connect().then(
+      () => (outcome = 'resolved'),
+      () => (outcome = 'rejected'),
+    )
+
+    gis.config!.error_callback!({ type: 'popup_closed' })
+    await Promise.resolve()
+    expect(outcome).toBe('pending')
+
+    gis.config!.callback({ access_token: 'fresh', expires_in: 3599 })
+    await done
+    expect(outcome).toBe('resolved')
+  })
+
+  test('does nothing once the session has expired, so Reconnect issues exactly one request', async () => {
+    const gis = await connectedWith(-1000)
+    expect(auth.authState.value.status).toBe('expired')
+
+    auth.maybeRenew()
+    void auth.connect()
+
+    expect(gis.requests).toHaveLength(1)
   })
 
   test('does not redirect away when a silent renewal popup cannot open', async () => {

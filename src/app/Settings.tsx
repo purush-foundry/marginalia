@@ -1,7 +1,7 @@
 // Settings: Google client id and Drive session, Claude key and models, reading switches, cache, version.
 import { useEffect, useState } from 'preact/hooks'
 import { checkApiKey } from '../ai/claude'
-import { authState, connect, initAuth, signOut } from '../drive/auth'
+import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
 import { clearPdfCache, library, pdfCacheBytes, syncLibrary } from '../drive/library'
 import { Icon } from './icons'
 import { applyUpdate, buildId, updateReady } from './pwa'
@@ -24,6 +24,15 @@ export async function connectDrive(): Promise<string | null> {
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
   }
+}
+
+/** Link that signs in through Google's redirect flow, for when the sign-in popup never returns. */
+export function RedirectSignIn() {
+  return (
+    <button type="button" class="mg-link-btn" onClick={connectWithRedirect}>
+      Sign in with a redirect instead
+    </button>
+  )
 }
 
 function Toggle(props: { label: string; hint?: string; field: keyof AppSettings }) {
@@ -89,12 +98,15 @@ function DriveSection() {
         {label}
         {library.value && ` · Library: ${library.value.rootName}`}
       </p>
-      {error && <p class="mg-error">{error}</p>}
+      {(error ?? authError.value) && <p class="mg-error">{error ?? authError.value}</p>}
       <div class="mg-actions">
         {status !== 'ok' && settings.value.googleClientId && authReady.value && (
-          <button type="button" class="btn primary" onClick={() => void connectDrive().then(setError)}>
-            {status === 'expired' ? 'Reconnect Drive' : 'Connect Google Drive'}
-          </button>
+          <>
+            <button type="button" class="btn primary" onClick={() => void connectDrive().then(setError)}>
+              {status === 'expired' ? 'Reconnect Drive' : 'Connect Google Drive'}
+            </button>
+            <RedirectSignIn />
+          </>
         )}
         {status === 'ok' && (
           <button

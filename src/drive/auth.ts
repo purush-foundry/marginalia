@@ -17,6 +17,8 @@ interface Token {
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
 const OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const STATE_KEY = 'marginalia.oauthState'
+const RETURN_KEY = 'marginalia.oauthReturn'
+const REQUEST_TIMEOUT_MS = 60_000
 const DEFAULT_EXPIRES_IN_S = 3600
 const GIS_LOAD_TIMEOUT_MS = 10_000
 const TOKEN_EXPIRY_SKEW_MS = 30_000
@@ -24,12 +26,20 @@ const TOKEN_EXPIRY_SKEW_MS = 30_000
 export const authState = signal<AuthState>({ status: 'signed-out' })
 /** False when the GIS script could not load (typically offline). */
 export const gisAvailable = signal(false)
+/** The error Google returned to the last redirect sign-in, if any. */
+export const authError = signal<string | null>(null)
 
 let token: Token | null = null
 let activeClientId = ''
 let tokenClient: GisTokenClient | null = null
 let gisLoad: Promise<boolean> | null = null
-let requesting: { interactive: boolean } | null = null
+interface TokenRequest {
+  interactive: boolean
+}
+
+/** GIS requests awaiting a callback, oldest first; each callback answers the oldest. */
+let inflight: TokenRequest[] = []
+let requestTimer: ReturnType<typeof setTimeout> | undefined
 let waiters: Array<{ resolve: () => void; reject: (e: Error) => void }> = []
 
 function oauth2(): GisOauth2 | undefined {
@@ -75,10 +85,23 @@ function loadGis(): Promise<boolean> {
   return gisLoad
 }
 
+// Takes the oldest in-flight request off the list; clears the timeout once none remain.
+function answer(): TokenRequest | undefined {
+  const request = inflight.shift()
+  if (!inflight.length) clearTimeout(requestTimer)
+  return request
+}
+
+// Settles waiters with an error unless it belongs to a silent request superseded by a pending interactive one.
+function fail(request: TokenRequest | undefined, error: Error): void {
+  if (!request?.interactive && inflight.some((r) => r.interactive)) return
+  settle(error)
+}
+
 function onTokenResponse(response: GisTokenResponse): void {
-  requesting = null
+  const request = answer()
   if (response.error || !response.access_token) {
-    settle(new Error(response.error_description ?? response.error ?? 'No access token returned'))
+    fail(request, new Error(response.error_description ?? response.error ?? 'No access token returned'))
     return
   }
   const expiresIn = Number(response.expires_in ?? DEFAULT_EXPIRES_IN_S)
@@ -87,19 +110,25 @@ function onTokenResponse(response: GisTokenResponse): void {
 }
 
 function onTokenError(error: GisClientConfigError): void {
-  const interactive = requesting?.interactive ?? false
-  requesting = null
-  if (error.type === 'popup_failed_to_open' && interactive) {
+  const request = answer()
+  if (error.type === 'popup_failed_to_open' && request?.interactive) {
     redirectToGoogle()
     return
   }
-  settle(new Error(error.message ?? error.type))
+  fail(request, new Error(error.message ?? error.type))
 }
 
-// Navigates to Google's implicit-flow endpoint; the token returns in the URL fragment.
+// Forgets every in-flight request and rejects waiters when Google never answers.
+function onRequestTimeout(): void {
+  inflight = []
+  settle(new Error('Google sign-in did not respond; try signing in with a redirect instead'))
+}
+
+// Navigates to Google's implicit-flow endpoint; the token returns in the URL fragment and the current route is restored after.
 function redirectToGoogle(): void {
   const state = newId()
   sessionStorage.setItem(STATE_KEY, state)
+  sessionStorage.setItem(RETURN_KEY, location.hash)
   const params = new URLSearchParams({
     response_type: 'token',
     client_id: activeClientId,
@@ -114,9 +143,15 @@ function redirectToGoogle(): void {
 // Starts a GIS token request unless one is in flight; an interactive request supersedes a silent one.
 function requestToken(interactive: boolean): void {
   if (!tokenClient) return
-  if (requesting && (requesting.interactive || !interactive)) return
-  requesting = { interactive }
+  if (inflight.some((r) => r.interactive || !interactive)) return
+  inflight.push({ interactive })
+  clearTimeout(requestTimer)
+  requestTimer = setTimeout(onRequestTimeout, REQUEST_TIMEOUT_MS)
   tokenClient.requestAccessToken({ prompt: '' })
+}
+
+function isStandalone(): boolean {
+  return (navigator as Navigator & { standalone?: boolean }).standalone === true
 }
 
 /** Loads https://accounts.google.com/gsi/client (tolerates offline), restores a cached token. */
@@ -146,9 +181,19 @@ export async function initAuth(clientId: string): Promise<void> {
       : null
 }
 
-/** Must run inside a user gesture: opens the GIS popup; on `popup_failed_to_open` falls back to the implicit redirect flow. */
+/** Leaves the app for Google's sign-in page; the token comes back in the URL fragment. */
+export function connectWithRedirect(): void {
+  if (activeClientId) redirectToGoogle()
+}
+
+/** Must run inside a user gesture: opens the GIS popup (the redirect flow in an iOS home-screen app); on `popup_failed_to_open` falls back to the redirect flow. */
 export function connect(): Promise<void> {
   if (!activeClientId) return Promise.reject(new Error('Google client id is not set'))
+  authError.value = null
+  if (isStandalone()) {
+    redirectToGoogle()
+    return new Promise(() => undefined)
+  }
   if (!tokenClient) return Promise.reject(new Error('Google sign-in is unavailable; are you offline?'))
   return new Promise((resolve, reject) => {
     waiters.push({ resolve, reject })
@@ -166,11 +211,10 @@ export function getAccessToken(): string | null {
   return token.accessToken
 }
 
-/** Call on any user gesture; renews silently (prompt: '') when less than TOKEN_RENEW_MARGIN_MS remains. */
+/** Call on an activation-triggering gesture; renews silently (prompt: '') when a live token has less than TOKEN_RENEW_MARGIN_MS left. */
 export function maybeRenew(): void {
-  if (!token) return
-  const fresh = authState.peek().status === 'ok' && token.expiresAt - Date.now() >= TOKEN_RENEW_MARGIN_MS
-  if (!fresh) requestToken(false)
+  if (!token || authState.peek().status !== 'ok') return
+  if (token.expiresAt - Date.now() < TOKEN_RENEW_MARGIN_MS) requestToken(false)
 }
 
 export async function signOut(): Promise<void> {
@@ -181,13 +225,20 @@ export async function signOut(): Promise<void> {
   if (old) oauth2()?.revoke(old.accessToken)
 }
 
-/** Handles the `#access_token=` fragment after a redirect-flow return; returns true if one was consumed. */
+/** Handles the `#access_token=` or `#error=` fragment after a redirect-flow return, restoring the route it left from; returns true if a token was consumed. */
 export function consumeRedirectToken(): boolean {
   const params = new URLSearchParams(location.hash.slice(1))
   if (!params.has('access_token') && !params.has('error')) return false
-  history.replaceState(history.state, '', location.pathname + location.search)
+  const returnHash = sessionStorage.getItem(RETURN_KEY) ?? ''
+  history.replaceState(history.state, '', location.pathname + location.search + returnHash)
   const expected = sessionStorage.getItem(STATE_KEY)
   sessionStorage.removeItem(STATE_KEY)
+  sessionStorage.removeItem(RETURN_KEY)
+  const error = params.get('error')
+  if (error) {
+    authError.value = `Google sign-in failed: ${params.get('error_description') ?? error}`
+    return false
+  }
   const accessToken = params.get('access_token')
   if (!accessToken || !expected || params.get('state') !== expected) return false
   const expiresIn = Number(params.get('expires_in') ?? DEFAULT_EXPIRES_IN_S)
