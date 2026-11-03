@@ -28,6 +28,12 @@ describe('layout', () => {
     expect(positionAt(l, top)).toEqual({ page: 2, offset: expect.closeTo(0.4) })
   })
 
+  it('reports the gap below a page as the top of the next page', () => {
+    const l = layoutPages(sizes, 1, none, 800)
+    expect(positionAt(l, l.tops[1] - 1)).toEqual({ page: 2, offset: 0 })
+    expect(positionAt(l, l.tops[1] - PAGE_GAP - 1).page).toBe(1)
+  })
+
   it('keeps the anchored point under the same viewport point across a zoom', () => {
     const crop = { left: 0.1, right: 0.05 }
     const before = layoutPages(sizes, 1, crop, 600)

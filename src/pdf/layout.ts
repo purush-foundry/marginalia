@@ -74,9 +74,10 @@ export function pageIndexAt(layout: Layout, y: number): number {
   return Math.max(0, lo)
 }
 
-/** Page and fraction of its height at content y. */
+/** Page and fraction of its height at content y; the gap below a page counts as the top of the next. */
 export function positionAt(layout: Layout, y: number): { page: number; offset: number } {
-  const i = pageIndexAt(layout, y)
+  let i = pageIndexAt(layout, y)
+  if (i < layout.tops.length - 1 && y >= layout.tops[i] + layout.heights[i]) i += 1
   const offset = (y - layout.tops[i]) / layout.heights[i]
   return { page: i + 1, offset: Math.min(1, Math.max(0, offset)) }
 }
