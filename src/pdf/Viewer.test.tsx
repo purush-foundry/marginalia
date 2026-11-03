@@ -127,6 +127,43 @@ describe('Viewer', () => {
     expect(props.onTapHighlight).not.toHaveBeenCalled()
   })
 
+  it('does not treat a press-and-hold as a highlight tap', () => {
+    vi.useFakeTimers()
+    try {
+      const props = mount({ highlights: signal([highlight]) })
+      const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+      pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+      vi.advanceTimersByTime(450)
+      pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+      expect(props.onTapHighlight).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not report a highlight tap when the pointer started an area drag', () => {
+    const armed = signal(true)
+    const props = mount({ highlights: signal([highlight]), areaSelectArmed: armed })
+    const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+    pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+    act(() => {
+      armed.value = false
+    })
+    pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 121, clientY: 100 })
+    expect(props.onTapHighlight).not.toHaveBeenCalled()
+  })
+
+  it('ignores pen taps on highlights while the pen draws', () => {
+    const props = mount({ highlights: signal([highlight]), penDrawing: signal(true) })
+    const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+    pointer('pointerdown', layer, { pointerType: 'pen', pointerId: 2, clientX: 120, clientY: 100 })
+    pointer('pointerup', layer, { pointerType: 'pen', pointerId: 2, clientX: 121, clientY: 100 })
+    expect(props.onTapHighlight).not.toHaveBeenCalled()
+    pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+    pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 121, clientY: 100 })
+    expect(props.onTapHighlight).toHaveBeenCalledOnce()
+  })
+
   it('flushes a pending reading position on unmount', () => {
     const props = mount()
     act(() => render(null, root))

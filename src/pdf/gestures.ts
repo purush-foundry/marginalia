@@ -29,6 +29,8 @@ export interface ViewerApi {
 export interface GestureFlags {
   pinching: boolean
   areaDragging: boolean
+  /** Pointer that started the latest area drag; reset on every pointerdown. */
+  areaPointer: number | null
   columnZoomed: boolean
   wheelScale: number | null
 }
@@ -48,12 +50,25 @@ const LONG_PRESS_SLOP_PX = 8
 const TAP_SLOP_PX = 8
 const DOUBLE_TAP_SLOP_PX = 30
 const TAP_MS = 300
+const HIGHLIGHT_TAP_MS = 400
 const DOUBLE_TAP_MS = 300
 const MIN_AREA = 0.01
 const WHEEL_PIXEL_STEP = 0.002
 const WHEEL_LINE_STEP = 0.05
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
+
+type SafariTouch = Touch & { touchType?: string }
+
+function penIgnored(live: LiveRef, e: PointerEvent): boolean {
+  return e.pointerType === 'pen' && live.current.props.penDrawing?.peek() === true
+}
+
+function stylusIgnored(live: LiveRef, touches: TouchList): boolean {
+  if (live.current.props.penDrawing?.peek() !== true) return false
+  for (let i = 0; i < touches.length; i++) if ((touches[i] as SafariTouch).touchType === 'stylus') return true
+  return false
+}
 
 export function pageFraction(inner: Element, clientX: number, clientY: number): { fx: number; fy: number } {
   const r = inner.getBoundingClientRect()
@@ -138,7 +153,7 @@ export function useTextSelection(scrollerRef: ScrollerRef, live: LiveRef, sink: 
     }
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === 'touch' || e.button !== 0 || flags.pinching) return
+      if (e.pointerType === 'touch' || e.button !== 0 || flags.pinching || penIgnored(live, e)) return
       if (live.current.props.areaSelectArmed.peek()) return
       const target = e.target as Element
       const pageEl = target.closest<HTMLElement>('.mg-page')
@@ -212,6 +227,7 @@ export function useAreaSelect(
       const { fx, fy } = pageFraction(inner, clientX, clientY)
       state.drag = { page, pointerId, inner, x0: fx, y0: fy, x1: fx, y1: fy }
       flags.areaDragging = true
+      flags.areaPointer = pointerId
       el.classList.add('mg-dragging')
       try {
         el.setPointerCapture(pointerId)
@@ -242,6 +258,8 @@ export function useAreaSelect(
     }
 
     const onPointerDown = (e: PointerEvent) => {
+      flags.areaPointer = null
+      if (penIgnored(live, e)) return
       state.pointerType = e.pointerType
       const target = e.target as Element
       if (areaShown.current) setArea(null)
@@ -333,18 +351,20 @@ export function useAreaSelect(
 export function useHighlightTap(scrollerRef: ScrollerRef, live: LiveRef, sink: SelectionSink, flags: GestureFlags) {
   useEffect(() => {
     const el = scrollerRef.current!
-    let down: { pointerId: number; x: number; y: number; pageEl: HTMLElement } | null = null
+    let down: { pointerId: number; x: number; y: number; t: number; pageEl: HTMLElement } | null = null
 
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Element
       const pageEl = target.closest<HTMLElement>('.mg-page')
-      down = e.isPrimary && pageEl && !target.closest('.mg-link') ? { pointerId: e.pointerId, x: e.clientX, y: e.clientY, pageEl } : null
+      const tappable = e.isPrimary && pageEl && !target.closest('.mg-link') && !penIgnored(live, e)
+      down = tappable ? { pointerId: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), pageEl } : null
     }
 
     const onPointerUp = (e: PointerEvent) => {
       const d = down
       down = null
-      if (!d || d.pointerId !== e.pointerId || flags.pinching || flags.areaDragging) return
+      if (!d || d.pointerId !== e.pointerId || flags.pinching || flags.areaPointer === e.pointerId) return
+      if (Date.now() - d.t > HIGHLIGHT_TAP_MS) return
       if (live.current.props.areaSelectArmed.peek()) return
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= TAP_SLOP_PX) return
       const sel = document.getSelection()
@@ -482,7 +502,7 @@ export function useDoubleTapZoom(scrollerRef: ScrollerRef, live: LiveRef, api: V
     }
 
     const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) {
+      if (e.touches.length !== 1 || stylusIgnored(live, e.touches)) {
         tapStart = null
         return
       }

@@ -52,6 +52,8 @@ export interface ViewerProps {
   invertImages: boolean
   initial?: { page: number; offset: number; zoom: number }
   areaSelectArmed: ReadonlySignal<boolean>
+  /** True while the pen tool draws; pen pointers then skip selection, area select, highlight taps and double-tap zoom. */
+  penDrawing?: ReadonlySignal<boolean>
   pageOverlay?: (page: number, cssW: number, cssH: number) => ComponentChildren
   onSelection(sel: PendingSelection | null): void
   onTapHighlight(id: string, rect: DOMRect): void
@@ -123,6 +125,7 @@ export function Viewer(props: ViewerProps) {
   const flags = useRef<GestureFlags>({
     pinching: false,
     areaDragging: false,
+    areaPointer: null,
     columnZoomed: false,
     wheelScale: null,
   }).current
