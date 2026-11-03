@@ -49,4 +49,23 @@ describe('sidecarToMarkdown', () => {
     expect(md).toContain('[p.2](https://x/#page=2)')
     expect(md).toContain('[Area on p.3](https://x/#page=3)')
   })
+
+  it('orders highlights by column when columns are given', () => {
+    const s = emptySidecar('p', 'paper.pdf', 1)
+    const mk = (id: string, x: number, y: number) => ({
+      id, kind: 'text' as const, page: 1, color: 'yellow' as const, boxes: [{ x, y, w: 0.1, h: 0.02 }], text: id, createdAt: 1, updatedAt: 1,
+    })
+    s.highlights = [mk('col1', 0.6, 0.1), mk('col0-lower', 0.1, 0.8), mk('col0-top', 0.1, 0.1)]
+    const columns = { 1: [{ x: 0.05, y: 0, w: 0.4, h: 1 }, { x: 0.55, y: 0, w: 0.4, h: 1 }] }
+    const md = sidecarToMarkdown(s, { title: 'T', columns })
+    const at = (k: string) => md.indexOf(`> ${k}`)
+    expect(at('col0-top')).toBeLessThan(at('col0-lower'))
+    expect(at('col0-lower')).toBeLessThan(at('col1'))
+  })
+
+  it('quotes multi-line thread anchor text per line', () => {
+    const s = sample()
+    s.threads[0].anchor.text = 'one\ntwo'
+    expect(sidecarToMarkdown(s, { title: 'T' })).toContain('> one\n> two')
+  })
 })

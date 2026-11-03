@@ -1,10 +1,11 @@
 import { sortHighlights } from '../annot/store'
-import type { HighlightColor, Sidecar } from '../types'
+import type { Box, HighlightColor, Sidecar } from '../types'
 
 export interface ExportOptions {
   title: string
   colorLabels?: Partial<Record<HighlightColor, string>>
   pageLink?: (page: number) => string
+  columns?: Record<number, Box[]>
 }
 
 /** Title, then highlights in store order as `> quote` blocks with `— p.N · <colour label>` and the note below; area highlights as `[Area on p.N]`; then threads as Q/A. */
@@ -13,7 +14,7 @@ export function sidecarToMarkdown(sidecar: Sidecar, opts: ExportOptions): string
   const link = (text: string, page: number) => (opts.pageLink ? `[${text}](${opts.pageLink(page)})` : text)
   const out: string[] = [`# ${opts.title}`]
 
-  for (const h of sortHighlights(sidecar.highlights.filter((x) => !x.deleted))) {
+  for (const h of sortHighlights(sidecar.highlights.filter((x) => !x.deleted), opts.columns)) {
     const label = labels[h.color] || h.color
     const lines: string[] = []
     if (h.kind === 'text') {
@@ -30,7 +31,7 @@ export function sidecarToMarkdown(sidecar: Sidecar, opts: ExportOptions): string
   if (threads.length) out.push('## Threads')
   for (const t of threads) {
     const lines = [`### ${link(`p.${t.anchor.page}`, t.anchor.page)}`]
-    if (t.anchor.text) lines.push(`> ${t.anchor.text}`)
+    if (t.anchor.text) lines.push(t.anchor.text.split('\n').map((l) => `> ${l}`).join('\n'))
     for (const m of t.messages) lines.push(`**${m.role === 'user' ? 'Q' : 'A'}:** ${m.content}`)
     out.push(lines.join('\n\n'))
   }
