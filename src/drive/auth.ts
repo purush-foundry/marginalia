@@ -18,6 +18,7 @@ const GIS_SRC = 'https://accounts.google.com/gsi/client'
 const OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const STATE_KEY = 'marginalia.oauthState'
 const DEFAULT_EXPIRES_IN_S = 3600
+const GIS_LOAD_TIMEOUT_MS = 10_000
 
 export const authState = signal<AuthState>({ status: 'signed-out' })
 /** False when the GIS script could not load (typically offline). */
@@ -49,19 +50,25 @@ function settle(error?: Error): void {
   }
 }
 
-// Injects the GIS script once; resolves false if it fails to load.
+// Injects the GIS script once; resolves false if it fails to load or times out.
 function loadGis(): Promise<boolean> {
   if (oauth2()) return Promise.resolve(true)
   gisLoad ??= new Promise((resolve) => {
     const script = document.createElement('script')
-    script.src = GIS_SRC
-    script.async = true
-    script.onload = () => resolve(Boolean(oauth2()))
-    script.onerror = () => {
+    const fail = () => {
+      clearTimeout(timer)
       gisLoad = null
       script.remove()
       resolve(false)
     }
+    const timer = setTimeout(fail, GIS_LOAD_TIMEOUT_MS)
+    script.src = GIS_SRC
+    script.async = true
+    script.onload = () => {
+      clearTimeout(timer)
+      resolve(Boolean(oauth2()))
+    }
+    script.onerror = fail
     document.head.appendChild(script)
   })
   return gisLoad
@@ -97,7 +104,6 @@ function redirectToGoogle(): void {
     client_id: activeClientId,
     redirect_uri: location.origin + import.meta.env.BASE_URL,
     scope: DRIVE_SCOPES,
-    prompt: 'none',
     include_granted_scopes: 'true',
     state,
   })

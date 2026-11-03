@@ -42,6 +42,8 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   delete window.google
   sessionStorage.clear()
   ;(window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(HOME)
@@ -53,6 +55,17 @@ describe('initAuth', () => {
     expect(auth.gisAvailable.value).toBe(false)
     expect(auth.authState.value.status).toBe('signed-out')
     expect(auth.getAccessToken()).toBeNull()
+  })
+
+  test('gives up on a GIS script that never loads after 10 s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => node)
+
+    const done = auth.initAuth('client-1')
+    await vi.advanceTimersByTimeAsync(10_000)
+    await done
+
+    expect(auth.gisAvailable.value).toBe(false)
   })
 
   test('restores a cached token that is still valid', async () => {
@@ -122,7 +135,7 @@ describe('connect', () => {
     expect(q.get('client_id')).toBe('client-1')
     expect(q.get('redirect_uri')).toBe(HOME)
     expect(q.get('scope')).toBe(DRIVE_SCOPES)
-    expect(q.get('prompt')).toBe('none')
+    expect(q.has('prompt')).toBe(false)
     expect(q.get('include_granted_scopes')).toBe('true')
     expect(q.get('state')).toBeTruthy()
     expect(sessionStorage.getItem('marginalia.oauthState')).toBe(q.get('state'))
