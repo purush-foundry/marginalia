@@ -225,6 +225,15 @@ describe('consumeRedirectToken', () => {
     expect(auth.authState.value.status).toBe('signed-out')
   })
 
+  test('ignores an error fragment when no redirect sign-in is pending', () => {
+    location.hash = '#error=access_denied&error_description=Something%20else'
+
+    expect(auth.consumeRedirectToken()).toBe(false)
+
+    expect(location.hash).toBe('#error=access_denied&error_description=Something%20else')
+    expect(auth.authError.value).toBeNull()
+  })
+
   test('ignores an unrelated fragment', () => {
     location.hash = '#page=3'
     expect(auth.consumeRedirectToken()).toBe(false)

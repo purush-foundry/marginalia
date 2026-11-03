@@ -225,13 +225,13 @@ export async function signOut(): Promise<void> {
   if (old) oauth2()?.revoke(old.accessToken)
 }
 
-/** Handles the `#access_token=` or `#error=` fragment after a redirect-flow return, restoring the route it left from; returns true if a token was consumed. */
+/** Handles the `#access_token=` fragment, or `#error=` while a redirect sign-in is pending, restoring the route it left from; returns true if a token was consumed. */
 export function consumeRedirectToken(): boolean {
   const params = new URLSearchParams(location.hash.slice(1))
-  if (!params.has('access_token') && !params.has('error')) return false
+  const expected = sessionStorage.getItem(STATE_KEY)
+  if (!params.has('access_token') && !(params.has('error') && expected)) return false
   const returnHash = sessionStorage.getItem(RETURN_KEY) ?? ''
   history.replaceState(history.state, '', location.pathname + location.search + returnHash)
-  const expected = sessionStorage.getItem(STATE_KEY)
   sessionStorage.removeItem(STATE_KEY)
   sessionStorage.removeItem(RETURN_KEY)
   const error = params.get('error')
