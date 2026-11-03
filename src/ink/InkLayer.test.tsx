@@ -103,6 +103,7 @@ beforeEach(() => {
   mouseDraws.value = false
   fingerDraws.value = false
   penActivity.down = false
+  penActivity.downOn = null
   penActivity.lastUp = -Infinity
 })
 
@@ -593,5 +594,61 @@ describe('InkLayer input routing on the page element', () => {
     clock += 501
     text.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 50, y: 50 }))
     expect(downs).toEqual(['touch'])
+  })
+
+  it('releases the shared pen-down state when a layer unmounts mid-stroke', async () => {
+    const props = (page: number): InkLayerProps => ({
+      page,
+      cssW: 200,
+      cssH: 400,
+      strokes: [],
+      onAddStroke: (s) => added.push(s),
+      onEraseStroke: (id) => erased.push(id),
+    })
+    const pages = (withA: boolean) => (
+      <div>
+        {withA && (
+          <div class="page" id="a">
+            <div class="text-layer" />
+            <InkLayer {...props(1)} />
+          </div>
+        )}
+        <div class="page" id="b">
+          <div class="text-layer" />
+          <InkLayer {...props(2)} />
+        </div>
+      </div>
+    )
+    await act(() => {
+      render(pages(true), host)
+    })
+    const textA = host.querySelector('#a .text-layer') as HTMLElement
+    const textB = host.querySelector('#b .text-layer') as HTMLElement
+    const downsB = reached(textB, 'pointerdown')
+    textA.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    textA.dispatchEvent(pointer('pointermove', { x: 60, y: 80 }))
+
+    await act(() => {
+      render(pages(false), host)
+    })
+    expect(penActivity.down).toBe(false)
+    textB.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 10, x: 50, y: 50 }))
+    expect(downsB).toEqual([])
+    clock += 501
+    textB.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 50, y: 50 }))
+    expect(downsB).toEqual(['touch'])
+    expect(added).toEqual([])
+  })
+
+  it('keeps the pen-down state when a page the pen is not on unmounts', async () => {
+    const text = await mount()
+    const other = document.createElement('div')
+    penActivity.down = true
+    penActivity.downOn = other
+    await act(() => {
+      render(null, host)
+    })
+    expect(penActivity.down).toBe(true)
+    expect(text.isConnected).toBe(false)
   })
 })

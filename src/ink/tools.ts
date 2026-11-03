@@ -17,4 +17,8 @@ export const mouseDraws: Signal<boolean> = signal(false)
 export const fingerDraws: Signal<boolean> = signal(false)
 
 /** Pen contact shared by every page's ink layer for palm rejection. */
-export const penActivity: { down: boolean; lastUp: number } = { down: false, lastUp: -Infinity }
+export const penActivity: { down: boolean; downOn: Element | null; lastUp: number } = {
+  down: false,
+  downOn: null,
+  lastUp: -Infinity,
+}

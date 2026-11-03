@@ -198,11 +198,15 @@ export function InkLayer(props: InkLayerProps) {
     const penLifted = (e: PointerEvent) => {
       if (e.pointerType !== 'pen') return
       penActivity.down = false
+      penActivity.downOn = null
       penActivity.lastUp = now()
     }
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === 'pen') penActivity.down = true
+      if (e.pointerType === 'pen') {
+        penActivity.down = true
+        penActivity.downOn = parent
+      }
       if (e.pointerType === 'touch' && penActive(now())) {
         swallowed.add(e.pointerId)
         swallow(e)
@@ -345,6 +349,12 @@ export function InkLayer(props: InkLayerProps) {
     parent.addEventListener('touchend', onTouchEnd, capture)
     parent.addEventListener('touchcancel', onTouchCancel, capture)
     return () => {
+      if (penActivity.down && penActivity.downOn === parent) {
+        penActivity.down = false
+        penActivity.downOn = null
+        penActivity.lastUp = now()
+      }
+      discard()
       parent.removeEventListener('pointerdown', onPointerDown, capture)
       parent.removeEventListener('pointermove', onPointerMove, capture)
       parent.removeEventListener('pointerup', onPointerUp, capture)
