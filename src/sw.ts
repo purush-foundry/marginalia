@@ -1,4 +1,4 @@
-// Service worker: precaches the built shell, cache-first for hashed assets, network-first for navigations; same-origin only.
+// Service worker: precaches the built shell, cache-first for hashed assets, network-first for app-shell navigations; same-origin only.
 
 interface ExtendableEvent extends Event {
   waitUntil(promise: Promise<unknown>): void
@@ -27,6 +27,7 @@ const CACHE = 'marginalia-__PRECACHE_VERSION__'
 const SCOPE = new URL('./', sw.location.href)
 const INDEX = new URL('index.html', SCOPE).href
 const CACHE_FIRST = ['assets/', 'pdfjs/'].map((p) => new URL(p, SCOPE).pathname)
+const SHELL_PATHS = [SCOPE.pathname, new URL(INDEX).pathname]
 
 sw.addEventListener('install', (e) => {
   e.waitUntil(sw.caches.open(CACHE).then((c) => c.addAll(PRECACHE)))
@@ -76,6 +77,8 @@ sw.addEventListener('fetch', (e) => {
   const { request } = e
   const url = new URL(request.url)
   if (request.method !== 'GET' || url.origin !== SCOPE.origin) return
-  if (request.mode === 'navigate') e.respondWith(networkFirst(request))
+  if (request.mode === 'navigate') {
+    if (SHELL_PATHS.includes(url.pathname)) e.respondWith(networkFirst(request))
+  }
   else if (CACHE_FIRST.some((p) => url.pathname.startsWith(p))) e.respondWith(cacheFirst(request))
 })

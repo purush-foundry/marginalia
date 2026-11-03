@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Marginalia privacy</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f6f4;
+        --text: #1d1d1b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161615;
+          --text: #e8e8e4;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.55 system-ui, -apple-system, sans-serif;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 32px 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy</h1>
+      <p>
+        Marginalia is a personal paper reader. It keeps your Google Drive access token, your Anthropic API key and
+        your annotations only on your device and in your own Google Drive; text or figures you choose to ask about are
+        sent from your device directly to Anthropic with your key. There are no analytics, no tracking and no
+        Marginalia server.
+      </p>
+    </main>
+  </body>
+</html>

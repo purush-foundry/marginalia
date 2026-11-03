@@ -252,7 +252,12 @@ export function Settings(props: { onboarding?: boolean }) {
       <CacheSection />
       <section>
         <h2>About</h2>
-        <p class="mg-muted">Marginalia · build {buildId()}</p>
+        <p class="mg-muted">
+          Marginalia · build {buildId()} ·{' '}
+          <a href={`${import.meta.env.BASE_URL}privacy.html`} target="_blank" rel="noopener noreferrer">
+            Privacy
+          </a>
+        </p>
         {updateReady.value && (
           <button type="button" class="btn primary" onClick={applyUpdate}>
             Update available — Reload
