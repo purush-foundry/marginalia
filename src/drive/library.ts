@@ -32,6 +32,7 @@ interface CachedFile {
 
 interface StoredSidecar {
   sidecar: Sidecar
+  remoteId?: string
   remoteVersion?: string
   dirty: boolean
 }
@@ -71,6 +72,11 @@ const driveLane = serial()
 const localLane = serial()
 
 const has = (record: Record<string, unknown>, id: string): boolean => Object.hasOwn(record, id)
+
+// True when the remote file or its version differs from the one last merged locally.
+function remoteMoved(stored: StoredSidecar | undefined, remote: DriveNode): boolean {
+  return stored?.remoteId !== remote.id || stored.remoteVersion !== remote.version
+}
 
 async function commit(index: LibraryIndex): Promise<void> {
   library.value = index
@@ -250,10 +256,10 @@ export function syncLibrary(): Promise<void> {
     try {
       await driveLane(refreshIndex)
       syncState.value = { status: 'idle', at: Date.now() }
+      await flushQueue()
     } catch (err) {
       syncState.value = failureState(err)
     }
-    await flushQueue()
   })().finally(() => {
     syncing = null
   })
@@ -368,11 +374,16 @@ export async function loadSidecar(pdfId: string): Promise<Sidecar> {
 async function persist(pdfId: string, sidecar: Sidecar): Promise<void> {
   await localLane(async () => {
     const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-    const merged = stored ? mergeSidecars(stored.sidecar, sidecar) : sidecar
-    await idbSet('sidecars', pdfId, { sidecar: merged, remoteVersion: stored?.remoteVersion, dirty: true })
+    const merged = stored ? mergeSidecars(sidecar, stored.sidecar) : sidecar
+    const record: StoredSidecar = { ...stored, sidecar: merged, dirty: true }
+    await idbSet('sidecars', pdfId, record)
     await idbSet('queue', pdfId, { queuedAt: Date.now() })
   })
-  if (getAccessToken()) void flushQueue()
+  if (getAccessToken()) {
+    flushQueue().catch((err: unknown) => {
+      syncState.value = failureState(err)
+    })
+  }
 }
 
 // Persists a debounced edit now and forgets it once stored.
@@ -406,12 +417,13 @@ export async function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
   if (!known || !getAccessToken()) return null
   const remoteNode = await getNode(known.id)
   const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-  if (stored?.remoteVersion === remoteNode.version) return null
+  if (!remoteMoved(stored, remoteNode)) return null
   const remote = await downloadJson<Sidecar>(known.id)
   const merged = await localLane(async () => {
     const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
     const sidecar = latest ? mergeSidecars(latest.sidecar, remote) : remote
-    await idbSet('sidecars', pdfId, { sidecar, remoteVersion: remoteNode.version, dirty: latest?.dirty ?? false })
+    const record: StoredSidecar = { sidecar, remoteId: remoteNode.id, remoteVersion: remoteNode.version, dirty: latest?.dirty ?? false }
+    await idbSet('sidecars', pdfId, record)
     return sidecar
   })
   const pending = pendingSaves.get(pdfId)
@@ -434,7 +446,7 @@ async function flushOne(pdfId: string): Promise<void> {
   let node: DriveNode
   if (known) {
     const remote = await getNode(known.id)
-    if (remote.version !== stored.remoteVersion) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
+    if (remoteMoved(stored, remote)) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
     node = await updateJsonFile(known.id, body)
   } else {
     if (!paper || !parent) return
@@ -445,24 +457,29 @@ async function flushOne(pdfId: string): Promise<void> {
   await localLane(async () => {
     const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
     if (latest && JSON.stringify(latest.sidecar) !== JSON.stringify(stored.sidecar)) {
-      await idbSet('sidecars', pdfId, { sidecar: mergeSidecars(latest.sidecar, body), remoteVersion: node.version, dirty: true })
+      const record: StoredSidecar = { sidecar: mergeSidecars(latest.sidecar, body), remoteId: node.id, remoteVersion: node.version, dirty: true }
+      await idbSet('sidecars', pdfId, record)
     } else {
-      await idbSet('sidecars', pdfId, { sidecar: body, remoteVersion: node.version, dirty: false })
+      const record: StoredSidecar = { sidecar: body, remoteId: node.id, remoteVersion: node.version, dirty: false }
+      await idbSet('sidecars', pdfId, record)
       await idbDel('queue', pdfId)
     }
   })
 }
 
-/** Uploads every queued sidecar; failures stay queued. */
+/** Uploads every queued sidecar; failures stay queued and are reported in syncState. */
 export function flushQueue(): Promise<void> {
   return driveLane(async () => {
     if (!getAccessToken()) return
+    let failed = 0
     for (const pdfId of await idbKeys('queue')) {
       try {
         await flushOne(pdfId)
       } catch (err) {
-        if (err instanceof DriveError && err.status === 401) return
+        failed++
+        if (err instanceof DriveError && err.status === 401) break
       }
     }
+    if (failed) syncState.value = { status: 'error', message: `${failed} annotation upload(s) failed`, at: Date.now() }
   })
 }

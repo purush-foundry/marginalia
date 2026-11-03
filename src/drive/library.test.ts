@@ -8,6 +8,7 @@ type Idb = typeof import('../lib/idb')
 
 interface StoredSidecar {
   sidecar: Sidecar
+  remoteId?: string
   remoteVersion?: string
   dirty: boolean
 }
@@ -126,6 +127,36 @@ describe('library mirror', () => {
     expect(lists.map((c) => c.url.searchParams.get('q'))).toEqual(["('f3' in parents) and trashed = false"])
   })
 
+  test('changes drop a paper moved out of the tree, with its sidecar', async () => {
+    folder('f1', 'root')
+    paper('p1', 'f1')
+    remoteSidecar('s1', 'p1', 'f1', withHighlights('p1'))
+    await lib.setRootFolder(ROOT)
+
+    drive.update('p1', { parents: ['elsewhere'] })
+    await lib.syncLibrary()
+
+    expect(lib.library.value!.papers).toEqual({})
+    expect(lib.library.value!.sidecars).toEqual({})
+    expect(lib.childrenOf('f1').papers).toEqual([])
+  })
+
+  test('syncLibrary resolves with an error state when local storage fails during the flush', async () => {
+    vi.resetModules()
+    vi.doMock('../lib/idb', async (importOriginal) => ({
+      ...(await importOriginal<Idb>()),
+      idbKeys: () => Promise.reject(new Error('storage unavailable')),
+    }))
+    try {
+      await signIn()
+      const mocked = await import('./library')
+      await expect(mocked.setRootFolder(ROOT)).resolves.toBeUndefined()
+      expect(mocked.syncState.value).toMatchObject({ status: 'error', message: 'storage unavailable' })
+    } finally {
+      vi.doUnmock('../lib/idb')
+    }
+  })
+
   test('syncLibrary never throws and reports offline when the network fails', async () => {
     await lib.setRootFolder(ROOT)
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
@@ -200,7 +231,7 @@ describe('sidecars', () => {
     paper('p1', 'root')
     remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'a'))
     await lib.setRootFolder(ROOT)
-    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), remoteVersion: '1', dirty: false })
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), remoteId: 's1', remoteVersion: '1', dirty: false })
     drive.update('s1', { content: JSON.stringify(withHighlights('p1', 'a', 'remote')) })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
 
@@ -253,6 +284,54 @@ describe('sidecars', () => {
     stop()
   })
 
+  test('a label rename survives save and reload', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    const base = withHighlights('p1', 'a')
+
+    lib.saveSidecar('p1', { ...base, colorLabels: { yellow: 'claims' } })
+    await lib.flushPendingWrites()
+    lib.saveSidecar('p1', { ...base, colorLabels: { yellow: 'key claims' } })
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    expect((await lib.loadSidecar('p1')).colorLabels).toEqual({ yellow: 'key claims' })
+  })
+
+  test('a different remote file with the same version still counts as moved', async () => {
+    paper('p1', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'a'))
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), remoteId: 's1', remoteVersion: '1', dirty: false })
+    drive.remove('s1')
+    remoteSidecar('s2', 'p1', 'root', withHighlights('p1', 'a', 'replacement'))
+    await lib.syncLibrary()
+    expect(lib.library.value!.sidecars.p1.id).toBe('s2')
+
+    const merged = await lib.refreshSidecar('p1')
+    expect(merged!.highlights.map((h) => h.id).sort()).toEqual(['a', 'replacement'])
+
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a', 'local'), remoteId: 's1', remoteVersion: '1', dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+    await lib.flushQueue()
+    expect(drive.json<Sidecar>('s2').highlights.map((h) => h.id).sort()).toEqual(['a', 'local', 'replacement'])
+  })
+
+  test('failed uploads surface in syncState while staying queued', async () => {
+    paper('p1', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1'))
+    await lib.setRootFolder(ROOT)
+    drive.failWhen.push((call) => (call.method === 'PATCH' ? driveError(403, 'insufficientFilePermissions') : undefined))
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+
+    await lib.syncLibrary()
+
+    expect(lib.syncState.value).toMatchObject({ status: 'error', message: '1 annotation upload(s) failed' })
+    expect(lib.syncState.value.at).toBeTypeOf('number')
+    expect(await idb.idbKeys('queue')).toEqual(['p1'])
+  })
+
   test('a failed upload stays queued and dirty', async () => {
     paper('p1', 'root')
     remoteSidecar('s1', 'p1', 'root', withHighlights('p1'))
@@ -273,7 +352,7 @@ describe('sidecars', () => {
     paper('p1', 'root')
     remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'a'))
     await lib.setRootFolder(ROOT)
-    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a', 'mine'), remoteVersion: '1', dirty: true })
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a', 'mine'), remoteId: 's1', remoteVersion: '1', dirty: true })
 
     expect(await lib.refreshSidecar('p1')).toBeNull()
 
