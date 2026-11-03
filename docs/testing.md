@@ -14,7 +14,10 @@ Vitest runs in happy-dom. The shell's own tests:
   local sidecars, cached dots, breadcrumbs and route links, Reconnect Drive on expiry.
 - `src/app/Reader.test.tsx` — reader wiring with the viewer, PDF and Drive layers mocked: open →
   store created → status `reading` → selection → highlight added → persisted; note and delete on a
-  tapped highlight; flush and release on close.
+  tapped highlight; the viewer selection is cleared after bar actions and on dismiss; flush and
+  release on close.
+- `src/app/boot.test.tsx` — the stored library renders while Google sign-in never finishes loading.
+- `src/app/Onboarding.test.tsx` — the connect step says "Offline — Google sign-in unavailable".
 - `src/app/sw-plugin.test.ts` — the build plugin writes the asset list and cache version into
   `sw.js`.
 
