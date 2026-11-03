@@ -214,6 +214,45 @@ describe('sidecars', () => {
     expect(stored).toMatchObject({ dirty: false, remoteVersion: '3' })
   })
 
+  test.each([
+    ['appProperties', true],
+    ['name in the same folder', false],
+  ])('flushQueue updates a sidecar already in Drive (found by %s) instead of creating one', async (_how, tagged) => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    remoteSidecar('other-device', 'p1', 'root', withHighlights('p1', 'theirs'), tagged)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    lib.saveSidecar('p1', withHighlights('p1', 'mine'))
+    await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+    expect(drive.calls.filter((c) => c.method === 'PATCH').map((c) => c.url.pathname)).toEqual([
+      '/upload/drive/v3/files/other-device',
+    ])
+    expect(lib.library.value!.sidecars.p1.id).toBe('other-device')
+    expect(drive.json<Sidecar>('other-device').highlights.map((h) => h.id).sort()).toEqual(['mine', 'theirs'])
+  })
+
+  test('flushPendingWrites stores a debounced edit right away, and pagehide triggers it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+
+    lib.saveSidecar('p1', withHighlights('p1', 'a'))
+    await lib.flushPendingWrites()
+
+    expect((await idb.idbGet<StoredSidecar>('sidecars', 'p1'))!.sidecar.highlights.map((h) => h.id)).toEqual(['a'])
+    expect(await idb.idbKeys('queue')).toContain('p1')
+
+    const stop = lib.startAutoSync()
+    lib.saveSidecar('p2', withHighlights('p2', 'b'))
+    window.dispatchEvent(new Event('pagehide'))
+    await vi.waitFor(async () => expect(await idb.idbGet('sidecars', 'p2')).toBeDefined(), { interval: 1, timeout: 100 })
+    stop()
+  })
+
   test('a failed upload stays queued and dirty', async () => {
     paper('p1', 'root')
     remoteSidecar('s1', 'p1', 'root', withHighlights('p1'))

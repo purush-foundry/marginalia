@@ -13,6 +13,7 @@ import {
   createJsonFile,
   downloadFile,
   downloadJson,
+  findSidecarFile,
   getNode,
   getStartPageToken,
   listChanges,
@@ -45,7 +46,13 @@ export const library = signal<LibraryIndex | null>(null)
 export const syncState = signal<SyncState>({ status: 'idle' })
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-const pendingSaves = new Map<string, { sidecar: Sidecar; timer: ReturnType<typeof setTimeout> }>()
+interface PendingSave {
+  sidecar: Sidecar
+  timer: ReturnType<typeof setTimeout>
+  writing?: Promise<void>
+}
+
+const pendingSaves = new Map<string, PendingSave>()
 let syncing: Promise<void> | null = null
 
 // Returns a runner that executes tasks one at a time in call order.
@@ -253,16 +260,23 @@ export function syncLibrary(): Promise<void> {
   return syncing
 }
 
-/** Syncs now, whenever the page becomes visible, and every LIBRARY_SYNC_INTERVAL_MS while visible; returns a stop function. */
+/** Syncs now, on becoming visible and every LIBRARY_SYNC_INTERVAL_MS while visible; writes pending edits on hide/pagehide; returns a stop function. */
 export function startAutoSync(): () => void {
-  const onVisible = () => {
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') void syncLibrary()
+    else void flushPendingWrites()
+  }
+  const onPageHide = () => void flushPendingWrites()
+  const onInterval = () => {
     if (document.visibilityState === 'visible') void syncLibrary()
   }
-  document.addEventListener('visibilitychange', onVisible)
-  const timer = setInterval(onVisible, LIBRARY_SYNC_INTERVAL_MS)
+  document.addEventListener('visibilitychange', onVisibility)
+  window.addEventListener('pagehide', onPageHide)
+  const timer = setInterval(onInterval, LIBRARY_SYNC_INTERVAL_MS)
   void syncLibrary()
   return () => {
-    document.removeEventListener('visibilitychange', onVisible)
+    document.removeEventListener('visibilitychange', onVisibility)
+    window.removeEventListener('pagehide', onPageHide)
     clearInterval(timer)
   }
 }
@@ -361,16 +375,29 @@ async function persist(pdfId: string, sidecar: Sidecar): Promise<void> {
   if (getAccessToken()) void flushQueue()
 }
 
+// Persists a debounced edit now and forgets it once stored.
+function writePending(pdfId: string, entry: PendingSave): Promise<void> {
+  clearTimeout(entry.timer)
+  entry.writing ??= persist(pdfId, entry.sidecar).finally(() => {
+    if (pendingSaves.get(pdfId) === entry) pendingSaves.delete(pdfId)
+  })
+  return entry.writing
+}
+
 /** Debounced by SIDECAR_SAVE_DEBOUNCE_MS: merges into the local copy, marks it dirty and queues an upload. */
 export function saveSidecar(pdfId: string, sidecar: Sidecar): void {
   const previous = pendingSaves.get(pdfId)
   if (previous) clearTimeout(previous.timer)
-  const timer = setTimeout(() => {
-    void persist(pdfId, sidecar).finally(() => {
-      if (pendingSaves.get(pdfId)?.timer === timer) pendingSaves.delete(pdfId)
-    })
-  }, SIDECAR_SAVE_DEBOUNCE_MS)
-  pendingSaves.set(pdfId, { sidecar, timer })
+  const entry: PendingSave = {
+    sidecar,
+    timer: setTimeout(() => void writePending(pdfId, entry), SIDECAR_SAVE_DEBOUNCE_MS),
+  }
+  pendingSaves.set(pdfId, entry)
+}
+
+/** Writes every debounced sidecar edit to IndexedDB and the upload queue immediately. */
+export async function flushPendingWrites(): Promise<void> {
+  await Promise.all([...pendingSaves].map(([pdfId, entry]) => writePending(pdfId, entry)))
 }
 
 /** If the remote sidecar's version differs from the one last merged: download, merge, store and return it; else null. */
@@ -399,7 +426,10 @@ async function flushOne(pdfId: string): Promise<void> {
     return
   }
   const index = library.peek()
-  const known = index?.sidecars[pdfId]
+  const paper = index?.papers[pdfId]
+  const parent = paper && (paper.parents.find((id) => has(index.folders, id)) ?? paper.parents[0])
+  let known = index?.sidecars[pdfId]
+  if (!known && paper && parent) known = (await findSidecarFile(pdfId, sidecarNameFor(paper.name), parent)) ?? undefined
   let body = stored.sidecar
   let node: DriveNode
   if (known) {
@@ -407,9 +437,7 @@ async function flushOne(pdfId: string): Promise<void> {
     if (remote.version !== stored.remoteVersion) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
     node = await updateJsonFile(known.id, body)
   } else {
-    const paper = index?.papers[pdfId]
-    if (!paper) return
-    const parent = paper.parents.find((id) => has(index.folders, id)) ?? paper.parents[0]
+    if (!paper || !parent) return
     node = await createJsonFile(sidecarNameFor(paper.name), parent, body, { marginalia: '1', pdf: pdfId })
   }
   const current = library.peek()
