@@ -77,6 +77,7 @@ npm run dev       # http://localhost:5173 (copies pdf.js assets to public/pdfjs 
 npx tsc -b        # typecheck
 npx vitest run    # unit tests
 npm run build     # production build into dist/ (base /marginalia/, includes dist/sw.js)
+npm run preview   # serves dist/ at http://localhost:4173/marginalia/
 ```
 
 The service worker (`src/sw.ts`) is built as its own entry; a small plugin
