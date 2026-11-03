@@ -1,0 +1,46 @@
+/* Ink overlay: passes input through unless a drawing input is active. */
+.ink-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  touch-action: pan-x pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.ink-layer > svg,
+.ink-layer > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.ink-layer > svg {
+  overflow: visible;
+}
+
+/* Touch devices may carry a Pencil, so the layer takes input whenever pen or eraser is the tool. */
+@media (any-pointer: coarse) {
+  .ink-layer[data-tool='pen'],
+  .ink-layer[data-tool='eraser'] {
+    pointer-events: auto;
+  }
+}
+
+.ink-layer[data-mouse-draws]:not([data-tool='select']),
+.ink-layer[data-finger-draws]:not([data-tool='select']) {
+  pointer-events: auto;
+}
+
+.ink-layer[data-mouse-draws]:not([data-tool='select']) {
+  cursor: crosshair;
+}
+
+.ink-layer[data-finger-draws] {
+  touch-action: none;
+}
