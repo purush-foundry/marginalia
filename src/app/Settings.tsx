@@ -1,5 +1,5 @@
 // Settings: Google client id and Drive session, Claude key and models, reading switches, cache, version.
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import { checkApiKey } from '../ai/claude'
 import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
 import { clearPdfCache, library, pdfCacheBytes, syncLibrary } from '../drive/library'
@@ -130,13 +130,43 @@ function DriveSection() {
   )
 }
 
+// Attributes that keep password managers and autofill away from the API key field.
+const SECRET_FIELD_ATTRS = {
+  autocomplete: 'off',
+  autocapitalize: 'off',
+  autocorrect: 'off',
+  inputmode: 'text',
+  'data-1p-ignore': '',
+  'data-lpignore': 'true',
+} as const
+
 function ClaudeSection() {
+  const field = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState(settings.value.anthropicApiKey)
   const [check, setCheck] = useState<{ busy: boolean; message?: string; ok?: boolean }>({ busy: false })
   const saved = settings.value.anthropicApiKey
 
+  // Writes the uncontrolled field and the draft together.
+  const setKey = (value: string) => {
+    if (field.current) field.current.value = value
+    setDraft(value)
+  }
+
+  const paste = () => {
+    const read = navigator.clipboard?.readText ? navigator.clipboard.readText() : Promise.reject(new Error('no clipboard'))
+    read.then(
+      (text) => {
+        const key = text.trim()
+        setKey(key)
+        setCheck({ busy: false })
+        void saveSettings({ anthropicApiKey: key })
+      },
+      () => setCheck({ busy: false, ok: false, message: 'Clipboard access denied — paste manually' }),
+    )
+  }
+
   const test = async () => {
-    const key = draft.trim()
+    const key = (field.current?.value ?? draft).trim()
     setCheck({ busy: true })
     const res = await checkApiKey(key, settings.value.textModel)
     if (res.ok) await saveSettings({ anthropicApiKey: key })
@@ -149,14 +179,17 @@ function ClaudeSection() {
       <div class="mg-field">
         <label for="mg-api-key">Anthropic API key</label>
         <input
+          ref={field}
           id="mg-api-key"
-          type="password"
-          autocomplete="off"
+          name="marginalia-api-key"
+          type="text"
+          class="mg-secret"
           spellcheck={false}
           placeholder="sk-ant-…"
-          value={draft}
+          defaultValue={saved}
+          {...SECRET_FIELD_ATTRS}
           onInput={(e) => setDraft(e.currentTarget.value)}
-          onChange={() => void saveSettings({ anthropicApiKey: draft.trim() })}
+          onChange={(e) => void saveSettings({ anthropicApiKey: e.currentTarget.value.trim() })}
         />
       </div>
       {check.message && <p class={check.ok ? 'mg-muted' : 'mg-error'}>{check.message}</p>}
@@ -164,12 +197,15 @@ function ClaudeSection() {
         <button type="button" class="btn" disabled={check.busy || !draft.trim()} onClick={() => void test()}>
           {check.busy ? 'Testing…' : 'Test key'}
         </button>
+        <button type="button" class="btn" onClick={paste}>
+          Paste
+        </button>
         <button
           type="button"
           class="btn"
           disabled={!saved && !draft}
           onClick={() => {
-            setDraft('')
+            setKey('')
             setCheck({ busy: false })
             void saveSettings({ anthropicApiKey: '' })
           }}

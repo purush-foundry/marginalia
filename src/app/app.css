@@ -36,6 +36,10 @@ textarea {
   width: 100%;
 }
 
+.mg-secret {
+  -webkit-text-security: disc;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: default;
