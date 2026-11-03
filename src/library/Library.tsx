@@ -1,7 +1,7 @@
 // Library browser: breadcrumbs, folders then PDFs with size, cached dot and reading badge, sync header.
 import { useEffect, useState } from 'preact/hooks'
 import { authState } from '../drive/auth'
-import { childrenOf, isCached, library, loadSidecar, pathTo, syncLibrary, syncState } from '../drive/library'
+import { childrenOf, isCached, library, loadSidecar, pathTo, sidecarRevision, syncLibrary, syncState } from '../drive/library'
 import { Icon } from '../app/icons'
 import { folderHash, paperHash } from '../app/route'
 import { connectDrive, formatBytes } from '../app/Settings'
@@ -59,7 +59,7 @@ export function Library({ folderId }: { folderId?: string }) {
   const { folders, papers } = current ? childrenOf(current) : { folders: [], papers: [] }
   const crumbs = current ? pathTo(current) : []
   const [info, setInfo] = useState<Record<string, PaperInfo>>({})
-  const paperKey = papers.map((p) => `${p.id}@${p.version}`).join(',')
+  const paperKey = `${papers.map((p) => `${p.id}@${p.version}`).join(',')}#${sidecarRevision.value}`
 
   useEffect(() => {
     let live = true

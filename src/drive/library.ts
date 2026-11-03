@@ -45,6 +45,8 @@ interface SyncState {
 
 export const library = signal<LibraryIndex | null>(null)
 export const syncState = signal<SyncState>({ status: 'idle' })
+/** Increments whenever a sync merges sidecars from Drive into local records. */
+export const sidecarRevision = signal(0)
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 interface PendingSave {
@@ -257,6 +259,7 @@ export function syncLibrary(): Promise<void> {
       await driveLane(refreshIndex)
       syncState.value = { status: 'idle', at: Date.now() }
       await flushQueue()
+      await pullSidecars()
     } catch (err) {
       syncState.value = failureState(err)
     }
@@ -431,56 +434,102 @@ export async function flushPendingWrites(): Promise<void> {
   await Promise.all([...pendingSaves].map(([pdfId, entry]) => writePending(pdfId, entry)))
 }
 
-/** If the remote sidecar's version differs from the one last merged: download, merge, store and return it; else null. */
-export async function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
-  const known = library.peek()?.sidecars[pdfId]
-  if (!known || !getAccessToken()) return null
-  const remoteNode = await getNode(known.id)
-  const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-  if (!remoteMoved(stored, remoteNode)) return null
-  const remote = await downloadJson<Sidecar>(known.id)
-  const merged = await localLane(async () => {
+// The folder in the tree that holds the paper.
+function parentOf(index: LibraryIndex, paper: DriveNode): string | undefined {
+  return paper.parents.find((id) => has(index.folders, id)) ?? paper.parents[0]
+}
+
+// The paper's sidecar node from the index, else found in Drive and recorded in the index.
+async function locateSidecar(pdfId: string): Promise<DriveNode | undefined> {
+  const index = library.peek()
+  const known = index?.sidecars[pdfId]
+  const paper = index?.papers[pdfId]
+  const parent = index && paper && parentOf(index, paper)
+  if (known || !paper || !parent) return known
+  const found = await findSidecarFile(pdfId, sidecarNameFor(paper.name), parent)
+  const current = library.peek()
+  if (!found || !current || !has(current.papers, pdfId)) return found ?? undefined
+  await commit({ ...current, sidecars: { ...current.sidecars, [pdfId]: found } })
+  return found
+}
+
+// Downloads the sidecar at `remoteNode`, merges it into the local record and returns the merged sidecar.
+async function mergeRemote(pdfId: string, remoteNode: DriveNode): Promise<Sidecar> {
+  const remote = await downloadJson<Sidecar>(remoteNode.id)
+  return localLane(async () => {
     const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
     const sidecar = latest ? mergeSidecars(latest.sidecar, remote) : remote
     const record: StoredSidecar = { sidecar, remoteId: remoteNode.id, remoteVersion: remoteNode.version, dirty: latest?.dirty ?? false }
     await idbSet('sidecars', pdfId, record)
     return sidecar
   })
+}
+
+/** If the remote sidecar's version differs from the one last merged: download, merge, store and return it; else null. */
+export async function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
+  if (!getAccessToken()) return null
+  const known = await locateSidecar(pdfId)
+  if (!known) return null
+  const remoteNode = await getNode(known.id)
+  const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
+  if (!remoteMoved(stored, remoteNode)) return null
+  const merged = await mergeRemote(pdfId, remoteNode)
   const pending = pendingSaves.get(pdfId)
   return pending ? mergeSidecars(merged, pending.sidecar) : merged
+}
+
+// Merges every indexed sidecar whose Drive version differs from the local record, so badges reflect other devices.
+async function pullSidecars(): Promise<void> {
+  const index = library.peek()
+  if (!index) return
+  let pulled = 0
+  try {
+    for (const [pdfId, node] of Object.entries(index.sidecars)) {
+      if (!remoteMoved(await idbGet<StoredSidecar>('sidecars', pdfId), node)) continue
+      await mergeRemote(pdfId, node)
+      pulled++
+    }
+  } finally {
+    if (pulled) sidecarRevision.value++
+  }
 }
 
 // Uploads one queued sidecar, merging first if the remote moved, and records the new remote version.
 async function flushOne(pdfId: string): Promise<void> {
   const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-  if (!stored) {
+  const index = library.peek()
+  const paper = index?.papers[pdfId]
+  if (!stored || (index && index.syncedAt > 0 && !paper)) {
     await idbDel('queue', pdfId)
     return
   }
-  const index = library.peek()
-  const paper = index?.papers[pdfId]
-  const parent = paper && (paper.parents.find((id) => has(index.folders, id)) ?? paper.parents[0])
-  let known = index?.sidecars[pdfId]
-  if (!known && paper && parent) known = (await findSidecarFile(pdfId, sidecarNameFor(paper.name), parent)) ?? undefined
+  const parent = index && paper && parentOf(index, paper)
+  const known = await locateSidecar(pdfId)
   let body = stored.sidecar
-  let node: DriveNode
+  let node: DriveNode | undefined
   if (known) {
-    const remote = await getNode(known.id)
-    if (remoteMoved(stored, remote)) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
-    node = await updateJsonFile(known.id, body)
-  } else {
+    try {
+      const remote = await getNode(known.id)
+      if (remoteMoved(stored, remote)) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
+      node = await updateJsonFile(known.id, body)
+    } catch (err) {
+      if (!(err instanceof DriveError) || err.status !== 404) throw err
+    }
+  }
+  if (!node) {
     if (!paper || !parent) return
     node = await createJsonFile(sidecarNameFor(paper.name), parent, body, { marginalia: '1', pdf: pdfId })
   }
   const current = library.peek()
   if (current) await commit({ ...current, sidecars: { ...current.sidecars, [pdfId]: node } })
+  const uploaded = node
   await localLane(async () => {
     const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
     if (latest && JSON.stringify(latest.sidecar) !== JSON.stringify(stored.sidecar)) {
-      const record: StoredSidecar = { sidecar: mergeSidecars(latest.sidecar, body), remoteId: node.id, remoteVersion: node.version, dirty: true }
+      const record: StoredSidecar = { sidecar: mergeSidecars(latest.sidecar, body), remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: true }
       await idbSet('sidecars', pdfId, record)
     } else {
-      const record: StoredSidecar = { sidecar: body, remoteId: node.id, remoteVersion: node.version, dirty: false }
+      const record: StoredSidecar = { sidecar: body, remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: false }
       await idbSet('sidecars', pdfId, record)
       await idbDel('queue', pdfId)
     }
@@ -496,6 +545,10 @@ export function flushQueue(): Promise<void> {
       try {
         await flushOne(pdfId)
       } catch (err) {
+        if (failureState(err).status === 'offline') {
+          syncState.value = { ...failureState(err), at: Date.now() }
+          return
+        }
         failed++
         if (err instanceof DriveError && err.status === 401) break
       }

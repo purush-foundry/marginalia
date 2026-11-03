@@ -345,9 +345,7 @@ describe('sidecars', () => {
     remoteSidecar('s2', 'p1', 'root', withHighlights('p1', 'a', 'replacement'))
     await lib.syncLibrary()
     expect(lib.library.value!.sidecars.p1.id).toBe('s2')
-
-    const merged = await lib.refreshSidecar('p1')
-    expect(merged!.highlights.map((h) => h.id).sort()).toEqual(['a', 'replacement'])
+    expect((await lib.loadSidecar('p1')).highlights.map((h) => h.id).sort()).toEqual(['a', 'replacement'])
 
     await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a', 'local'), remoteId: 's1', remoteVersion: '1', dirty: true })
     await idb.idbSet('queue', 'p1', { queuedAt: 0 })
@@ -384,6 +382,80 @@ describe('sidecars', () => {
     expect(await idb.idbKeys('queue')).toEqual(['p1'])
     expect((await idb.idbGet<StoredSidecar>('sidecars', 'p1'))!.dirty).toBe(true)
     expect(drive.json<Sidecar>('s1').highlights).toEqual([])
+  })
+
+  test('refreshSidecar finds a sidecar the index has not seen yet and records it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    remoteSidecar('other-device', 'p1', 'root', withHighlights('p1', 'theirs'))
+
+    const merged = await lib.refreshSidecar('p1')
+
+    expect(merged!.highlights.map((h) => h.id)).toEqual(['theirs'])
+    expect(lib.library.value!.sidecars.p1.id).toBe('other-device')
+  })
+
+  test('syncLibrary merges sidecars another device created or changed, and bumps sidecarRevision', async () => {
+    paper('p1', 'root')
+    const done: Sidecar = { ...withHighlights('p1', 'a'), reading: { page: 4, offset: 0, zoom: 0, status: 'done', updatedAt: 9 } }
+    remoteSidecar('s1', 'p1', 'root', done)
+    await lib.setRootFolder(ROOT)
+
+    expect((await lib.loadSidecar('p1')).reading.status).toBe('done')
+    expect(await idb.idbGet<StoredSidecar>('sidecars', 'p1')).toMatchObject({ remoteId: 's1', remoteVersion: '1', dirty: false })
+    const revision = lib.sidecarRevision.value
+
+    drive.update('s1', { content: JSON.stringify({ ...done, highlights: [hl('a', 1), hl('b', 2)] }) })
+    await lib.syncLibrary()
+
+    expect((await lib.loadSidecar('p1')).highlights.map((h) => h.id)).toEqual(['a', 'b'])
+    expect(lib.sidecarRevision.value).toBe(revision + 1)
+    const downloads = () => drive.calls.filter((c) => c.url.pathname === '/drive/v3/files/s1' && c.url.searchParams.get('alt') === 'media').length
+    const before = downloads()
+    await lib.syncLibrary()
+    expect(downloads()).toBe(before)
+  })
+
+  test('an offline upload failure reports offline, not an error', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
+
+    await lib.flushQueue()
+
+    expect(lib.syncState.value.status).toBe('offline')
+    expect(await idb.idbKeys('queue')).toEqual(['p1'])
+  })
+
+  test('flushQueue recreates a sidecar deleted in Drive instead of failing on it', async () => {
+    paper('p1', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1'))
+    await lib.setRootFolder(ROOT)
+    drive.remove('s1')
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), remoteId: 's1', remoteVersion: '1', dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+
+    await lib.flushQueue()
+
+    const id = lib.library.value!.sidecars.p1.id
+    expect(id).not.toBe('s1')
+    expect(drive.json<Sidecar>(id).highlights.map((h) => h.id)).toEqual(['a'])
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(lib.syncState.value.status).not.toBe('error')
+  })
+
+  test('flushQueue drops queue entries for papers outside the library', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'elsewhere', { sidecar: withHighlights('elsewhere', 'a'), dirty: true })
+    await idb.idbSet('queue', 'elsewhere', { queuedAt: 0 })
+
+    await lib.flushQueue()
+
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
   })
 
   test('refreshSidecar merges when the remote version moved and returns null otherwise', async () => {

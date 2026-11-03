@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { authState } from '../drive/auth'
-import { flushPendingWrites, getPdfBlob, saveSidecar, setRootFolder } from '../drive/library'
+import { flushPendingWrites, getPdfBlob, saveSidecar, setRootFolder, syncLibrary } from '../drive/library'
 import { FakeDrive, signIn } from '../drive/test-helpers'
 import { FOLDER_MIME, PDF_MIME, emptySidecar } from '../types'
 import { Library } from './Library'
@@ -60,6 +60,17 @@ describe('Library', () => {
     expect(row('attention').querySelector('.mg-badge')!.textContent).toBe('Unread')
     expect(row('attention').querySelector('.mg-cached')).not.toBeNull()
     expect(row('adam').querySelector('.mg-cached')).toBeNull()
+  })
+
+  test('a badge follows a reading state another device synced to Drive', async () => {
+    await act(async () => render(<Library />, root))
+    await vi.waitFor(() => expect(row('attention').querySelector('.mg-badge')!.textContent).toBe('Unread'))
+
+    const sidecar = { ...emptySidecar('attention', 'attention.pdf', 1), reading: { page: 9, offset: 0, zoom: 0, status: 'done' as const, updatedAt: 5 } }
+    drive.add({ id: 'attention-side', name: 'attention.marginalia.json', mimeType: 'application/json', parents: ['lib-root'], appProperties: { marginalia: '1', pdf: 'attention' }, content: JSON.stringify(sidecar) })
+    await act(async () => syncLibrary())
+
+    await vi.waitFor(() => expect(row('attention').querySelector('.mg-badge')!.textContent).toBe('Done'))
   })
 
   test('a subfolder shows its own children and breadcrumbs back to the root', async () => {
