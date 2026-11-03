@@ -48,6 +48,7 @@ function touch(name: string, touches: { id: number; x: number; y: number; touchT
 }
 
 let host: HTMLElement
+let layer: HTMLElement
 let added: InkStroke[]
 let erased: string[]
 let clock: number
@@ -63,15 +64,22 @@ async function mount(extra: Partial<InkLayerProps> = {}): Promise<HTMLElement> {
     ...extra,
   }
   await act(() => {
-    render(<InkLayer {...props} />, host)
+    render(
+      <div class="page">
+        <div class="text-layer" />
+        <InkLayer {...props} />
+      </div>,
+      host,
+    )
   })
-  return host.firstElementChild as HTMLElement
+  layer = host.querySelector('.ink-layer') as HTMLElement
+  return host.querySelector('.text-layer') as HTMLElement
 }
 
-function stroke(root: HTMLElement, type: string, from: [number, number], to: [number, number]) {
-  root.dispatchEvent(pointer('pointerdown', { type, x: from[0], y: from[1] }))
-  root.dispatchEvent(pointer('pointermove', { type, x: to[0], y: to[1] }))
-  root.dispatchEvent(pointer('pointerup', { type, x: to[0], y: to[1] }))
+function stroke(target: HTMLElement, type: string, from: [number, number], to: [number, number]) {
+  target.dispatchEvent(pointer('pointerdown', { type, x: from[0], y: from[1] }))
+  target.dispatchEvent(pointer('pointermove', { type, x: to[0], y: to[1] }))
+  target.dispatchEvent(pointer('pointerup', { type, x: to[0], y: to[1] }))
 }
 
 beforeEach(() => {
@@ -98,11 +106,11 @@ describe('InkLayer pen', () => {
   it('commits a stroke with normalised points on pen down/move/up', async () => {
     penColor.value = '#123456'
     penWidth.value = 0.01
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.3 }))
-    root.dispatchEvent(pointer('pointermove', { x: 100, y: 200, pressure: 0.6 }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.3 }))
+    text.dispatchEvent(pointer('pointermove', { x: 100, y: 200, pressure: 0.6 }))
     expect(added).toHaveLength(0)
-    root.dispatchEvent(pointer('pointerup', { x: 100, y: 200, pressure: 0 }))
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200, pressure: 0 }))
 
     expect(added).toHaveLength(1)
     const s = added[0]
@@ -114,9 +122,9 @@ describe('InkLayer pen', () => {
   })
 
   it('records every coalesced sample of a move', async () => {
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { x: 0, y: 0, pressure: 0.2 }))
-    root.dispatchEvent(
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 0, y: 0, pressure: 0.2 }))
+    text.dispatchEvent(
       pointer('pointermove', {
         x: 100,
         y: 200,
@@ -126,38 +134,38 @@ describe('InkLayer pen', () => {
         ],
       }),
     )
-    root.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
     expect(added[0].points).toEqual([0, 0, 0.2, 0.25, 0.25, 0.4, 0.5, 0.5, 0.6])
   })
 
   it('discards the live stroke on pointercancel', async () => {
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
-    root.dispatchEvent(pointer('pointermove', { x: 100, y: 200 }))
-    root.dispatchEvent(pointer('pointercancel', { x: 100, y: 200 }))
-    root.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointermove', { x: 100, y: 200 }))
+    text.dispatchEvent(pointer('pointercancel', { x: 100, y: 200 }))
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
     expect(added).toHaveLength(0)
   })
 
   it('ignores the pen and marks the layer pass-through while the tool is select', async () => {
-    const root = await mount()
+    const text = await mount()
     await act(() => {
       penTool.value = 'select'
     })
-    expect(root.dataset.tool).toBe('select')
-    stroke(root, 'pen', [20, 40], [100, 200])
+    expect(layer.dataset.tool).toBe('select')
+    stroke(text, 'pen', [20, 40], [100, 200])
     expect(added).toHaveLength(0)
   })
 
   it('renders committed strokes as SVG paths and skips deleted ones', async () => {
     const base = { kind: 'ink', page: 3, color: '#00f', width: 0.01, tool: 'pen', createdAt: 1, updatedAt: 1 } as const
-    const root = await mount({
+    await mount({
       strokes: [
         { ...base, id: 'a', points: [0.1, 0.1, 0.5, 0.5, 0.5, 0.5] },
         { ...base, id: 'b', points: [0.2, 0.2, 0.5, 0.6, 0.6, 0.5], deleted: true },
       ],
     })
-    const paths = root.querySelectorAll('svg path')
+    const paths = layer.querySelectorAll('svg path')
     expect(paths).toHaveLength(1)
     expect(paths[0].getAttribute('fill')).toBe('#00f')
     expect(paths[0].getAttribute('d')).toMatch(/^M/)
@@ -166,66 +174,66 @@ describe('InkLayer pen', () => {
 
 describe('InkLayer touch', () => {
   it('ignores touch by default', async () => {
-    const root = await mount()
-    stroke(root, 'touch', [20, 40], [100, 200])
+    const text = await mount()
+    stroke(text, 'touch', [20, 40], [100, 200])
     expect(added).toHaveLength(0)
   })
 
   it('draws with a finger when fingerDraws is on', async () => {
     fingerDraws.value = true
-    const root = await mount()
-    stroke(root, 'touch', [20, 40], [100, 200])
+    const text = await mount()
+    stroke(text, 'touch', [20, 40], [100, 200])
     expect(added).toHaveLength(1)
     expect(added[0].points).toEqual([0.1, 0.1, 0.5, 0.5, 0.5, 0.5])
   })
 
   it('ignores touch while a pen is down and for 500 ms after it lifts', async () => {
     fingerDraws.value = true
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
-    stroke(root, 'touch', [150, 300], [180, 350])
-    root.dispatchEvent(pointer('pointermove', { x: 100, y: 200 }))
-    root.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    stroke(text, 'touch', [150, 300], [180, 350])
+    text.dispatchEvent(pointer('pointermove', { x: 100, y: 200 }))
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200 }))
     expect(added).toHaveLength(1)
 
     clock += 499
-    stroke(root, 'touch', [150, 300], [180, 350])
+    stroke(text, 'touch', [150, 300], [180, 350])
     expect(added).toHaveLength(1)
 
     clock += 2
-    stroke(root, 'touch', [150, 300], [180, 350])
+    stroke(text, 'touch', [150, 300], [180, 350])
     expect(added).toHaveLength(2)
   })
 
   it('drops a finger stroke when the pen lands and draws the pen stroke instead', async () => {
     fingerDraws.value = true
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 150, y: 300 }))
-    root.dispatchEvent(pointer('pointermove', { type: 'touch', x: 160, y: 320 }))
-    stroke(root, 'pen', [20, 40], [100, 200])
-    root.dispatchEvent(pointer('pointerup', { type: 'touch', x: 160, y: 320 }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 150, y: 300 }))
+    text.dispatchEvent(pointer('pointermove', { type: 'touch', x: 160, y: 320 }))
+    stroke(text, 'pen', [20, 40], [100, 200])
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', x: 160, y: 320 }))
     expect(added).toHaveLength(1)
     expect(added[0].points).toEqual([0.1, 0.1, 0.5, 0.5, 0.5, 0.5])
   })
 
   it('drops a finger stroke when a second finger lands', async () => {
     fingerDraws.value = true
-    const root = await mount()
-    root.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 10, x: 20, y: 40 }))
-    root.dispatchEvent(pointer('pointermove', { type: 'touch', id: 10, x: 60, y: 80 }))
-    root.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 120, y: 80 }))
-    root.dispatchEvent(pointer('pointerup', { type: 'touch', id: 10, x: 60, y: 80 }))
-    root.dispatchEvent(pointer('pointerup', { type: 'touch', id: 11, x: 120, y: 80 }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 10, x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointermove', { type: 'touch', id: 10, x: 60, y: 80 }))
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 120, y: 80 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 10, x: 60, y: 80 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 11, x: 120, y: 80 }))
     expect(added).toHaveLength(0)
   })
 
   it('prevents default only for stylus touches', async () => {
-    const root = await mount()
+    const text = await mount()
     const stylusStart = touch('touchstart', [{ id: 1, x: 10, y: 10, touchType: 'stylus' }])
     const stylusMove = touch('touchmove', [{ id: 1, x: 20, y: 20, touchType: 'stylus' }])
     const fingerStart = touch('touchstart', [{ id: 2, x: 10, y: 10 }])
     const fingerMove = touch('touchmove', [{ id: 2, x: 10, y: 60 }])
-    for (const e of [stylusStart, stylusMove, fingerStart, fingerMove]) root.dispatchEvent(e)
+    for (const e of [stylusStart, stylusMove, fingerStart, fingerMove]) text.dispatchEvent(e)
     expect(stylusStart.defaultPrevented).toBe(true)
     expect(stylusMove.defaultPrevented).toBe(true)
     expect(fingerStart.defaultPrevented).toBe(false)
@@ -233,7 +241,7 @@ describe('InkLayer touch', () => {
   })
 
   it('dispatches marginalia:undo on a two-finger double tap', async () => {
-    const root = await mount()
+    const text = await mount()
     const undo = vi.fn()
     document.addEventListener('marginalia:undo', undo)
     const two = [
@@ -241,9 +249,9 @@ describe('InkLayer touch', () => {
       { id: 2, x: 120, y: 60 },
     ]
     const tap = () => {
-      root.dispatchEvent(touch('touchstart', two))
+      text.dispatchEvent(touch('touchstart', two))
       clock += 80
-      root.dispatchEvent(touch('touchend', two, []))
+      text.dispatchEvent(touch('touchend', two, []))
     }
     tap()
     expect(undo).not.toHaveBeenCalled()
@@ -254,7 +262,7 @@ describe('InkLayer touch', () => {
   })
 
   it('does not undo on a two-finger pan or a single two-finger tap', async () => {
-    const root = await mount()
+    const text = await mount()
     const undo = vi.fn()
     document.addEventListener('marginalia:undo', undo)
     const two = [
@@ -265,15 +273,15 @@ describe('InkLayer touch', () => {
       { id: 1, x: 50, y: 150 },
       { id: 2, x: 120, y: 160 },
     ]
-    root.dispatchEvent(touch('touchstart', two))
-    root.dispatchEvent(touch('touchmove', moved))
-    root.dispatchEvent(touch('touchend', moved, []))
+    text.dispatchEvent(touch('touchstart', two))
+    text.dispatchEvent(touch('touchmove', moved))
+    text.dispatchEvent(touch('touchend', moved, []))
     clock += 150
-    root.dispatchEvent(touch('touchstart', two))
-    root.dispatchEvent(touch('touchend', two, []))
+    text.dispatchEvent(touch('touchstart', two))
+    text.dispatchEvent(touch('touchend', two, []))
     clock += 1000
-    root.dispatchEvent(touch('touchstart', two))
-    root.dispatchEvent(touch('touchend', two, []))
+    text.dispatchEvent(touch('touchstart', two))
+    text.dispatchEvent(touch('touchend', two, []))
     expect(undo).not.toHaveBeenCalled()
     document.removeEventListener('marginalia:undo', undo)
   })
@@ -281,16 +289,16 @@ describe('InkLayer touch', () => {
 
 describe('InkLayer mouse', () => {
   it('draws only when mouseDraws is latched', async () => {
-    const root = await mount()
-    stroke(root, 'mouse', [20, 40], [100, 200])
+    const text = await mount()
+    stroke(text, 'mouse', [20, 40], [100, 200])
     expect(added).toHaveLength(0)
-    expect(root.dataset.mouseDraws).toBeUndefined()
+    expect(layer.dataset.mouseDraws).toBeUndefined()
 
     await act(() => {
       mouseDraws.value = true
     })
-    expect(root.dataset.mouseDraws).toBe('')
-    stroke(root, 'mouse', [20, 40], [100, 200])
+    expect(layer.dataset.mouseDraws).toBe('')
+    stroke(text, 'mouse', [20, 40], [100, 200])
     expect(added).toHaveLength(1)
     expect(added[0].points).toEqual([0.1, 0.1, 0.5, 0.5, 0.5, 0.5])
   })
@@ -305,19 +313,147 @@ describe('InkLayer eraser', () => {
 
   it('erases each stroke it touches once and adds nothing', async () => {
     penTool.value = 'eraser'
-    const root = await mount({ strokes })
-    root.dispatchEvent(pointer('pointerdown', { x: 40, y: 30 }))
-    root.dispatchEvent(pointer('pointermove', { x: 60, y: 41 }))
-    root.dispatchEvent(pointer('pointermove', { x: 80, y: 40 }))
-    root.dispatchEvent(pointer('pointerup', { x: 80, y: 40 }))
+    const text = await mount({ strokes })
+    text.dispatchEvent(pointer('pointerdown', { x: 40, y: 30 }))
+    text.dispatchEvent(pointer('pointermove', { x: 60, y: 41 }))
+    text.dispatchEvent(pointer('pointermove', { x: 80, y: 40 }))
+    text.dispatchEvent(pointer('pointerup', { x: 80, y: 40 }))
     expect(erased).toEqual(['near'])
     expect(added).toHaveLength(0)
   })
 
   it('misses strokes farther than the eraser radius', async () => {
     penTool.value = 'eraser'
-    const root = await mount({ strokes })
-    stroke(root, 'pen', [40, 100], [80, 100])
+    const text = await mount({ strokes })
+    stroke(text, 'pen', [40, 100], [80, 100])
     expect(erased).toEqual([])
+  })
+})
+
+describe('InkLayer input routing on the page element', () => {
+  function reached(target: HTMLElement, name: string) {
+    const seen: string[] = []
+    target.addEventListener(name, (e) => seen.push((e as PointerEvent).pointerType ?? e.type))
+    return seen
+  }
+
+  it('lets finger and mouse through to the layer underneath while the tool is pen', async () => {
+    const text = await mount()
+    const seen = reached(text, 'pointerdown')
+    const finger = pointer('pointerdown', { type: 'touch', x: 20, y: 40 })
+    const mouse = pointer('pointerdown', { type: 'mouse', x: 20, y: 40 })
+    text.dispatchEvent(finger)
+    text.dispatchEvent(mouse)
+    expect(seen).toEqual(['touch', 'mouse'])
+    expect(finger.defaultPrevented).toBe(false)
+    expect(mouse.defaultPrevented).toBe(false)
+    expect(layer.dataset.mouseDraws).toBeUndefined()
+    expect(layer.dataset.fingerDraws).toBeUndefined()
+  })
+
+  it('intercepts the pen for pen and eraser, and lets it through for select', async () => {
+    const text = await mount()
+    const seen = reached(text, 'pointerdown')
+    const down = pointer('pointerdown', { x: 20, y: 40 })
+    text.dispatchEvent(down)
+    text.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    expect(down.defaultPrevented).toBe(true)
+
+    await act(() => {
+      penTool.value = 'eraser'
+    })
+    clock += 1000
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    expect(seen).toEqual([])
+
+    await act(() => {
+      penTool.value = 'select'
+    })
+    clock += 1000
+    const select = pointer('pointerdown', { x: 20, y: 40 })
+    text.dispatchEvent(select)
+    expect(seen).toEqual(['pen'])
+    expect(select.defaultPrevented).toBe(false)
+  })
+
+  it('intercepts the mouse only while the draw latch is on', async () => {
+    const text = await mount()
+    const seen = reached(text, 'pointerdown')
+    await act(() => {
+      mouseDraws.value = true
+    })
+    text.dispatchEvent(pointer('pointerdown', { type: 'mouse', x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'mouse', x: 20, y: 40 }))
+    expect(seen).toEqual([])
+    expect(added).toHaveLength(1)
+
+    await act(() => {
+      mouseDraws.value = false
+    })
+    text.dispatchEvent(pointer('pointerdown', { type: 'mouse', x: 20, y: 40 }))
+    expect(seen).toEqual(['mouse'])
+  })
+
+  it('swallows palm touches while the pen draws and for 500 ms after, then lets fingers through', async () => {
+    const text = await mount()
+    const downs = reached(text, 'pointerdown')
+    const ups = reached(text, 'pointerup')
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    const palm = pointer('pointerdown', { type: 'touch', x: 150, y: 300 })
+    text.dispatchEvent(palm)
+    text.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', x: 150, y: 300 }))
+    expect(palm.defaultPrevented).toBe(true)
+    expect(downs).toEqual([])
+    expect(ups).toEqual([])
+
+    clock += 499
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 150, y: 300 }))
+    expect(downs).toEqual([])
+    clock += 2
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 12, x: 150, y: 300 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 12, x: 150, y: 300 }))
+    expect(downs).toEqual(['touch'])
+    expect(ups).toEqual(['touch'])
+  })
+
+  it('leaves stylus touches alone in the select tool', async () => {
+    const text = await mount()
+    await act(() => {
+      penTool.value = 'select'
+    })
+    const start = touch('touchstart', [{ id: 1, x: 10, y: 10, touchType: 'stylus' }])
+    text.dispatchEvent(start)
+    expect(start.defaultPrevented).toBe(false)
+  })
+
+  it('detects the two-finger double tap in the select tool', async () => {
+    const text = await mount()
+    await act(() => {
+      penTool.value = 'select'
+    })
+    const undo = vi.fn()
+    document.addEventListener('marginalia:undo', undo)
+    const two = [
+      { id: 1, x: 50, y: 50 },
+      { id: 2, x: 120, y: 60 },
+    ]
+    text.dispatchEvent(touch('touchstart', two))
+    text.dispatchEvent(touch('touchend', two, []))
+    clock += 100
+    text.dispatchEvent(touch('touchstart', two))
+    text.dispatchEvent(touch('touchend', two, []))
+    expect(undo).toHaveBeenCalledTimes(1)
+    document.removeEventListener('marginalia:undo', undo)
+  })
+
+  it('takes finger input on the layer itself when finger drawing is on', async () => {
+    fingerDraws.value = true
+    const text = await mount()
+    const seen = reached(text, 'pointerdown')
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 20, y: 40 }))
+    expect(seen).toEqual([])
+    expect(layer.dataset.fingerDraws).toBe('')
   })
 })

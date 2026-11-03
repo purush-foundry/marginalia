@@ -1,4 +1,4 @@
-/* Ink overlay: passes input through unless a drawing input is active. */
+/* Ink overlay: passes input through unless the mouse latch or finger drawing is on. */
 .ink-layer {
   position: absolute;
   top: 0;
@@ -22,14 +22,6 @@
 
 .ink-layer > svg {
   overflow: visible;
-}
-
-/* Touch devices may carry a Pencil, so the layer takes input whenever pen or eraser is the tool. */
-@media (any-pointer: coarse) {
-  .ink-layer[data-tool='pen'],
-  .ink-layer[data-tool='eraser'] {
-    pointer-events: auto;
-  }
 }
 
 .ink-layer[data-mouse-draws]:not([data-tool='select']),

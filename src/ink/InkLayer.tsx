@@ -91,11 +91,12 @@ export function InkLayer(props: InkLayerProps) {
   const propsRef = useRef(props)
   propsRef.current = props
 
+  // Intercepts drawing input on the parent page element in the capture phase; everything else passes through.
   useEffect(() => {
     const root = rootRef.current
-    if (!root) return
+    const parent = root?.parentElement
+    if (!root || !parent) return
     let live: LiveStroke | null = null
-    let penDown = false
     let lastPenUp = -Infinity
     let tapStart = 0
     let tapValid = false
@@ -132,10 +133,18 @@ export function InkLayer(props: InkLayerProps) {
       clearCanvas()
     }
 
-    const accepts = (e: PointerEvent, t: number): boolean => {
+    const swallow = (e: Event) => {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+
+    const penActive = (t: number) => (live !== null && live.pointerType === 'pen') || t - lastPenUp < PALM_WINDOW_MS
+
+    const draws = (e: PointerEvent): boolean => {
+      if (penTool.value === 'select') return false
       if (e.pointerType === 'pen') return true
       if (e.pointerType === 'mouse') return mouseDraws.value && e.button === 0
-      if (e.pointerType === 'touch') return fingerDraws.value && t - lastPenUp >= PALM_WINDOW_MS
+      if (e.pointerType === 'touch') return fingerDraws.value
       return false
     }
 
@@ -171,11 +180,23 @@ export function InkLayer(props: InkLayerProps) {
       }
     }
 
+    const isLive = (e: PointerEvent) => live !== null && e.pointerId === live.pointerId
+
+    const palms = new Set<number>()
+
+    // Swallows the rest of a touch pointer whose pointerdown was rejected as a palm.
+    const isPalm = (e: PointerEvent, ends: boolean) => {
+      if (!palms.has(e.pointerId)) return false
+      if (ends) palms.delete(e.pointerId)
+      return true
+    }
+
     const onPointerDown = (e: PointerEvent) => {
-      const tool = penTool.value
-      if (tool === 'select') return
-      const t = now()
-      if (e.pointerType === 'pen') penDown = true
+      if (e.pointerType === 'touch' && penActive(now())) {
+        palms.add(e.pointerId)
+        swallow(e)
+        return
+      }
       if (live) {
         if (e.pointerType === 'pen' && live.pointerType !== 'pen') discard()
         else {
@@ -183,13 +204,14 @@ export function InkLayer(props: InkLayerProps) {
           return
         }
       }
-      if (!accepts(e, t)) return
-      e.preventDefault()
+      if (!draws(e)) return
+      swallow(e)
       try {
-        root.setPointerCapture(e.pointerId)
+        parent.setPointerCapture(e.pointerId)
       } catch {
         // Capture is best-effort; synthetic or already-released pointers cannot be captured.
       }
+      const tool = penTool.value === 'eraser' ? 'eraser' : 'pen'
       const { cssW, cssH } = propsRef.current
       const rect = root.getBoundingClientRect()
       const width = penWidth.value
@@ -212,18 +234,25 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerMove = (e: PointerEvent) => {
-      if (!live || e.pointerId !== live.pointerId) return
+      if (isPalm(e, false)) {
+        swallow(e)
+        return
+      }
+      if (!live || !isLive(e)) return
+      swallow(e)
       for (const sample of samplesOf(e)) addSample(live, sample)
     }
 
     const onPointerUp = (e: PointerEvent) => {
-      if (e.pointerType === 'pen') {
-        penDown = false
-        lastPenUp = now()
+      if (isPalm(e, true)) {
+        swallow(e)
+        return
       }
-      if (!live || e.pointerId !== live.pointerId) return
+      if (!live || !isLive(e)) return
+      swallow(e)
       const s = live
       discard()
+      if (s.pointerType === 'pen') lastPenUp = now()
       if (s.tool !== 'pen' || s.points.length === 0) return
       const { page, cssW, onAddStroke } = propsRef.current
       const t = now()
@@ -241,17 +270,24 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerCancel = (e: PointerEvent) => {
-      if (e.pointerType === 'pen') {
-        penDown = false
-        lastPenUp = now()
+      if (isPalm(e, true)) {
+        swallow(e)
+        return
       }
-      if (live && e.pointerId === live.pointerId) discard()
+      if (!live || !isLive(e)) return
+      swallow(e)
+      if (live.pointerType === 'pen') lastPenUp = now()
+      discard()
+    }
+
+    const guardStylus = (e: TouchEvent) => {
+      if (penTool.value !== 'select' && isStylus(e.changedTouches)) e.preventDefault()
     }
 
     const onTouchStart = (e: TouchEvent) => {
-      if (isStylus(e.changedTouches)) e.preventDefault()
+      guardStylus(e)
       const down = fingers(e.touches)
-      if (down.length === 2 && down.length === e.touches.length && !penDown) {
+      if (down.length === 2 && down.length === e.touches.length && !(live && live.pointerType === 'pen')) {
         tapStart = now()
         tapValid = true
         tapOrigin = new Map(down.map((t) => [t.identifier, [t.clientX, t.clientY]]))
@@ -261,7 +297,7 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onTouchMove = (e: TouchEvent) => {
-      if (isStylus(e.changedTouches)) e.preventDefault()
+      guardStylus(e)
       if (!tapValid) return
       for (const t of fingers(e.changedTouches)) {
         const origin = tapOrigin.get(t.identifier)
@@ -286,24 +322,25 @@ export function InkLayer(props: InkLayerProps) {
       tapValid = false
     }
 
-    const active = { passive: false } as const
-    root.addEventListener('pointerdown', onPointerDown)
-    root.addEventListener('pointermove', onPointerMove)
-    root.addEventListener('pointerup', onPointerUp)
-    root.addEventListener('pointercancel', onPointerCancel)
-    root.addEventListener('touchstart', onTouchStart, active)
-    root.addEventListener('touchmove', onTouchMove, active)
-    root.addEventListener('touchend', onTouchEnd)
-    root.addEventListener('touchcancel', onTouchCancel)
+    const capture = { capture: true } as const
+    const activeCapture = { capture: true, passive: false } as const
+    parent.addEventListener('pointerdown', onPointerDown, capture)
+    parent.addEventListener('pointermove', onPointerMove, capture)
+    parent.addEventListener('pointerup', onPointerUp, capture)
+    parent.addEventListener('pointercancel', onPointerCancel, capture)
+    parent.addEventListener('touchstart', onTouchStart, activeCapture)
+    parent.addEventListener('touchmove', onTouchMove, activeCapture)
+    parent.addEventListener('touchend', onTouchEnd, capture)
+    parent.addEventListener('touchcancel', onTouchCancel, capture)
     return () => {
-      root.removeEventListener('pointerdown', onPointerDown)
-      root.removeEventListener('pointermove', onPointerMove)
-      root.removeEventListener('pointerup', onPointerUp)
-      root.removeEventListener('pointercancel', onPointerCancel)
-      root.removeEventListener('touchstart', onTouchStart)
-      root.removeEventListener('touchmove', onTouchMove)
-      root.removeEventListener('touchend', onTouchEnd)
-      root.removeEventListener('touchcancel', onTouchCancel)
+      parent.removeEventListener('pointerdown', onPointerDown, capture)
+      parent.removeEventListener('pointermove', onPointerMove, capture)
+      parent.removeEventListener('pointerup', onPointerUp, capture)
+      parent.removeEventListener('pointercancel', onPointerCancel, capture)
+      parent.removeEventListener('touchstart', onTouchStart, capture)
+      parent.removeEventListener('touchmove', onTouchMove, capture)
+      parent.removeEventListener('touchend', onTouchEnd, capture)
+      parent.removeEventListener('touchcancel', onTouchCancel, capture)
     }
   }, [])
 
