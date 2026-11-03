@@ -186,4 +186,12 @@ describe('annotation store', () => {
     document.dispatchEvent(new CustomEvent('marginalia:redo'))
     expect(store.highlights.value).toHaveLength(1)
   })
+
+  it('ignores document events after dispose', () => {
+    const { store } = make()
+    store.addHighlight(text(1, 0.1, 0.1))
+    store.dispose()
+    document.dispatchEvent(new CustomEvent('marginalia:undo'))
+    expect(store.highlights.value).toHaveLength(1)
+  })
 })

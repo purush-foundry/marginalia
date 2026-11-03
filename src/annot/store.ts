@@ -25,6 +25,8 @@ export interface AnnotationStore {
   redo(): void
   /** Replaces state with a merged sidecar from the sync layer; clears undo history. */
   replaceFromRemote(sidecar: Sidecar): void
+  /** Removes the document undo/redo listeners; later events do nothing. */
+  dispose(): void
 }
 
 export type NewHighlight = Highlight extends infer H
@@ -170,6 +172,10 @@ export function createAnnotationStore(initial: Sidecar, persist: (sidecar: Sidec
     },
     undo,
     redo,
+    dispose() {
+      document.removeEventListener('marginalia:undo', undo)
+      document.removeEventListener('marginalia:redo', redo)
+    },
     replaceFromRemote(sidecar) {
       state.value = sidecar
       undoStack.value = []
