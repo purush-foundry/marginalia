@@ -1,7 +1,7 @@
 // Public identifiers and app-wide constants. Secrets never live here.
 
 /** Google OAuth Web client id; Settings can override it at runtime. */
-export const GOOGLE_CLIENT_ID = ''
+export const GOOGLE_CLIENT_ID = '218691396232-e91in46ut3d87ovmm1g3k76ndafb1v1g.apps.googleusercontent.com'
 
 export const DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
