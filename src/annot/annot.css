@@ -6,12 +6,11 @@
   height: 100%;
   overflow: visible;
   pointer-events: none;
-  z-index: 3;
+  mix-blend-mode: multiply;
 }
 
 .mg-hl rect {
   pointer-events: all;
-  mix-blend-mode: multiply;
   cursor: pointer;
 }
 
@@ -20,8 +19,11 @@
   stroke-width: 2;
 }
 
-.mg-night .mg-hl rect {
+.mg-night .mg-hl {
   mix-blend-mode: screen;
+}
+
+.mg-night .mg-hl rect {
   fill-opacity: 0.4;
 }
 

@@ -1,6 +1,8 @@
 import type { Box, Highlight } from '../types.ts'
 import './annot.css'
 
+const pct = (v: number) => `${v * 100}%`
+
 export interface HighlightLayerProps {
   highlights: Highlight[]
   onTap(id: string, rect: DOMRect): void
@@ -17,18 +19,17 @@ export function HighlightLayer({ highlights, onTap }: HighlightLayerProps) {
       key={`${h.id}:${i}`}
       class={h.kind === 'area' ? 'area' : undefined}
       data-id={h.id}
-      x={b.x}
-      y={b.y}
-      width={b.w}
-      height={b.h}
+      x={pct(b.x)}
+      y={pct(b.y)}
+      width={pct(b.w)}
+      height={pct(b.h)}
       fill={`var(--hl-${h.color})`}
       stroke={h.kind === 'area' ? `var(--hl-${h.color})` : undefined}
-      vector-effect={h.kind === 'area' ? 'non-scaling-stroke' : undefined}
       onClick={tap(h.id)}
     />
   )
   return (
-    <svg class="mg-hl" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="mg-hl" aria-hidden="true">
       {highlights.flatMap((h) =>
         h.deleted ? [] : h.kind === 'area' ? [rect(h, h.box, 0)] : h.boxes.map((b, i) => rect(h, b, i)),
       )}
