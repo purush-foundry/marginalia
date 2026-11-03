@@ -5,11 +5,11 @@ import type { Box, PageText, TextLine } from '../types.ts'
 
 const FULL_WIDTH = 0.7
 const WIDE_LINE = 0.2
-const MIN_COLUMN_WIDTH = 0.15
-const MIN_COLUMN_LINES = 3
-const GUTTER_COVER = 0.15
+const MIN_SIDE_LINES = 3
+const MIN_SIDE_RATIO = 0.25
+const GUTTER_MARGIN = 0.005
+const GUTTER_STEPS = 200
 const SPAN_OVERLAP = 0.2
-const BINS = 200
 const BASELINE_TOLERANCE = 0.5
 const LINE_GAP = 1.0
 const WORD_GAP = 0.15
@@ -115,88 +115,56 @@ function splitRow(row: Glyph[]): RawLine[] {
   return lines.filter((l) => l.text)
 }
 
-interface Span {
-  x0: number
-  x1: number
+interface Gutter {
+  x: number
+  sides: number
 }
 
-function overlap(a: Span, b: Span): number {
-  return Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)
-}
-
-// Column x-ranges separated by interior gutters that almost no wide line crosses.
-function columnSpans(wide: RawLine[], pageW: number): Span[] {
-  if (!wide.length) return []
-  const bin = pageW / BINS
-  const cover = new Array<number>(BINS).fill(0)
-  for (const l of wide) {
-    const a = Math.max(0, Math.floor(l.x0 / bin))
-    const b = Math.min(BINS - 1, Math.ceil(l.x1 / bin) - 1)
-    for (let i = a; i <= b; i++) cover[i]++
-  }
-  const peak = Math.max(...cover)
-  const low = Math.max(1, Math.floor(GUTTER_COVER * peak))
-  const first = cover.findIndex((c) => c > low)
-  const last = BINS - 1 - [...cover].reverse().findIndex((c) => c > low)
-  if (first < 0) {
-    return [{ x0: Math.min(...wide.map((l) => l.x0)), x1: Math.max(...wide.map((l) => l.x1)) }]
-  }
-  const spans: { a: number; b: number; peak: number }[] = []
-  let cur = { a: first, b: first, peak: 0 }
-  for (let i = first; i <= last; i++) {
-    if (cover[i] > low) {
-      if (i > cur.b + 1) {
-        spans.push(cur)
-        cur = { a: i, b: i, peak: 0 }
-      }
-      cur.b = i
-      cur.peak = Math.max(cur.peak, cover[i])
+// Gutter x that the most wide lines sit wholly on either side of; null when fewer than MIN_SIDE_LINES per side or crossers outnumber them.
+function findGutter(wide: RawLine[], pageW: number): Gutter | null {
+  const margin = GUTTER_MARGIN * pageW
+  let best: { sides: number; crossers: number; from: number; to: number } | null = null
+  for (let i = 1; i < GUTTER_STEPS; i++) {
+    const x = (i / GUTTER_STEPS) * pageW
+    let left = 0
+    let right = 0
+    let crossers = 0
+    for (const l of wide) {
+      if (l.x1 <= x + margin) left++
+      else if (l.x0 >= x - margin) right++
+      else crossers++
+    }
+    const sides = Math.min(left, right)
+    if (sides < MIN_SIDE_LINES || crossers > sides / MIN_SIDE_RATIO) continue
+    if (!best || sides > best.sides || (sides === best.sides && crossers < best.crossers)) {
+      best = { sides, crossers, from: x, to: x }
+    } else if (sides === best.sides && crossers === best.crossers && best.to === x - pageW / GUTTER_STEPS) {
+      best.to = x
     }
   }
-  spans.push(cur)
-  const real = spans.filter((sp) => sp.peak >= MIN_COLUMN_LINES && (sp.b - sp.a + 1) * bin >= MIN_COLUMN_WIDTH * pageW)
-  const kept = real.length ? real : [{ a: first, b: last, peak }]
-  return kept.map((sp, i) => ({
-    x0: i === 0 ? first * bin : sp.a * bin,
-    x1: i === kept.length - 1 ? (last + 1) * bin : (sp.b + 1) * bin,
-  }))
+  return best ? { x: (best.from + best.to) / 2, sides: best.sides } : null
 }
 
 function assignColumns(lines: RawLine[], pageW: number): void {
   const body = lines.filter((l) => l.x1 - l.x0 <= FULL_WIDTH * pageW)
   for (const l of lines) if (!body.includes(l)) l.column = 0
-  const spans = columnSpans(
+  const gutter = findGutter(
     body.filter((l) => l.x1 - l.x0 > WIDE_LINE * pageW),
     pageW,
   )
-  if (!spans.length) {
+  if (!gutter) {
     for (const l of body) l.column = 1
     return
   }
+  const margin = GUTTER_MARGIN * pageW
   for (const l of body) {
-    const width = Math.max(l.x1 - l.x0, 1e-6)
-    const ranked = spans
-      .map((sp, k) => ({ k, ov: overlap(l, sp) }))
-      .sort((p, q) => q.ov - p.ov)
-    if (ranked.length > 1 && ranked[1].ov > SPAN_OVERLAP * width) {
-      l.column = 0
-      continue
-    }
-    if (ranked[0].ov > 0) {
-      l.column = ranked[0].k + 1
-      continue
-    }
-    const mid = (l.x0 + l.x1) / 2
-    let best = 0
-    spans.forEach((sp, k) => {
-      if (distance(mid, sp) < distance(mid, spans[best])) best = k
-    })
-    l.column = best + 1
+    const leftPart = gutter.x - l.x0
+    const rightPart = l.x1 - gutter.x
+    if (rightPart <= margin) l.column = 1
+    else if (leftPart <= margin) l.column = 2
+    else if (Math.min(leftPart, rightPart) > SPAN_OVERLAP * (l.x1 - l.x0)) l.column = 0
+    else l.column = leftPart >= rightPart ? 1 : 2
   }
-}
-
-function distance(x: number, c: Span): number {
-  return x < c.x0 ? c.x0 - x : x > c.x1 ? x - c.x1 : 0
 }
 
 function readingOrder(lines: RawLine[]): RawLine[] {
@@ -238,7 +206,7 @@ function plainText(lines: RawLine[]): string {
   return paragraphs.join('\n\n')
 }
 
-/** Groups text items into lines (same baseline ±, sorted by x), clusters lines into columns by x-overlap, orders reading order column-major, joins text with hyphenation/ligature fixes. */
+/** Groups text items into lines (same baseline ±, sorted by x), splits them into columns at a gutter that wide lines do not cross, orders reading order column-major between spanning lines, joins text with hyphenation/ligature fixes. */
 export function buildPageText(
   page: number,
   items: TextItem[],

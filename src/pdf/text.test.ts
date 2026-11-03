@@ -180,6 +180,54 @@ describe('buildPageText on resnet.pdf (two columns)', () => {
   })
 })
 
+describe('column detection on every fixture page', () => {
+  const all = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+  let resnet: Map<number, PageText>
+  let attention: Map<number, PageText>
+  beforeAll(async () => {
+    resnet = await fixturePages(all(12), 'resnet.pdf')
+    attention = await fixturePages(all(15))
+  })
+
+  it('finds exactly two real columns on every resnet.pdf page', () => {
+    expect(resnet.size).toBe(12)
+    for (const [n, pt] of resnet) expect([n, pt.columns.length - 1]).toEqual([n, 2])
+  })
+
+  it('finds exactly one column on every attention.pdf page', () => {
+    for (const [n, pt] of attention) expect([n, pt.columns.length - 1]).toEqual([n, 1])
+  })
+
+  it('keeps the resnet.pdf page 4 Figure 3 caption contiguous and before the right column', () => {
+    const lines = resnet.get(4)!.lines
+    const first = lines.findIndex((l) => l.text.startsWith('Figure 3. Example network architectures'))
+    const last = lines.findIndex((l) => l.text.startsWith('more details and other variants.'))
+    expect(first).toBeGreaterThan(-1)
+    expect(last - first).toBe(5)
+    expect(lines.slice(first, last + 1).every((l) => l.column === 1)).toBe(true)
+    const right = lines.findIndex((l) => l.text.startsWith('Residual Network. Based on the above'))
+    expect(right).toBe(last + 1)
+  })
+
+  it('reads the resnet.pdf page 11 body below the tables left column then right column', () => {
+    const pt = resnet.get(11)!
+    const body = pt.lines.filter((l) => l.box.y > 0.47 && l.column > 0)
+    const columns = body.map((l) => l.column)
+    expect(columns.indexOf(2)).toBeGreaterThan(0)
+    expect(columns.slice(columns.indexOf(2)).every((c) => c === 2)).toBe(true)
+    const t = pt.text
+    const order = [
+      'We select two adjacent scales',
+      'Ensemble. In Faster R-CNN',
+      'won the 1st place in the detection task in COCO 2015.',
+      'Table 12. Our results',
+      'The ImageNet Detection (DET) task involves 200 object',
+    ].map((s) => t.indexOf(s))
+    expect(order.every((i) => i > -1)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+  })
+})
+
 describe('text helpers', () => {
   it('fixLigatures expands ligature code points', () => {
     expect(fixLigatures('ﬁnd eﬃcient ﬂow')).toBe('find efficient flow')
