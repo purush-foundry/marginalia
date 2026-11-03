@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InkStroke } from '../types.ts'
 import { InkLayer, type InkLayerProps } from './InkLayer.tsx'
-import { fingerDraws, mouseDraws, penColor, penTool, penWidth } from './tools.ts'
+import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 
 // happy-dom's PointerEvent honours pointerType, pressure and coalescedEvents from the init dict.
 interface P {
@@ -102,6 +102,8 @@ beforeEach(() => {
   penWidth.value = 0.004
   mouseDraws.value = false
   fingerDraws.value = false
+  penActivity.down = false
+  penActivity.lastUp = -Infinity
 })
 
 afterEach(() => {
@@ -536,5 +538,60 @@ describe('InkLayer input routing on the page element', () => {
     text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 10, x: 20, y: 40 }))
     expect(ups).toEqual([])
     expect(added).toHaveLength(1)
+  })
+
+  it('shares the palm window across pages', async () => {
+    const props = (page: number): InkLayerProps => ({
+      page,
+      cssW: 200,
+      cssH: 400,
+      strokes: [],
+      onAddStroke: (s) => added.push(s),
+      onEraseStroke: (id) => erased.push(id),
+    })
+    await act(() => {
+      render(
+        <div>
+          <div class="page" id="a">
+            <div class="text-layer" />
+            <InkLayer {...props(1)} />
+          </div>
+          <div class="page" id="b">
+            <div class="text-layer" />
+            <InkLayer {...props(2)} />
+          </div>
+        </div>,
+        host,
+      )
+    })
+    const textA = host.querySelector('#a .text-layer') as HTMLElement
+    const textB = host.querySelector('#b .text-layer') as HTMLElement
+    const downsB = reached(textB, 'pointerdown')
+
+    textA.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    const palm = pointer('pointerdown', { type: 'touch', id: 10, x: 50, y: 50 })
+    textB.dispatchEvent(palm)
+    expect(palm.defaultPrevented).toBe(true)
+    expect(downsB).toEqual([])
+
+    textA.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    clock += 499
+    textB.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 50, y: 50 }))
+    expect(downsB).toEqual([])
+    clock += 2
+    textB.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 12, x: 50, y: 50 }))
+    expect(downsB).toEqual(['touch'])
+    expect(added.map((s) => s.page)).toEqual([1])
+  })
+
+  it('treats a hovering pen as lifted', async () => {
+    const text = await mount()
+    const downs = reached(text, 'pointerdown')
+    penActivity.down = true
+    const hover = new PointerEvent('pointermove', { bubbles: true, pointerType: 'pen', pointerId: 2, buttons: 0 })
+    text.dispatchEvent(hover)
+    clock += 501
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 50, y: 50 }))
+    expect(downs).toEqual(['touch'])
   })
 })

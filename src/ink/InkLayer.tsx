@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
 import { simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
-import { fingerDraws, mouseDraws, penColor, penTool, penWidth } from './tools.ts'
+import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 import './ink.css'
 
 export interface InkLayerProps {
@@ -97,8 +97,6 @@ export function InkLayer(props: InkLayerProps) {
     const parent = root?.parentElement
     if (!root || !parent) return
     let live: LiveStroke | null = null
-    let penDown = false
-    let lastPenUp = -Infinity
     let tapStart = 0
     let tapValid = false
     let tapOrigin = new Map<number, [number, number]>()
@@ -139,7 +137,7 @@ export function InkLayer(props: InkLayerProps) {
       e.preventDefault()
     }
 
-    const penActive = (t: number) => penDown || t - lastPenUp < PALM_WINDOW_MS
+    const penActive = (t: number) => penActivity.down || t - penActivity.lastUp < PALM_WINDOW_MS
 
     const draws = (e: PointerEvent): boolean => {
       if (penTool.value === 'select') return false
@@ -199,12 +197,12 @@ export function InkLayer(props: InkLayerProps) {
 
     const penLifted = (e: PointerEvent) => {
       if (e.pointerType !== 'pen') return
-      penDown = false
-      lastPenUp = now()
+      penActivity.down = false
+      penActivity.lastUp = now()
     }
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === 'pen') penDown = true
+      if (e.pointerType === 'pen') penActivity.down = true
       if (e.pointerType === 'touch' && penActive(now())) {
         swallowed.add(e.pointerId)
         swallow(e)
@@ -247,6 +245,7 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType === 'pen' && e.buttons === 0 && penActivity.down) penLifted(e)
       if (isSwallowed(e, false)) {
         swallow(e)
         return

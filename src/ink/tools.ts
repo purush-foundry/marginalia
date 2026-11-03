@@ -15,3 +15,6 @@ export const mouseDraws: Signal<boolean> = signal(false)
 
 /** Preference: a finger draws like the pen. */
 export const fingerDraws: Signal<boolean> = signal(false)
+
+/** Pen contact shared by every page's ink layer for palm rejection. */
+export const penActivity: { down: boolean; lastUp: number } = { down: false, lastUp: -Infinity }
