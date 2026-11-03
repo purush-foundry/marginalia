@@ -10,6 +10,9 @@ export const choosingRoot = signal(false)
 /** initAuth has finished restoring the cached token and loading Google sign-in. */
 export const authReady = signal(false)
 
+/** The browser reports a network connection. */
+export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine)
+
 /** Short status message shown at the bottom of the screen. */
 export const toast = signal<string | null>(null)
 

@@ -5,10 +5,6 @@
   overflow: hidden;
 }
 
-.mg-splash {
-  height: 100%;
-}
-
 .mg-muted {
   color: var(--text-muted);
 }

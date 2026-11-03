@@ -23,7 +23,8 @@ function Screen() {
   const auth = authState.value
   const hasLibrary = Boolean(library.value)
   if (!s.googleClientId) return <Onboarding step="client" />
-  if (auth.status === 'signed-out') return authReady.value ? <Onboarding step="connect" /> : <div class="mg-splash" />
+  const signedOut = auth.status === 'signed-out' && (authReady.value || !hasLibrary)
+  if (signedOut) return <Onboarding step="connect" />
   if (!hasLibrary || choosingRoot.value) return <Onboarding step="root" />
   const r = route.value
   if (r.kind === 'paper') return <Reader key={r.id} pdfId={r.id} />

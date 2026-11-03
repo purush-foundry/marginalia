@@ -7,12 +7,13 @@ import type { DriveNode } from '../types'
 import { Icon } from './icons'
 import { navigate } from './route'
 import { Settings, connectDrive } from './Settings'
-import { authReady, choosingRoot } from './ui'
+import { authReady, choosingRoot, online } from './ui'
 
 function ConnectStep() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const ready = authReady.value
+  const offline = !online.value || (ready && !gisAvailable.value)
   return (
     <div class="mg-onboard">
       <h1>Marginalia</h1>
@@ -20,7 +21,7 @@ function ConnectStep() {
       <button
         type="button"
         class="btn primary"
-        disabled={!ready || busy}
+        disabled={!ready || busy || offline}
         onClick={() => {
           setBusy(true)
           void connectDrive().then((e) => {
@@ -29,9 +30,10 @@ function ConnectStep() {
           })
         }}
       >
-        {ready ? 'Connect Google Drive' : 'Loading…'}
+        Connect Google Drive
       </button>
-      {ready && !gisAvailable.value && <p class="mg-error">Google sign-in could not load. Are you offline?</p>}
+      {offline && <p class="mg-error">Offline — Google sign-in unavailable</p>}
+      {!ready && !offline && <p class="mg-muted">Loading Google sign-in…</p>}
       {error && <p class="mg-error">{error}</p>}
     </div>
   )
