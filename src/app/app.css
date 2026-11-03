@@ -1,0 +1,217 @@
+/* App shell: full-height screens, sheets, settings, onboarding, list rows, toast. */
+.mg-app {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.mg-splash {
+  height: 100%;
+}
+
+.mg-muted {
+  color: var(--text-muted);
+}
+
+.mg-error {
+  color: var(--danger);
+}
+
+input[type='text'],
+input[type='password'],
+textarea {
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: var(--tap);
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mg-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+  text-align: left;
+}
+
+.mg-row:hover {
+  background: var(--surface-2);
+}
+
+.mg-row > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.mg-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-onboard {
+  max-width: 520px;
+  margin: 0 auto;
+  height: 100%;
+  overflow: auto;
+  padding: calc(var(--safe-top) + 48px) 16px calc(var(--safe-bottom) + 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mg-onboard h1 {
+  margin: 0;
+}
+
+.mg-onboard .btn {
+  align-self: flex-start;
+}
+
+.mg-settings {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 16px 24px;
+}
+
+.mg-settings section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mg-settings section:last-child {
+  border-bottom: 0;
+}
+
+.mg-settings h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.mg-sheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  padding-top: 4px;
+}
+
+.mg-sheet-head h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.mg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.mg-field label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.mg-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.mg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.mg-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--tap);
+}
+
+.mg-toggle small {
+  display: block;
+  color: var(--text-muted);
+}
+
+.mg-toggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.mg-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mg-sheet {
+  background: var(--surface);
+  width: min(440px, 100%);
+  height: 100%;
+  overflow: auto;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) 0;
+  box-shadow: var(--shadow);
+}
+
+@media (max-width: 699px) {
+  .mg-sheet-backdrop {
+    align-items: flex-end;
+  }
+
+  .mg-sheet {
+    width: 100%;
+    height: 85dvh;
+    border-radius: 14px 14px 0 0;
+    padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  }
+}
+
+.mg-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 16px);
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-width: calc(100% - 32px);
+}

@@ -1,0 +1,93 @@
+/* Library browser: sticky header, 44px rows, quiet badges. */
+.mg-lib {
+  height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--safe-bottom);
+}
+
+.mg-lib-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: calc(var(--safe-top) + 4px) calc(var(--safe-right) + 8px) 4px calc(var(--safe-left) + 12px);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.mg-crumbs {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mg-crumbs a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.mg-crumb-sep {
+  margin: 0 6px;
+  color: var(--text-muted);
+}
+
+.mg-lib-sync {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.mg-lib-sync [role='status'] {
+  font-size: 13px;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg-lib .mg-list {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4px calc(var(--safe-right) + 8px) 4px calc(var(--safe-left) + 8px);
+}
+
+.mg-size {
+  font-size: 12px;
+}
+
+.mg-cached {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.mg-badge {
+  flex: none;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.mg-badge-unread {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mg-badge-done {
+  background: var(--surface-2);
+}
+
+.mg-empty {
+  text-align: center;
+  padding: 32px 16px;
+}
