@@ -5,33 +5,43 @@ const pct = (v: number) => `${v * 100}%`
 
 export interface HighlightLayerProps {
   highlights: Highlight[]
-  onTap(id: string, rect: DOMRect): void
 }
 
-/** SVG of one page's highlights in page-normalised coordinates; rects are the only hit targets. */
-export function HighlightLayer({ highlights, onTap }: HighlightLayerProps) {
-  const tap = (id: string) => (e: MouseEvent) => {
-    e.stopPropagation()
-    onTap(id, (e.currentTarget as Element).getBoundingClientRect())
+function boxesOf(h: Highlight): Box[] {
+  return h.kind === 'area' ? [h.box] : h.boxes
+}
+
+/** Topmost live highlight with a box containing the page-normalised point, and that box. */
+export function highlightAt(highlights: Highlight[], x: number, y: number): { id: string; box: Box } | null {
+  for (let i = highlights.length - 1; i >= 0; i--) {
+    const h = highlights[i]
+    if (h.deleted) continue
+    const box = boxesOf(h).find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)
+    if (box) return { id: h.id, box }
   }
-  const rect = (h: Highlight, b: Box, i: number) => (
-    <rect
-      key={`${h.id}:${i}`}
-      class={h.kind === 'area' ? 'area' : undefined}
-      data-id={h.id}
-      x={pct(b.x)}
-      y={pct(b.y)}
-      width={pct(b.w)}
-      height={pct(b.h)}
-      fill={`var(--hl-${h.color})`}
-      stroke={h.kind === 'area' ? `var(--hl-${h.color})` : undefined}
-      onClick={tap(h.id)}
-    />
-  )
+  return null
+}
+
+/** SVG of one page's highlights in page-normalised coordinates; it never takes pointer input. */
+export function HighlightLayer({ highlights }: HighlightLayerProps) {
   return (
     <svg class="mg-hl" aria-hidden="true">
       {highlights.flatMap((h) =>
-        h.deleted ? [] : h.kind === 'area' ? [rect(h, h.box, 0)] : h.boxes.map((b, i) => rect(h, b, i)),
+        h.deleted
+          ? []
+          : boxesOf(h).map((b, i) => (
+              <rect
+                key={`${h.id}:${i}`}
+                class={h.kind === 'area' ? 'area' : undefined}
+                data-id={h.id}
+                x={pct(b.x)}
+                y={pct(b.y)}
+                width={pct(b.w)}
+                height={pct(b.h)}
+                fill={`var(--hl-${h.color})`}
+                stroke={h.kind === 'area' ? `var(--hl-${h.color})` : undefined}
+              />
+            )),
       )}
     </svg>
   )

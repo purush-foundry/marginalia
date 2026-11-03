@@ -1,4 +1,4 @@
-/* Continuous page scroller, page layers and the pdf.js text layer. */
+/* Continuous page scroller, page layers and the pdf.js text layer; page layers stack in DOM order with the overlay slot last. */
 .mg-scroller {
   position: absolute;
   inset: 0;
@@ -56,7 +56,6 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 4;
 }
 
 .mg-link {
@@ -70,16 +69,8 @@
   background: rgba(47, 111, 237, 0.12);
 }
 
-.mg-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
-}
-
 .mg-area {
   position: absolute;
-  z-index: 6;
   border: 2px dashed var(--accent);
   background: rgba(47, 111, 237, 0.12);
   pointer-events: none;

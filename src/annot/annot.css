@@ -9,11 +9,6 @@
   mix-blend-mode: multiply;
 }
 
-.mg-hl rect {
-  pointer-events: all;
-  cursor: pointer;
-}
-
 .mg-hl rect.area {
   fill-opacity: 0.18;
   stroke-width: 2;

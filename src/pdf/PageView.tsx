@@ -25,7 +25,6 @@ export interface PageViewProps {
   highlights: Highlight[]
   area: Box | null
   overlay?: ComponentChildren
-  onTapHighlight(id: string, rect: DOMRect): void
   onLink(link: PageLink): void
 }
 
@@ -36,6 +35,13 @@ function freeCanvas(c: HTMLCanvasElement | null | undefined) {
   c.width = 0
   c.height = 0
   c.remove()
+}
+
+function releasePage(doc: PdfDoc, page: number) {
+  doc
+    .getPage(page)
+    .then((proxy) => proxy.cleanup())
+    .catch(reportError)
 }
 
 function reportError(e: unknown) {
@@ -51,12 +57,23 @@ export const PageView = memo(function PageView(props: PageViewProps) {
   const paintRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
   const textLayerRef = useRef<TextLayer | null>(null)
+  const renderScaleRef = useRef(renderScale)
+  renderScaleRef.current = renderScale
   const [links, setLinks] = useState<PageLink[]>([])
+
+  useEffect(() => {
+    const paint = paintRef.current
+    return () => {
+      freeCanvas(paint?.querySelector('canvas'))
+      releasePage(doc, page)
+    }
+  }, [doc, page])
 
   useEffect(() => {
     const paint = paintRef.current!
     if (!active) {
       freeCanvas(paint.querySelector('canvas'))
+      releasePage(doc, page)
       return
     }
     let cancelled = false
@@ -100,7 +117,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
       const layer = new TextLayer({
         textContentSource,
         container,
-        viewport: proxy.getViewport({ scale: renderScale, rotation: 0 }),
+        viewport: proxy.getViewport({ scale: renderScaleRef.current, rotation: 0 }),
       })
       textLayerRef.current = layer
       await layer.render()
@@ -160,7 +177,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
       >
         <div class="mg-paint" ref={paintRef} />
         <div class="textLayer" ref={textRef} />
-        {active && <HighlightLayer highlights={props.highlights} onTap={props.onTapHighlight} />}
+        {active && <HighlightLayer highlights={props.highlights} />}
         {active && links.length > 0 && (
           <div class="mg-links">
             {links.map((l, i) => (
@@ -178,7 +195,6 @@ export const PageView = memo(function PageView(props: PageViewProps) {
             ))}
           </div>
         )}
-        {active && props.overlay !== undefined && <div class="mg-overlay">{props.overlay}</div>}
         {props.area && (
           <div
             class="mg-area"
@@ -190,6 +206,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
             }}
           />
         )}
+        {active && props.overlay}
       </div>
     </div>
   )

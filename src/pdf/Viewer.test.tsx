@@ -1,0 +1,135 @@
+import { signal } from '@preact/signals'
+import { render } from 'preact'
+import { act } from 'preact/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { InkLayer } from '../ink/InkLayer.tsx'
+import { penTool } from '../ink/tools.ts'
+import type { Highlight, InkStroke } from '../types.ts'
+import type { PdfDoc } from './document.ts'
+import { Viewer, type ViewerProps } from './Viewer.tsx'
+
+// A two-page document whose pages never finish loading, so nothing touches a canvas.
+const doc: PdfDoc = {
+  numPages: 2,
+  title: null,
+  pageSize: () => ({ w: 600, h: 800 }),
+  getPage: () => new Promise(() => {}),
+  getOutline: async () => [],
+  getPageText: async (page) => ({ page, lines: [], columns: [], text: '' }),
+  getLinks: async () => [],
+  renderCrop: () => Promise.reject(new Error('no canvas')),
+  destroy() {},
+}
+
+const highlight: Highlight = {
+  id: 'h1',
+  kind: 'text',
+  page: 1,
+  color: 'yellow',
+  text: 'x',
+  boxes: [{ x: 0.1, y: 0.1, w: 0.5, h: 0.05 }],
+  createdAt: 0,
+  updatedAt: 0,
+}
+
+let root: HTMLElement
+const restore: (() => void)[] = []
+
+function stub<T extends object>(proto: T, key: string, get: (this: Element) => unknown) {
+  const original = Object.getOwnPropertyDescriptor(proto, key)
+  Object.defineProperty(proto, key, { configurable: true, get })
+  restore.push(() => (original ? Object.defineProperty(proto, key, original) : delete (proto as Record<string, unknown>)[key]))
+}
+
+function mount(extra: Partial<ViewerProps> = {}) {
+  const props: ViewerProps = {
+    doc,
+    highlights: signal<Highlight[]>([]),
+    nightMode: false,
+    invertImages: true,
+    areaSelectArmed: signal(false),
+    onSelection: vi.fn(),
+    onTapHighlight: vi.fn(),
+    onLink: vi.fn(),
+    onReadingPosition: vi.fn(),
+    handle: vi.fn(),
+    ...extra,
+  }
+  act(() => render(<Viewer {...props} />, root))
+  return props
+}
+
+function pointer(name: string, target: Element, init: PointerEventInit) {
+  target.dispatchEvent(
+    new PointerEvent(name, { bubbles: true, cancelable: true, isPrimary: true, button: 0, ...init }),
+  )
+}
+
+beforeEach(() => {
+  root = document.createElement('div')
+  document.body.append(root)
+  stub(HTMLElement.prototype, 'clientWidth', () => 616)
+  stub(HTMLElement.prototype, 'clientHeight', () => 900)
+  const rect = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return this.classList.contains('mg-page-inner') ? new DOMRect(0, 0, 600, 800) : rect.call(this)
+  }
+  restore.push(() => (Element.prototype.getBoundingClientRect = rect))
+})
+
+afterEach(() => {
+  act(() => render(null, root))
+  root.remove()
+  for (const undo of restore.splice(0).reverse()) undo()
+  penTool.value = 'pen'
+})
+
+describe('Viewer', () => {
+  it('mounts pageOverlay inside the page so a pen stroke over the text layer reaches the ink layer', () => {
+    const onAddStroke = vi.fn<(s: InkStroke) => void>()
+    penTool.value = 'pen'
+    mount({
+      pageOverlay: (page, cssW, cssH) => (
+        <InkLayer page={page} cssW={cssW} cssH={cssH} strokes={[]} onAddStroke={onAddStroke} onEraseStroke={() => {}} />
+      ),
+    })
+    const inner = root.querySelector('.mg-page[data-page="1"] .mg-page-inner')!
+    const ink = inner.querySelector('.ink-layer')!
+    expect(ink.parentElement).toBe(inner)
+    const span = document.createElement('span')
+    span.textContent = 'text'
+    inner.querySelector('.textLayer')!.append(span)
+
+    pointer('pointerdown', span, { pointerType: 'pen', pointerId: 7, clientX: 100, clientY: 100, buttons: 1 })
+    pointer('pointermove', span, { pointerType: 'pen', pointerId: 7, clientX: 150, clientY: 120, buttons: 1 })
+    pointer('pointerup', span, { pointerType: 'pen', pointerId: 7, clientX: 200, clientY: 140, buttons: 0 })
+
+    expect(onAddStroke).toHaveBeenCalledOnce()
+    expect(onAddStroke.mock.calls[0][0].page).toBe(1)
+  })
+
+  it('reports a tap on a highlight with the tapped box in client coordinates', () => {
+    const props = mount({ highlights: signal([highlight]) })
+    const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+    pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+    pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 121, clientY: 101 })
+    expect(props.onTapHighlight).toHaveBeenCalledOnce()
+    const [id, rect] = (props.onTapHighlight as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(id).toBe('h1')
+    expect([rect.x, rect.y, rect.width, rect.height]).toEqual([60, 80, 300, 40])
+  })
+
+  it('does not report a highlight tap after a drag', () => {
+    const props = mount({ highlights: signal([highlight]) })
+    const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+    pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
+    pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 200, clientY: 100 })
+    expect(props.onTapHighlight).not.toHaveBeenCalled()
+  })
+
+  it('flushes a pending reading position on unmount', () => {
+    const props = mount()
+    act(() => render(null, root))
+    expect(props.onReadingPosition).toHaveBeenCalledWith({ page: 1, offset: 0, zoom: 0 })
+  })
+})
