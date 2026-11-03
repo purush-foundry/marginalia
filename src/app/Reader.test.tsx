@@ -8,11 +8,12 @@ import { Reader } from './Reader'
 
 const viewer: { props: ViewerProps | null } = { props: null }
 const clearSelection = vi.fn()
+const scrollTo = vi.fn()
 
 vi.mock('../pdf/Viewer', () => ({
   Viewer: (props: ViewerProps) => {
     viewer.props = props
-    props.handle({ clearSelection } as unknown as ViewerHandle)
+    props.handle({ clearSelection, scrollTo } as unknown as ViewerHandle)
     return <div class="fake-viewer" />
   },
 }))
@@ -182,5 +183,37 @@ describe('Reader', () => {
     await open()
     act(() => render(null, root))
     expect(drive.saveSidecar).not.toHaveBeenCalled()
+  })
+
+  test('a newer remote reading state wins on open: the viewer goes there and nothing is stamped until the user scrolls', async () => {
+    const remote: Sidecar = {
+      ...emptySidecar('p1', 'attention.pdf', 1),
+      reading: { page: 7, offset: 0.4, zoom: 0, status: 'done', updatedAt: 50 },
+    }
+    drive.refreshSidecar.mockResolvedValue(remote)
+    const props = await open()
+    await vi.waitFor(() => expect(scrollTo).toHaveBeenCalled())
+    expect(scrollTo.mock.calls[0][0]).toBe(7)
+
+    await act(async () => props.onReadingPosition({ page: 1, offset: 0, zoom: 0 }))
+    expect(drive.saveSidecar).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.querySelector('.mg-viewer-wrap')!.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true }))
+    })
+    await act(async () => props.onReadingPosition({ page: 7, offset: 0.5, zoom: 0 }))
+    expect(lastSaved().reading).toMatchObject({ page: 7, offset: 0.5, status: 'done' })
+    expect(lastSaved().reading.updatedAt).toBeGreaterThan(50)
+  })
+
+  test('restore-time positions from the viewer are not persisted', async () => {
+    drive.loadSidecar.mockResolvedValue({
+      ...emptySidecar('p1', 'attention.pdf', 1),
+      reading: { page: 3, offset: 0.2, zoom: 0, status: 'reading', updatedAt: 5 },
+    })
+    const props = await open()
+    await act(async () => props.onReadingPosition({ page: 3, offset: 0.2, zoom: 0 }))
+    expect(drive.saveSidecar).not.toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
   })
 })

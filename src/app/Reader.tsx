@@ -1,5 +1,5 @@
 // Reader: loads a paper and its sidecar, then wires the viewer, ink, selection bar, sidebar and Ask panel.
-import { computed, useComputed, useSignal } from '@preact/signals'
+import { computed, signal, useComputed, useSignal, type Signal } from '@preact/signals'
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AskPanel } from '../ai/AskPanel'
 import { SelectionBar } from '../annot/SelectionBar'
@@ -20,7 +20,7 @@ import { newId, now } from '../lib/ids'
 import { openPdf, type PageLink, type PdfDoc } from '../pdf/document'
 import { isIOS } from '../pdf/platform'
 import { Viewer, type PendingSelection, type ViewerHandle } from '../pdf/Viewer'
-import type { Anchor, Box, HighlightColor, InkStroke, PageText, Thread } from '../types'
+import type { Anchor, Box, HighlightColor, InkStroke, PageText, Sidecar, Thread } from '../types'
 import { Icon } from './icons'
 import { folderHash, navigate } from './route'
 import { saveSettings, settings } from './settings'
@@ -36,7 +36,11 @@ interface Loaded {
   store: AnnotationStore
   title: string
   initial: { page: number; offset: number; zoom: number }
+  /** A newer reading position merged from Drive after open; the view scrolls there unless the user already moved. */
+  remotePosition: Signal<{ page: number; offset: number } | null>
 }
+
+const NAV_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 
 const NO_STROKES: InkStroke[] = []
 const NO_THREADS: Thread[] = []
@@ -178,6 +182,33 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     for (const p of highlightPages.split(',')) if (p) void ensureColumns(Number(p))
   }, [highlightPages])
 
+  // True once the user scrolls, zooms or jumps; reading positions before that are restore-time and not persisted.
+  const moved = useRef(false)
+  useEffect(() => {
+    const el = wrap.current
+    if (!el) return
+    const mark = () => {
+      moved.current = true
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (NAV_KEYS.has(e.key) && !(e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) mark()
+    }
+    const opts = { capture: true, passive: true }
+    for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) el.addEventListener(type, mark, opts)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) el.removeEventListener(type, mark, opts)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [])
+  useEffect(
+    () =>
+      loaded.remotePosition.subscribe((pos) => {
+        if (pos && !moved.current) viewer.current?.scrollTo(pos.page, { x: 0.5, y: pos.offset, w: 0, h: 0 })
+      }),
+    [],
+  )
+
   const state = useRef({ bar, note, thread, sidebar })
   state.current = { bar, note, thread, sidebar }
 
@@ -211,6 +242,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   }, [bar])
 
   const go = (page: number, box?: Box) => {
+    moved.current = true
     viewer.current?.scrollTo(page, box, 'smooth')
     if (!wide()) setSidebar(null)
   }
@@ -295,6 +327,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
 
   const onLink = (link: PageLink) => {
     if (link.page) {
+      moved.current = true
       setBackTo(viewer.current?.currentPage.peek() ?? null)
       viewer.current?.scrollTo(link.page)
     } else if (link.url) {
@@ -303,6 +336,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   }
 
   const onCite = (page: number, quote: string) => {
+    moved.current = true
     doc.getPageText(page).then(
       (pt) => viewer.current?.scrollTo(page, findQuote(pt, quote), 'smooth'),
       () => viewer.current?.scrollTo(page),
@@ -404,7 +438,9 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
             }}
             onTapHighlight={(id, rect) => setBar({ kind: 'highlight', id, rect })}
             onLink={onLink}
-            onReadingPosition={(pos) => store.setReading(pos)}
+            onReadingPosition={(pos) => {
+              if (moved.current) store.setReading(pos)
+            }}
             handle={(h) => (viewer.current = h)}
           />
           {backTo !== null && (
@@ -412,6 +448,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               type="button"
               class="btn mg-back-chip"
               onClick={() => {
+                moved.current = true
                 viewer.current?.scrollTo(backTo)
                 setBackTo(null)
               }}
@@ -482,17 +519,23 @@ export function Reader({ pdfId }: { pdfId: string }) {
         saveSidecar(pdfId, next)
       })
       store = opened
-      const { page, offset, zoom, status } = sidecar.reading
-      if (status === 'unread') opened.setReading({ status: 'reading' })
+      const { page, offset, zoom } = sidecar.reading
       const name = library.peek()?.papers[pdfId]?.name ?? sidecar.pdfName
       const title = name.replace(/\.pdf$/i, '') || doc.title || 'Untitled'
-      setLoaded({ doc, store: opened, title, initial: { page, offset, zoom } })
-      refreshSidecar(pdfId).then(
-        (merged) => {
-          if (merged && !cancelled) opened.replaceFromRemote(merged)
-        },
-        () => undefined,
-      )
+      const remotePosition = signal<{ page: number; offset: number } | null>(null)
+      setLoaded({ doc, store: opened, title, initial: { page, offset, zoom }, remotePosition })
+      // Applies the merged remote sidecar, then moves an unread paper to reading.
+      const settle = (merged: Sidecar | null) => {
+        if (cancelled) return
+        if (merged) {
+          opened.replaceFromRemote(merged)
+          if (merged.reading.updatedAt > sidecar.reading.updatedAt) {
+            remotePosition.value = { page: merged.reading.page, offset: merged.reading.offset }
+          }
+        }
+        if (opened.sidecar.peek().reading.status === 'unread') opened.setReading({ status: 'reading' })
+      }
+      refreshSidecar(pdfId).then(settle, () => settle(null))
     })().catch((err: unknown) => {
       if (!cancelled) setError(errorText(err))
     })
