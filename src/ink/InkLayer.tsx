@@ -97,6 +97,7 @@ export function InkLayer(props: InkLayerProps) {
     const parent = root?.parentElement
     if (!root || !parent) return
     let live: LiveStroke | null = null
+    let penDown = false
     let lastPenUp = -Infinity
     let tapStart = 0
     let tapValid = false
@@ -134,11 +135,11 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const swallow = (e: Event) => {
-      e.stopPropagation()
+      e.stopImmediatePropagation()
       e.preventDefault()
     }
 
-    const penActive = (t: number) => (live !== null && live.pointerType === 'pen') || t - lastPenUp < PALM_WINDOW_MS
+    const penActive = (t: number) => penDown || t - lastPenUp < PALM_WINDOW_MS
 
     const draws = (e: PointerEvent): boolean => {
       if (penTool.value === 'select') return false
@@ -182,25 +183,37 @@ export function InkLayer(props: InkLayerProps) {
 
     const isLive = (e: PointerEvent) => live !== null && e.pointerId === live.pointerId
 
-    const palms = new Set<number>()
+    const swallowed = new Set<number>()
 
-    // Swallows the rest of a touch pointer whose pointerdown was rejected as a palm.
-    const isPalm = (e: PointerEvent, ends: boolean) => {
-      if (!palms.has(e.pointerId)) return false
-      if (ends) palms.delete(e.pointerId)
+    // Swallows the rest of a pointer whose pointerdown was swallowed but which no longer draws.
+    const isSwallowed = (e: PointerEvent, ends: boolean) => {
+      if (!swallowed.has(e.pointerId)) return false
+      if (ends) swallowed.delete(e.pointerId)
       return true
     }
 
+    const abandon = () => {
+      if (live) swallowed.add(live.pointerId)
+      discard()
+    }
+
+    const penLifted = (e: PointerEvent) => {
+      if (e.pointerType !== 'pen') return
+      penDown = false
+      lastPenUp = now()
+    }
+
     const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'pen') penDown = true
       if (e.pointerType === 'touch' && penActive(now())) {
-        palms.add(e.pointerId)
+        swallowed.add(e.pointerId)
         swallow(e)
         return
       }
       if (live) {
-        if (e.pointerType === 'pen' && live.pointerType !== 'pen') discard()
+        if (e.pointerType === 'pen' && live.pointerType !== 'pen') abandon()
         else {
-          if (e.pointerType === 'touch' && live.pointerType === 'touch') discard()
+          if (e.pointerType === 'touch' && live.pointerType === 'touch') abandon()
           return
         }
       }
@@ -209,7 +222,7 @@ export function InkLayer(props: InkLayerProps) {
       try {
         parent.setPointerCapture(e.pointerId)
       } catch {
-        // Capture is best-effort; synthetic or already-released pointers cannot be captured.
+        // Ignores pointers that can no longer be captured.
       }
       const tool = penTool.value === 'eraser' ? 'eraser' : 'pen'
       const { cssW, cssH } = propsRef.current
@@ -234,7 +247,7 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerMove = (e: PointerEvent) => {
-      if (isPalm(e, false)) {
+      if (isSwallowed(e, false)) {
         swallow(e)
         return
       }
@@ -244,7 +257,8 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerUp = (e: PointerEvent) => {
-      if (isPalm(e, true)) {
+      penLifted(e)
+      if (isSwallowed(e, true)) {
         swallow(e)
         return
       }
@@ -252,7 +266,6 @@ export function InkLayer(props: InkLayerProps) {
       swallow(e)
       const s = live
       discard()
-      if (s.pointerType === 'pen') lastPenUp = now()
       if (s.tool !== 'pen' || s.points.length === 0) return
       const { page, cssW, onAddStroke } = propsRef.current
       const t = now()
@@ -270,13 +283,13 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const onPointerCancel = (e: PointerEvent) => {
-      if (isPalm(e, true)) {
+      penLifted(e)
+      if (isSwallowed(e, true)) {
         swallow(e)
         return
       }
       if (!live || !isLive(e)) return
       swallow(e)
-      if (live.pointerType === 'pen') lastPenUp = now()
       discard()
     }
 
@@ -287,7 +300,7 @@ export function InkLayer(props: InkLayerProps) {
     const onTouchStart = (e: TouchEvent) => {
       guardStylus(e)
       const down = fingers(e.touches)
-      if (down.length === 2 && down.length === e.touches.length && !(live && live.pointerType === 'pen')) {
+      if (down.length === 2 && down.length === e.touches.length && !penActive(now())) {
         tapStart = now()
         tapValid = true
         tapOrigin = new Map(down.map((t) => [t.identifier, [t.clientX, t.clientY]]))

@@ -52,6 +52,14 @@ let layer: HTMLElement
 let added: InkStroke[]
 let erased: string[]
 let clock: number
+const cleanups: (() => void)[] = []
+
+function listenForUndo() {
+  const undo = vi.fn()
+  document.addEventListener('marginalia:undo', undo)
+  cleanups.push(() => document.removeEventListener('marginalia:undo', undo))
+  return undo
+}
 
 async function mount(extra: Partial<InkLayerProps> = {}): Promise<HTMLElement> {
   const props: InkLayerProps = {
@@ -97,6 +105,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  for (const off of cleanups.splice(0)) off()
   render(null, host)
   host.remove()
   vi.restoreAllMocks()
@@ -242,8 +251,7 @@ describe('InkLayer touch', () => {
 
   it('dispatches marginalia:undo on a two-finger double tap', async () => {
     const text = await mount()
-    const undo = vi.fn()
-    document.addEventListener('marginalia:undo', undo)
+    const undo = listenForUndo()
     const two = [
       { id: 1, x: 50, y: 50 },
       { id: 2, x: 120, y: 60 },
@@ -258,13 +266,11 @@ describe('InkLayer touch', () => {
     clock += 150
     tap()
     expect(undo).toHaveBeenCalledTimes(1)
-    document.removeEventListener('marginalia:undo', undo)
   })
 
   it('does not undo on a two-finger pan or a single two-finger tap', async () => {
     const text = await mount()
-    const undo = vi.fn()
-    document.addEventListener('marginalia:undo', undo)
+    const undo = listenForUndo()
     const two = [
       { id: 1, x: 50, y: 50 },
       { id: 2, x: 120, y: 60 },
@@ -283,7 +289,6 @@ describe('InkLayer touch', () => {
     text.dispatchEvent(touch('touchstart', two))
     text.dispatchEvent(touch('touchend', two, []))
     expect(undo).not.toHaveBeenCalled()
-    document.removeEventListener('marginalia:undo', undo)
   })
 })
 
@@ -433,8 +438,7 @@ describe('InkLayer input routing on the page element', () => {
     await act(() => {
       penTool.value = 'select'
     })
-    const undo = vi.fn()
-    document.addEventListener('marginalia:undo', undo)
+    const undo = listenForUndo()
     const two = [
       { id: 1, x: 50, y: 50 },
       { id: 2, x: 120, y: 60 },
@@ -445,15 +449,92 @@ describe('InkLayer input routing on the page element', () => {
     text.dispatchEvent(touch('touchstart', two))
     text.dispatchEvent(touch('touchend', two, []))
     expect(undo).toHaveBeenCalledTimes(1)
-    document.removeEventListener('marginalia:undo', undo)
   })
 
-  it('takes finger input on the layer itself when finger drawing is on', async () => {
+  it('intercepts finger input when finger drawing is on', async () => {
     fingerDraws.value = true
     const text = await mount()
     const seen = reached(text, 'pointerdown')
     text.dispatchEvent(pointer('pointerdown', { type: 'touch', x: 20, y: 40 }))
     expect(seen).toEqual([])
     expect(layer.dataset.fingerDraws).toBe('')
+  })
+
+
+  it('swallows palm touches around a pen used in the select tool without touching the pen', async () => {
+    const text = await mount()
+    await act(() => {
+      penTool.value = 'select'
+    })
+    const downs = reached(text, 'pointerdown')
+    const pen = pointer('pointerdown', { x: 20, y: 40 })
+    text.dispatchEvent(pen)
+    const palm = pointer('pointerdown', { type: 'touch', id: 10, x: 150, y: 300 })
+    text.dispatchEvent(palm)
+    text.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    expect(pen.defaultPrevented).toBe(false)
+    expect(palm.defaultPrevented).toBe(true)
+    expect(downs).toEqual(['pen'])
+
+    clock += 400
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 150, y: 300 }))
+    expect(downs).toEqual(['pen'])
+    clock += 101
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 12, x: 150, y: 300 }))
+    expect(downs).toEqual(['pen', 'touch'])
+  })
+
+  it('stops capture listeners registered later on the page element itself', async () => {
+    const text = await mount()
+    const page = text.parentElement as HTMLElement
+    const seen = vi.fn()
+    page.addEventListener('pointerdown', seen, { capture: true })
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    expect(seen).not.toHaveBeenCalled()
+  })
+
+  it('ignores a two-finger double tap within the palm window', async () => {
+    const text = await mount()
+    const undo = listenForUndo()
+    const two = [
+      { id: 1, x: 50, y: 50 },
+      { id: 2, x: 120, y: 60 },
+    ]
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerup', { x: 20, y: 40 }))
+    for (let i = 0; i < 2; i++) {
+      clock += 100
+      text.dispatchEvent(touch('touchstart', two))
+      text.dispatchEvent(touch('touchend', two, []))
+    }
+    expect(undo).not.toHaveBeenCalled()
+  })
+
+  it('keeps swallowing a finger stroke dropped for a second finger', async () => {
+    fingerDraws.value = true
+    const text = await mount()
+    const moves = reached(text, 'pointermove')
+    const ups = reached(text, 'pointerup')
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 10, x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 11, x: 120, y: 80 }))
+    text.dispatchEvent(pointer('pointermove', { type: 'touch', id: 10, x: 30, y: 50 }))
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 10, x: 30, y: 50 }))
+    expect(moves).toEqual([])
+    expect(ups).toEqual([])
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 11, x: 120, y: 80 }))
+    expect(ups).toEqual(['touch'])
+  })
+
+  it('keeps swallowing a finger stroke dropped for the pen', async () => {
+    fingerDraws.value = true
+    const text = await mount()
+    const ups = reached(text, 'pointerup')
+    text.dispatchEvent(pointer('pointerdown', { type: 'touch', id: 10, x: 20, y: 40 }))
+    text.dispatchEvent(pointer('pointerdown', { x: 100, y: 100 }))
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 100 }))
+    clock += 1000
+    text.dispatchEvent(pointer('pointerup', { type: 'touch', id: 10, x: 20, y: 40 }))
+    expect(ups).toEqual([])
+    expect(added).toHaveLength(1)
   })
 })
