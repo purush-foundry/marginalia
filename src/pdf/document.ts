@@ -6,6 +6,7 @@ import { canvasPixelCap } from './platform.ts'
 import { buildPageText } from './text.ts'
 
 const WORKER_SRC = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+const ASSETS = `${import.meta.env.BASE_URL}pdfjs/`
 const SIZE_CONCURRENCY = 4
 const MAX_CROP_SCALE = 4
 
@@ -116,7 +117,13 @@ function memo<T>(cache: Map<number, Promise<T>>, key: number, load: () => Promis
 export async function openPdf(data: ArrayBuffer | Blob): Promise<PdfDoc> {
   if (!GlobalWorkerOptions.workerSrc) GlobalWorkerOptions.workerSrc = WORKER_SRC
   const bytes = data instanceof Blob ? await data.arrayBuffer() : data.slice(0)
-  const task = getDocument({ data: new Uint8Array(bytes), disableAutoFetch: false })
+  const task = getDocument({
+    data: new Uint8Array(bytes),
+    disableAutoFetch: false,
+    cMapUrl: `${ASSETS}cmaps/`,
+    standardFontDataUrl: `${ASSETS}standard_fonts/`,
+    wasmUrl: `${ASSETS}wasm/`,
+  })
   const pdf = await task.promise
   const [views, title] = await Promise.all([pageViews(pdf), readTitle(pdf)])
   const texts = new Map<number, Promise<PageText>>()
