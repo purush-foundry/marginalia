@@ -319,6 +319,16 @@ export async function isCached(pdfId: string): Promise<boolean> {
   return isFresh(await idbGet<CachedFile>('files', pdfId), pdfId)
 }
 
+/** Total bytes of PDFs in the local cache. */
+export async function pdfCacheBytes(): Promise<number> {
+  return (await idbGetAll<CachedFile>('files')).reduce((sum, e) => sum + e.value.size, 0)
+}
+
+/** Deletes every cached PDF; annotations are untouched. */
+export async function clearPdfCache(): Promise<void> {
+  for (const key of await idbKeys('files')) await idbDel('files', key)
+}
+
 async function touch(pdfId: string, entry: CachedFile): Promise<Blob> {
   await idbSet('files', pdfId, { ...entry, openedAt: Date.now() })
   return entry.blob
