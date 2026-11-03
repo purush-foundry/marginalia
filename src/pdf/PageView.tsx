@@ -37,12 +37,14 @@ function freeCanvas(c: HTMLCanvasElement | null | undefined) {
   c.remove()
 }
 
-function releasePage(doc: PdfDoc, page: number) {
+function releasePage(doc: PdfDoc, page: number, onError: (e: unknown) => void) {
   doc
     .getPage(page)
     .then((proxy) => proxy.cleanup())
-    .catch(reportError)
+    .catch(onError)
 }
+
+function ignore() {}
 
 function reportError(e: unknown) {
   if (e instanceof RenderingCancelledException) return
@@ -61,19 +63,25 @@ export const PageView = memo(function PageView(props: PageViewProps) {
   renderScaleRef.current = renderScale
   const [links, setLinks] = useState<PageLink[]>([])
 
+  const wasActive = useRef(active)
+
   useEffect(() => {
     const paint = paintRef.current
     return () => {
       freeCanvas(paint?.querySelector('canvas'))
-      releasePage(doc, page)
+      releasePage(doc, page, ignore)
     }
   }, [doc, page])
+
+  useEffect(() => {
+    if (wasActive.current && !active) releasePage(doc, page, reportError)
+    wasActive.current = active
+  }, [active])
 
   useEffect(() => {
     const paint = paintRef.current!
     if (!active) {
       freeCanvas(paint.querySelector('canvas'))
-      releasePage(doc, page)
       return
     }
     let cancelled = false
