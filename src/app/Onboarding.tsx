@@ -68,9 +68,16 @@ export function RootPicker() {
 
   const pick = async (node: DriveNode) => {
     setPicking(true)
-    await setRootFolder(node)
-    choosingRoot.value = false
-    navigate('#/')
+    setError(null)
+    try {
+      await setRootFolder(node)
+      choosingRoot.value = false
+      navigate('#/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPicking(false)
+    }
   }
 
   return (

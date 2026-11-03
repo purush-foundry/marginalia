@@ -1,10 +1,15 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { library } from '../drive/library'
+import { library, setRootFolder } from '../drive/library'
 import { FakeDrive, signIn } from '../drive/test-helpers'
 import { FOLDER_MIME, PDF_MIME } from '../types'
 import { Onboarding } from './Onboarding'
+
+vi.mock('../drive/library', async (orig) => {
+  const real = await orig<typeof import('../drive/library')>()
+  return { ...real, setRootFolder: vi.fn(real.setRootFolder) }
+})
 
 let drive: FakeDrive
 const root = document.createElement('div')
@@ -49,5 +54,19 @@ describe('Root picker', () => {
     await act(async () => buttonByText('Use “Papers”').click())
     await vi.waitFor(() => expect(Object.keys(library.value?.folders ?? {}).sort()).toEqual(['ml', 'papers']))
     expect(library.value!.rootId).toBe('papers')
+  })
+
+  test('a failed pick re-enables the buttons and shows the error', async () => {
+    await act(async () => render(<Onboarding step="root" />, root))
+    await vi.waitFor(() => expect(rowNames()).toEqual(['Admin', 'Research']))
+    await act(async () => [...root.querySelectorAll<HTMLButtonElement>('.mg-row')].find((b) => b.textContent === 'Research')!.click())
+    await vi.waitFor(() => expect(rowNames()).toEqual(['Papers']))
+    vi.mocked(setRootFolder).mockRejectedValueOnce(new Error('storage unavailable'))
+
+    await act(async () => buttonByText('Use “Research”').click())
+
+    await vi.waitFor(() => expect(root.querySelector('.mg-error')?.textContent).toContain('storage unavailable'))
+    expect(buttonByText('Use “Research”').disabled).toBe(false)
+    expect([...root.querySelectorAll<HTMLButtonElement>('.mg-row')].every((b) => !b.disabled)).toBe(true)
   })
 })
