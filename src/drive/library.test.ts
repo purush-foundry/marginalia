@@ -416,6 +416,33 @@ describe('sidecars', () => {
     expect(downloads()).toBe(before)
   })
 
+  test('a sidecar that fails to download does not stop the others from being pulled', async () => {
+    paper('p1', 'root')
+    paper('p2', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'a'))
+    remoteSidecar('s2', 'p2', 'root', withHighlights('p2', 'b'))
+    drive.failWhen.push((call) => (call.url.pathname === '/drive/v3/files/s1' && call.url.searchParams.get('alt') === 'media' ? driveError(500, 'backendError') : undefined))
+
+    await lib.setRootFolder(ROOT)
+
+    expect((await lib.loadSidecar('p2')).highlights.map((h) => h.id)).toEqual(['b'])
+    expect(await idb.idbGet('sidecars', 'p1')).toBeUndefined()
+    expect(lib.syncState.value).toMatchObject({ status: 'error', message: '1 annotation download(s) failed' })
+  })
+
+  test('an offline sidecar download reports offline', async () => {
+    paper('p1', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'a'))
+    drive.failWhen.push((call) => {
+      if (call.url.pathname === '/drive/v3/files/s1' && call.url.searchParams.get('alt') === 'media') throw new TypeError('Failed to fetch')
+      return undefined
+    })
+
+    await lib.setRootFolder(ROOT)
+
+    expect(lib.syncState.value.status).toBe('offline')
+  })
+
   test('an offline upload failure reports offline, not an error', async () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
@@ -549,6 +576,28 @@ describe('PDF cache', () => {
 
     expect(mediaDownloads()).toBe(1)
     expect(await (await lib.getPdfBlob('p1')).text()).toBe('%PDF-drive')
+  })
+
+  test('a failed openedAt rewrite still returns the cached PDF', async () => {
+    vi.resetModules()
+    vi.doMock('../lib/idb', async (importOriginal) => {
+      const real = await importOriginal<Idb>()
+      return {
+        ...real,
+        idbSet: (store: Parameters<Idb['idbSet']>[0], key: string, value: unknown) =>
+          store === 'files' && (value as { openedAt?: number }).openedAt !== 1 ? Promise.reject(new Error('connection closed')) : real.idbSet(store, key, value),
+      }
+    })
+    try {
+      await signIn()
+      const mocked = await import('./library')
+      const mockedIdb = await import('../lib/idb')
+      await mockedIdb.idbSet('files', 'p1', { version: '1', bytes: new TextEncoder().encode('%PDF-cached').buffer, size: 11, openedAt: 1 })
+
+      expect(await (await mocked.getPdfBlob('p1')).text()).toBe('%PDF-cached')
+    } finally {
+      vi.doUnmock('../lib/idb')
+    }
   })
 
   test('evicts the least recently opened PDFs above the cache limit', async () => {

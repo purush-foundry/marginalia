@@ -340,8 +340,9 @@ export async function clearPdfCache(): Promise<void> {
   for (const key of await idbKeys('files')) await idbDel('files', key)
 }
 
+// Records the open time best-effort and returns the cached PDF as a Blob.
 async function touch(pdfId: string, entry: CachedFile): Promise<Blob> {
-  await idbSet('files', pdfId, { ...entry, openedAt: Date.now() })
+  await idbSet('files', pdfId, { ...entry, openedAt: Date.now() }).catch(() => undefined)
   return new Blob([entry.bytes], { type: PDF_MIME })
 }
 
@@ -508,12 +509,22 @@ async function pullSidecars(): Promise<void> {
   const index = library.peek()
   if (!index) return
   let pulled = 0
+  let failed = 0
   try {
     for (const [pdfId, node] of Object.entries(index.sidecars)) {
-      if (!remoteMoved(await idbGet<StoredSidecar>('sidecars', pdfId), node)) continue
-      await mergeRemote(pdfId, node)
-      pulled++
+      try {
+        if (!remoteMoved(await idbGet<StoredSidecar>('sidecars', pdfId), node)) continue
+        await mergeRemote(pdfId, node)
+        pulled++
+      } catch (err) {
+        if (failureState(err).status === 'offline') {
+          syncState.value = { ...failureState(err), at: Date.now() }
+          return
+        }
+        failed++
+      }
     }
+    if (failed) syncState.value = { status: 'error', message: `${failed} annotation download(s) failed`, at: Date.now() }
   } finally {
     if (pulled) sidecarRevision.value++
   }
