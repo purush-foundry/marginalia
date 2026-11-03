@@ -9,6 +9,7 @@ vi.mock('../drive/auth', async (orig) => ({
 
 const { maybeRenew } = await import('../drive/auth')
 const { App } = await import('./App')
+const { settings } = await import('./settings')
 
 const root = document.createElement('div')
 
@@ -31,5 +32,28 @@ describe('App gesture hooks', () => {
 
     app.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(maybeRenew).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('App theme', () => {
+  test('the theme-color meta follows night mode', () => {
+    const meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    meta.content = '#f6f6f4'
+    document.head.append(meta)
+    document.body.append(root)
+    act(() => render(<App />, root))
+
+    act(() => {
+      settings.value = { ...settings.value, nightMode: true }
+    })
+    expect(meta.content).toBe('#151515')
+    expect(document.documentElement.dataset.theme).toBe('night')
+
+    act(() => {
+      settings.value = { ...settings.value, nightMode: false }
+    })
+    expect(meta.content).toBe('#f6f6f4')
+    meta.remove()
   })
 })

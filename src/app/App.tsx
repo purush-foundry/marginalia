@@ -13,6 +13,8 @@ import { Settings } from './Settings'
 import { authReady, choosingRoot, settingsOpen, toast } from './ui'
 import './app.css'
 
+const THEME_COLOR = { day: '#f6f6f4', night: '#151515' }
+
 function onRootPointerDown(e: PointerEvent): void {
   if (e.pointerType === 'pen' && !settings.peek().penSeen) void saveSettings({ penSeen: true })
 }
@@ -85,6 +87,7 @@ export function App() {
   useEffect(() => {
     if (s.nightMode) document.documentElement.dataset.theme = 'night'
     else delete document.documentElement.dataset.theme
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', s.nightMode ? THEME_COLOR.night : THEME_COLOR.day)
   }, [s.nightMode])
 
   useEffect(() => {
