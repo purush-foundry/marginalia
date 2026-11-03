@@ -5,6 +5,7 @@ import { library, startAutoSync } from '../drive/library'
 import { fingerDraws } from '../ink/tools'
 import { Library } from '../library/Library'
 import { Onboarding } from './Onboarding'
+import { applyUpdate, updateReady } from './pwa'
 import { Reader } from './Reader'
 import { route } from './route'
 import { saveSettings, settings } from './settings'
@@ -53,6 +54,11 @@ export function App() {
             <Settings />
           </div>
         </div>
+      )}
+      {updateReady.value && !settingsOpen.value && (
+        <button type="button" class="btn primary mg-update" onClick={applyUpdate}>
+          Update available — Reload
+        </button>
       )}
       {toast.value && (
         <div class="mg-toast" role="status">
