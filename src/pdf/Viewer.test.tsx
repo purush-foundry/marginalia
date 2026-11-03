@@ -6,7 +6,7 @@ import { InkLayer } from '../ink/InkLayer.tsx'
 import { penTool } from '../ink/tools.ts'
 import type { Highlight, InkStroke } from '../types.ts'
 import type { PdfDoc } from './document.ts'
-import { Viewer, type ViewerProps } from './Viewer.tsx'
+import { Viewer, type ViewerHandle, type ViewerProps } from './Viewer.tsx'
 
 // A two-page document whose pages never finish loading, so nothing touches a canvas.
 const doc: PdfDoc = {
@@ -162,6 +162,30 @@ describe('Viewer', () => {
     pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 })
     pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 121, clientY: 100 })
     expect(props.onTapHighlight).toHaveBeenCalledOnce()
+  })
+
+  it('clearSelection removes the area box and the text selection and reports no selection', async () => {
+    const armed = signal(true)
+    let handle: ViewerHandle | null = null
+    const props = mount({ areaSelectArmed: armed, handle: (h) => (handle = h) })
+    const layer = root.querySelector('.mg-page[data-page="1"] .textLayer')!
+    pointer('pointerdown', layer, { pointerType: 'mouse', pointerId: 1, clientX: 100, clientY: 100 })
+    act(() => pointer('pointermove', layer, { pointerType: 'mouse', pointerId: 1, clientX: 300, clientY: 300 }))
+    await act(async () => pointer('pointerup', layer, { pointerType: 'mouse', pointerId: 1, clientX: 300, clientY: 300 }))
+    await vi.waitFor(() => expect(props.onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'area' })))
+    expect(root.querySelector('.mg-area')).not.toBeNull()
+    const span = document.createElement('span')
+    span.textContent = 'selected words'
+    layer.append(span)
+    const range = document.createRange()
+    range.selectNodeContents(span)
+    document.getSelection()!.addRange(range)
+
+    act(() => handle!.clearSelection())
+
+    expect(root.querySelector('.mg-area')).toBeNull()
+    expect(document.getSelection()!.rangeCount).toBe(0)
+    expect(props.onSelection).toHaveBeenLastCalledWith(null)
   })
 
   it('flushes a pending reading position on unmount', () => {

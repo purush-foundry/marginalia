@@ -234,7 +234,11 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     })
   }
 
-  const clearSelection = () => document.getSelection()?.removeAllRanges()
+  // Hides the bar and clears the viewer's text selection and area box.
+  const closeBar = () => {
+    setBar(null)
+    viewer.current?.clearSelection()
+  }
 
   const addFromSelection = (sel: PendingSelection, color: HighlightColor) =>
     sel.kind === 'text'
@@ -250,15 +254,13 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     onColor(color: HighlightColor) {
       if (bar.kind === 'selection') {
         addFromSelection(bar.sel, color)
-        clearSelection()
       } else store.updateHighlight(bar.id, { color })
-      setBar(null)
+      closeBar()
     },
     onAsk() {
       if (bar.kind === 'selection') {
         const { sel } = bar
         ask({ page: sel.page, boxes: sel.boxes, text: sel.kind === 'text' ? sel.text : undefined })
-        clearSelection()
       } else if (current) {
         ask({
           page: current.page,
@@ -267,29 +269,28 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
           highlightId: current.id,
         })
       }
-      setBar(null)
+      closeBar()
     },
     onNote() {
       const rect = bar.kind === 'selection' ? bar.sel.endRect : bar.rect
       const id = bar.kind === 'selection' ? addFromSelection(bar.sel, DEFAULT_NOTE_COLOR).id : bar.id
-      if (bar.kind === 'selection') clearSelection()
-      setBar(null)
+      closeBar()
       setNote({ id, rect })
     },
     onCopy: barText
       ? () => {
           copyText(barText).then(() => showToast('Copied'), () => showToast('Could not copy'))
-          setBar(null)
+          closeBar()
         }
       : undefined,
     onDelete:
       bar.kind === 'highlight'
         ? () => {
             store.removeHighlight(bar.id)
-            setBar(null)
+            closeBar()
           }
         : undefined,
-    onDismiss: () => setBar(null),
+    onDismiss: closeBar,
   }
 
   const onLink = (link: PageLink) => {

@@ -2,15 +2,17 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PdfDoc } from '../pdf/document'
-import type { ViewerProps } from '../pdf/Viewer'
+import type { ViewerHandle, ViewerProps } from '../pdf/Viewer'
 import { emptySidecar, type Sidecar, type TextHighlight } from '../types'
 import { Reader } from './Reader'
 
 const viewer: { props: ViewerProps | null } = { props: null }
+const clearSelection = vi.fn()
 
 vi.mock('../pdf/Viewer', () => ({
   Viewer: (props: ViewerProps) => {
     viewer.props = props
+    props.handle({ clearSelection } as unknown as ViewerHandle)
     return <div class="fake-viewer" />
   },
 }))
@@ -106,6 +108,7 @@ describe('Reader', () => {
     await act(async () => button('Green')!.click())
 
     expect(button('Green')).toBeNull()
+    expect(clearSelection).toHaveBeenCalledOnce()
     expect(props.highlights.value).toMatchObject([{ kind: 'text', page: 1, color: 'green', boxes: [box], text: 'Attention' }])
     expect(lastSaved().highlights).toMatchObject([{ kind: 'text', color: 'green', text: 'Attention' }])
     await vi.waitFor(() => expect(doc.getPageText).toHaveBeenCalledWith(1))
@@ -134,6 +137,18 @@ describe('Reader', () => {
     await act(async () => button('Delete')!.click())
     expect(props.highlights.value).toEqual([])
     expect(lastSaved().highlights[0]).toMatchObject({ id: 'h1', deleted: true })
+  })
+
+  test('dismissing the bar clears the viewer selection', async () => {
+    const props = await open()
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.3 }], text: '', endRect: new DOMRect(100, 300, 40, 16), kind: 'area' }),
+    )
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(button('Ask')).toBeNull()
+    expect(clearSelection).toHaveBeenCalledOnce()
   })
 
   test('closing the reader flushes pending writes and releases the document', async () => {
