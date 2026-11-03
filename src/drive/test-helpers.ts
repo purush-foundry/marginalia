@@ -119,8 +119,17 @@ export class FakeDrive {
     const path = url.pathname
     const params = url.searchParams
     if (path === '/drive/v3/files' && method === 'GET') {
-      const parents = [...params.get('q')!.matchAll(/'([^']+)' in parents/g)].map((m) => m[1])
-      const files = [...this.files.values()].filter((f) => !f.trashed && f.parents.some((p) => parents.includes(p)))
+      const q = params.get('q')!
+      const parents = [...q.matchAll(/'([^']+)' in parents/g)].map((m) => m[1])
+      const tag = q.match(/appProperties has \{ key='pdf' and value='([^']+)' \}/)?.[1]
+      const name = q.match(/name = '([^']+)'/)?.[1]
+      const files = [...this.files.values()].filter(
+        (f) =>
+          !f.trashed &&
+          (!parents.length || f.parents.some((p) => parents.includes(p))) &&
+          (!tag || f.appProperties?.pdf === tag) &&
+          (!name || f.name === name),
+      )
       return json({ files: files.map((f) => this.raw(f)) })
     }
     if (path === '/drive/v3/changes/startPageToken') return json({ startPageToken: String(this.changeLog.length) })

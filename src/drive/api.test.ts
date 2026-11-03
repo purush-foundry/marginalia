@@ -134,6 +134,20 @@ describe('request shapes', () => {
     expect(node.version).toBe('9')
   })
 
+  test('findSidecarFile looks up by appProperties.pdf, then by name in the parent', async () => {
+    const calls = mockFetch(({ url }) =>
+      url.searchParams.get('q')!.startsWith('name') ? json({ files: [rawFile('byName')] }) : json({ files: [] }),
+    )
+
+    const node = await api.findSidecarFile('pdf1', "O'Brien.marginalia.json", 'folder')
+
+    expect(calls.map((c) => c.url.searchParams.get('q'))).toEqual([
+      "appProperties has { key='pdf' and value='pdf1' } and trashed = false",
+      "name = 'O\\'Brien.marginalia.json' and 'folder' in parents and trashed = false",
+    ])
+    expect(node?.id).toBe('byName')
+  })
+
   test('getStartPageToken and listChanges', async () => {
     const calls = mockFetch(({ url }) => {
       if (url.pathname.endsWith('/startPageToken')) return json({ startPageToken: 'tok1' })

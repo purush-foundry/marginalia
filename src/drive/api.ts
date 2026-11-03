@@ -173,6 +173,14 @@ export async function updateJsonFile(id: string, body: unknown): Promise<DriveNo
   return toNode(raw)
 }
 
+/** An existing sidecar for the PDF: by appProperties.pdf, else by name in the parent folder. */
+export async function findSidecarFile(pdfId: string, name: string, parentId: string): Promise<DriveNode | null> {
+  const [tagged] = await listAll(`appProperties has { key='pdf' and value=${quote(pdfId)} } and trashed = false`)
+  if (tagged) return tagged
+  const [named] = await listAll(`name = ${quote(name)} and ${quote(parentId)} in parents and trashed = false`)
+  return named ?? null
+}
+
 export async function getStartPageToken(): Promise<string> {
   return (await getJson<{ startPageToken: string }>(url(API, '/changes/startPageToken', {}))).startPageToken
 }
