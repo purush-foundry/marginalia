@@ -509,9 +509,13 @@ export function Reader({ pdfId }: { pdfId: string }) {
     setError(null)
     setProgress(0)
     void (async () => {
-      const blob = await getPdfBlob(pdfId, (f) => !cancelled && setProgress(f))
+      const onProgress = (f: number) => !cancelled && setProgress(f)
+      const blob = await getPdfBlob(pdfId, onProgress)
       if (cancelled) return
-      doc = await openPdf(blob)
+      doc = await openPdf(blob).catch(async (err: unknown) => {
+        const fresh = await getPdfBlob(pdfId, onProgress, { fresh: true }).catch(() => Promise.reject(err))
+        return openPdf(fresh)
+      })
       const sidecar = await loadSidecar(pdfId)
       if (cancelled) return
       const opened = createAnnotationStore(sidecar, (next) => {

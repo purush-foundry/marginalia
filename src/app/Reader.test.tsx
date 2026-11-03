@@ -227,3 +227,23 @@ describe('Reader draw latch', () => {
     expect(mouseDraws.value).toBe(false)
   })
 })
+
+describe('Reader open retry', () => {
+  test('a cached copy pdf.js cannot open is replaced by a fresh download before any error shows', async () => {
+    vi.mocked(openPdf).mockRejectedValueOnce(new Error('Invalid PDF structure'))
+    await open()
+
+    expect(drive.getPdfBlob).toHaveBeenCalledTimes(2)
+    expect(drive.getPdfBlob.mock.calls[1][2]).toEqual({ fresh: true })
+    expect(openPdf).toHaveBeenCalledTimes(2)
+    expect(root.querySelector('.mg-error')).toBeNull()
+  })
+
+  test('shows the original error when the fresh download fails too', async () => {
+    vi.mocked(openPdf).mockRejectedValueOnce(new Error('Invalid PDF structure'))
+    drive.getPdfBlob.mockResolvedValueOnce(blob).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await act(async () => render(<Reader pdfId="p1" />, root))
+
+    await vi.waitFor(() => expect(root.querySelector('.mg-error')?.textContent).toContain('Invalid PDF structure'))
+  })
+})

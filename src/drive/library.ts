@@ -25,6 +25,14 @@ import { mergeSidecars } from './merge'
 
 interface CachedFile {
   version: string
+  bytes: ArrayBuffer
+  size: number
+  openedAt: number
+}
+
+/** A cache record written before PDFs were stored as bytes. */
+interface LegacyCachedFile {
+  version: string
   blob: Blob
   size: number
   openedAt: number
@@ -334,7 +342,22 @@ export async function clearPdfCache(): Promise<void> {
 
 async function touch(pdfId: string, entry: CachedFile): Promise<Blob> {
   await idbSet('files', pdfId, { ...entry, openedAt: Date.now() })
-  return entry.blob
+  return new Blob([entry.bytes], { type: PDF_MIME })
+}
+
+// The cached PDF as bytes; rewrites a legacy Blob record as bytes, and drops one whose Blob can no longer be read.
+async function readCached(pdfId: string): Promise<CachedFile | undefined> {
+  const entry = await idbGet<CachedFile | LegacyCachedFile>('files', pdfId)
+  if (!entry || 'bytes' in entry) return entry
+  try {
+    const bytes = await entry.blob.arrayBuffer()
+    const migrated: CachedFile = { version: entry.version, bytes, size: bytes.byteLength, openedAt: entry.openedAt }
+    await idbSet('files', pdfId, migrated)
+    return migrated
+  } catch {
+    await idbDel('files', pdfId).catch(() => undefined)
+    return undefined
+  }
 }
 
 // Deletes least recently opened PDFs, except `keep`, until the cache fits the limit.
@@ -349,9 +372,9 @@ async function evict(keep: string): Promise<void> {
   }
 }
 
-/** Returns the PDF from cache when its version matches, else downloads and caches it; falls back to a stale copy when the download fails. */
-export async function getPdfBlob(pdfId: string, onProgress?: (frac: number) => void): Promise<Blob> {
-  const entry = await idbGet<CachedFile>('files', pdfId)
+/** Returns the PDF from cache when its version matches, else downloads and caches it; falls back to a stale copy when the download fails. `fresh` skips the cache and replaces it once the download succeeds. */
+export async function getPdfBlob(pdfId: string, onProgress?: (frac: number) => void, opts: { fresh?: boolean } = {}): Promise<Blob> {
+  const entry = opts.fresh ? undefined : await readCached(pdfId)
   if (isFresh(entry, pdfId)) {
     onProgress?.(1)
     return touch(pdfId, entry)
@@ -367,7 +390,9 @@ export async function getPdfBlob(pdfId: string, onProgress?: (frac: number) => v
     throw err
   }
   try {
-    await idbSet('files', pdfId, { version: node.version, blob, size: blob.size, openedAt: Date.now() })
+    const bytes = await blob.arrayBuffer()
+    const record: CachedFile = { version: node.version, bytes, size: bytes.byteLength, openedAt: Date.now() }
+    await idbSet('files', pdfId, record)
     await evict(pdfId)
   } catch {
     // Returns the downloaded blob even when it cannot be cached.

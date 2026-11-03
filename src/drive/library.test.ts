@@ -499,6 +499,58 @@ describe('PDF cache', () => {
     expect(downloads()).toBe(2)
   })
 
+  const isArrayBuffer = (x: unknown) => Object.prototype.toString.call(x) === '[object ArrayBuffer]'
+  const mediaDownloads = () => drive.calls.filter((c) => c.url.searchParams.get('alt') === 'media').length
+
+  test('stores cached PDFs as bytes, not Blobs', async () => {
+    paper('p1', 'root', 'p1.pdf', '%PDF-bytes')
+    await lib.setRootFolder(ROOT)
+
+    await lib.getPdfBlob('p1')
+
+    const record = await idb.idbGet<Record<string, unknown>>('files', 'p1')
+    expect(isArrayBuffer(record!.bytes)).toBe(true)
+    expect(record!.blob).toBeUndefined()
+    expect(await (await lib.getPdfBlob('p1')).text()).toBe('%PDF-bytes')
+    expect(mediaDownloads()).toBe(1)
+  })
+
+  test('migrates a legacy Blob record to bytes without downloading', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('files', 'p1', { version: '1', blob: new Blob(['%PDF-legacy']), size: 11, openedAt: 1 })
+
+    expect(await (await lib.getPdfBlob('p1')).text()).toBe('%PDF-legacy')
+
+    expect(mediaDownloads()).toBe(0)
+    const record = await idb.idbGet<Record<string, unknown>>('files', 'p1')
+    expect(isArrayBuffer(record!.bytes)).toBe(true)
+    expect(record!.blob).toBeUndefined()
+  })
+
+  test('a cached Blob that can no longer be read is dropped and the PDF downloaded again', async () => {
+    paper('p1', 'root', 'p1.pdf', '%PDF-drive')
+    await lib.setRootFolder(ROOT)
+    const unreadable = { arrayBuffer: () => Promise.reject(new DOMException('The object can not be found here.', 'NotFoundError')) }
+    await idb.idbSet('files', 'p1', { version: '1', blob: unreadable, size: 10, openedAt: 1 })
+
+    expect(await (await lib.getPdfBlob('p1')).text()).toBe('%PDF-drive')
+
+    expect(mediaDownloads()).toBe(1)
+    expect(isArrayBuffer((await idb.idbGet<Record<string, unknown>>('files', 'p1'))!.bytes)).toBe(true)
+  })
+
+  test('getPdfBlob with fresh: true downloads even when a cached copy exists, and replaces it', async () => {
+    paper('p1', 'root', 'p1.pdf', '%PDF-drive')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('files', 'p1', { version: '1', bytes: new TextEncoder().encode('%PDF-bad').buffer, size: 8, openedAt: 1 })
+
+    expect(await (await lib.getPdfBlob('p1', undefined, { fresh: true })).text()).toBe('%PDF-drive')
+
+    expect(mediaDownloads()).toBe(1)
+    expect(await (await lib.getPdfBlob('p1')).text()).toBe('%PDF-drive')
+  })
+
   test('evicts the least recently opened PDFs above the cache limit', async () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
