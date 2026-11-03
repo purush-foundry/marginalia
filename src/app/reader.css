@@ -196,7 +196,6 @@
   width: 380px;
   border-left: 1px solid var(--border);
   background: var(--surface);
-  padding-bottom: var(--safe-bottom);
 }
 
 @media (max-width: 699px) {
