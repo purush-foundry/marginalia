@@ -5,6 +5,15 @@
   overflow: hidden;
 }
 
+.mg-reader-pending {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
 .mg-muted {
   color: var(--text-muted);
 }
