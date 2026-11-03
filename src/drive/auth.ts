@@ -24,7 +24,7 @@ export const authState = signal<AuthState>({ status: 'signed-out' })
 export const gisAvailable = signal(false)
 
 let token: Token | null = null
-let clientId = ''
+let activeClientId = ''
 let tokenClient: GisTokenClient | null = null
 let gisLoad: Promise<boolean> | null = null
 let requesting: { interactive: boolean } | null = null
@@ -94,7 +94,7 @@ function redirectToGoogle(): void {
   sessionStorage.setItem(STATE_KEY, state)
   const params = new URLSearchParams({
     response_type: 'token',
-    client_id: clientId,
+    client_id: activeClientId,
     redirect_uri: location.origin + import.meta.env.BASE_URL,
     scope: DRIVE_SCOPES,
     prompt: 'none',
@@ -111,8 +111,8 @@ function requestToken(interactive: boolean): void {
 }
 
 /** Loads https://accounts.google.com/gsi/client (tolerates offline), restores a cached token. */
-export async function initAuth(id: string): Promise<void> {
-  clientId = id
+export async function initAuth(clientId: string): Promise<void> {
+  activeClientId = clientId
   if (!token) {
     const cached = await idbGet<Token>('meta', 'token')
     if (cached && !token) {
@@ -126,9 +126,9 @@ export async function initAuth(id: string): Promise<void> {
   gisAvailable.value = await loadGis()
   const api = oauth2()
   tokenClient =
-    api && clientId
+    api && activeClientId
       ? api.initTokenClient({
-          client_id: clientId,
+          client_id: activeClientId,
           scope: DRIVE_SCOPES,
           prompt: '',
           callback: onTokenResponse,
@@ -139,7 +139,7 @@ export async function initAuth(id: string): Promise<void> {
 
 /** Must run inside a user gesture: opens the GIS popup; on `popup_failed_to_open` falls back to the implicit redirect flow. */
 export function connect(): Promise<void> {
-  if (!clientId) return Promise.reject(new Error('Google client id is not set'))
+  if (!activeClientId) return Promise.reject(new Error('Google client id is not set'))
   if (!tokenClient) return Promise.reject(new Error('Google sign-in is unavailable; are you offline?'))
   return new Promise((resolve, reject) => {
     waiters.push({ resolve, reject })
