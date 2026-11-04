@@ -47,8 +47,10 @@ type HistoryEntry = Change[]
 
 const MAX_HISTORY = 100
 const DEFAULT_IMAGE_W = 0.8
-const MIN_IMAGE_W = 0.15
-const MAX_IMAGE_W = 1
+
+/** Image width bounds as fractions of the sheet width. */
+export const MIN_IMAGE_W = 0.15
+export const MAX_IMAGE_W = 1
 
 export function createNotesStore(initial: NotesDoc, persist: (doc: NotesDoc) => void): NotesStore {
   const state = signal<NotesDoc>(initial)
