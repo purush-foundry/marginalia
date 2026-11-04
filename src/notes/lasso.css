@@ -8,11 +8,6 @@
   user-select: none;
 }
 
-.mg-lasso[data-finger-draws] {
-  pointer-events: auto;
-  touch-action: none;
-}
-
 .mg-lasso-svg {
   position: absolute;
   top: 0;
@@ -85,6 +80,10 @@
   z-index: 5;
   transform: translate(-50%, calc(-100% - 8px));
   pointer-events: auto;
+}
+
+.mg-lasso-menu[data-side='below'] {
+  transform: translate(-50%, 8px);
 }
 
 .mg-object-menu {

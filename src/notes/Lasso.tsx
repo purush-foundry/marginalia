@@ -100,6 +100,8 @@ const PALM_WINDOW_MS = 500
 const TAP_SLOP_PX = 8
 const FRAME_PAD_PX = 8
 const MIN_SCALE = 0.05
+// A frame whose top is closer than this to the page top gets the menu below it.
+const MENU_ROOM_PX = 64
 
 const fmt = (v: number) => String(Math.round(v * 100) / 100)
 const px = (v: number) => `${fmt(v)}px`
@@ -131,6 +133,19 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
   const frame = active && props.selection.length ? itemsBounds(props.items, props.selection) : null
   const live = useRef({ props, frame })
   live.current = { props, frame }
+
+  const fingerLoops = active && fingerDraws.value
+
+  // Stops the page from panning under a finger while the finger draws the loop.
+  useEffect(() => {
+    const parent = rootRef.current?.parentElement
+    if (!fingerLoops || !parent) return
+    const before = parent.style.touchAction
+    parent.style.touchAction = 'none'
+    return () => {
+      parent.style.touchAction = before
+    }
+  }, [fingerLoops])
 
   // Intercepts lasso input on the parent element in the capture phase while the Lasso is the tool.
   useEffect(() => {
@@ -262,6 +277,7 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
     const onKeyDown = (e: KeyboardEvent) => {
       const { selection, onSelect, menu } = live.current.props
       if (tool.peek() !== 'lasso' || !selection.length || inTextField(e.target)) return
+      if (document.getSelection()?.isCollapsed === false) return
       const mod = e.metaKey || e.ctrlKey
       const k = e.key.toLowerCase()
       if (mod && k === 'c') menu.onCopy()
@@ -292,7 +308,9 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
   if (frame) {
     const left = frame.x * cssW - FRAME_PAD_PX
     const top = frame.y * cssW - FRAME_PAD_PX
-    const style: Record<string, string> = { left: px(left), top: px(top), width: px(frame.w * cssW + 2 * FRAME_PAD_PX), height: px(frame.h * cssW + 2 * FRAME_PAD_PX) }
+    const height = frame.h * cssW + 2 * FRAME_PAD_PX
+    const below = top < MENU_ROOM_PX
+    const style: Record<string, string> = { left: px(left), top: px(top), width: px(frame.w * cssW + 2 * FRAME_PAD_PX), height: px(height) }
     if (preview?.kind === 'move') style.transform = `translate(${px(preview.dx * cssW)}, ${px(preview.dy * cssW)})`
     if (preview?.kind === 'scale') {
       style.transformOrigin = `${px(preview.origin.x * cssW - left)} ${px(preview.origin.y * cssW - top)}`
@@ -306,7 +324,11 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
           ))}
         </div>
         {!preview && (
-          <div class="mg-lasso-menu" style={{ left: px((frame.x + frame.w / 2) * cssW), top: px(top) }}>
+          <div
+            class="mg-lasso-menu"
+            data-side={below ? 'below' : 'above'}
+            style={{ left: px((frame.x + frame.w / 2) * cssW), top: px(below ? top + height : top) }}
+          >
             <ObjectMenu {...props.menu} />
           </div>
         )}
@@ -314,7 +336,7 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
     )
   }
   return (
-    <div ref={rootRef} class="mg-lasso" data-finger-draws={active && fingerDraws.value ? '' : undefined} style={{ width: px(cssW), height: px(h) }}>
+    <div ref={rootRef} class="mg-lasso" style={{ width: px(cssW), height: px(h) }}>
       <svg class="mg-lasso-svg" width={cssW} height={h} viewBox={`0 0 ${cssW} ${h}`} aria-hidden="true">
         {loop && <path class="mg-lasso-loop" d={loopPath(loop.points, cssW, loop.rect)} />}
       </svg>

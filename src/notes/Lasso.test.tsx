@@ -165,19 +165,23 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  document.getSelection()?.removeAllRanges()
   render(null, host)
   host.remove()
   vi.restoreAllMocks()
 })
 
 test('a pen loop selects strokes and objects and opens the menu above the selection', async () => {
+  // Stroke 'a' and the text box sit 50 px lower here, leaving room for the menu above them.
+  store.moveItems([{ kind: 'stroke', id: 'a' }, { kind: 'text', id: textId }], 0, 0.25)
+  const loop: [number, number][] = [[30, 80], [150, 80], [150, 165], [30, 165], [30, 82]]
   await mount()
-  const down = pointer('pointerdown', { x: 30, y: 30 })
+  const down = pointer('pointerdown', { x: 30, y: 80 })
   await act(() => {
     paper().dispatchEvent(down)
   })
   expect(down.defaultPrevented).toBe(true)
-  for (const [x, y] of LOOP.slice(1)) {
+  for (const [x, y] of loop.slice(1)) {
     await act(() => {
       paper().dispatchEvent(pointer('pointermove', { x, y }))
     })
@@ -185,7 +189,7 @@ test('a pen loop selects strokes and objects and opens the menu above the select
   expect(q('path.mg-lasso-loop')).not.toBeNull()
   expect(q('.mg-lasso-frame')).toBeNull()
   await act(() => {
-    paper().dispatchEvent(pointer('pointerup', { x: 30, y: 32 }))
+    paper().dispatchEvent(pointer('pointerup', { x: 30, y: 82 }))
   })
 
   expect(q('path.mg-lasso-loop')).toBeNull()
@@ -193,13 +197,14 @@ test('a pen loop selects strokes and objects and opens the menu above the select
   const frame = q('.mg-lasso-frame')!
   expect(parseFloat(frame.style.left)).toBeLessThanOrEqual(40)
   expect(parseFloat(frame.style.left) + parseFloat(frame.style.width)).toBeGreaterThanOrEqual(140)
-  expect(parseFloat(frame.style.top)).toBeLessThanOrEqual(40)
-  expect(parseFloat(frame.style.top) + parseFloat(frame.style.height)).toBeGreaterThanOrEqual(110)
+  expect(parseFloat(frame.style.top)).toBeLessThanOrEqual(90)
+  expect(parseFloat(frame.style.top) + parseFloat(frame.style.height)).toBeGreaterThanOrEqual(160)
   expect(host.querySelectorAll('.mg-lasso-handle[data-corner]')).toHaveLength(4)
 
   const menu = q('[role="menu"][aria-label="Selection"]')!
   const slot = menu.parentElement!
   expect(slot.classList.contains('mg-lasso-menu')).toBe(true)
+  expect(slot.dataset.side).toBe('above')
   expect(parseFloat(slot.style.top)).toBe(parseFloat(frame.style.top))
   expect([...menu.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Cut', 'Copy', 'Duplicate', 'Delete', 'Recolor', 'Front', 'Back'])
 
@@ -226,6 +231,18 @@ test('a pen loop selects strokes and objects and opens the menu above the select
   const penDown = await drag(paper(), LOOP)
   expect(penDown.defaultPrevented).toBe(false)
   expect(ids(last())).toEqual(['a', textId])
+})
+
+test('a selection near the top of the page opens the menu below it', async () => {
+  store.addStroke({ id: 'top', page: 'page-1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [0.5, 0.09, 0.5, 0.6, 0.1, 0.5], createdAt: 1, updatedAt: 1 })
+  await mount()
+  await drag(paper(), [[90, 2], [130, 2], [130, 30], [90, 30]])
+  expect(ids(last())).toEqual(['top'])
+  const frame = q('.mg-lasso-frame')!
+  expect(parseFloat(frame.style.top)).toBeCloseTo(10)
+  const slot = q('.mg-lasso-menu')!
+  expect(slot.dataset.side).toBe('below')
+  expect(parseFloat(slot.style.top)).toBeCloseTo(parseFloat(frame.style.top) + parseFloat(frame.style.height))
 })
 
 test('a tap on an object with the Lasso selects it', async () => {
@@ -274,6 +291,28 @@ test('dragging inside the selection moves it and reports done once', async () =>
   expect(q('.mg-lasso-frame')!.style.transform).toBe('')
   expect(q('[role="menu"]')).not.toBeNull()
   expect(last()).toEqual([{ kind: 'image', id: imageId }])
+})
+
+test('a finger moves the selection only past the slop and still scrolls outside it', async () => {
+  await mount()
+  await drag(paper(), [[40, 170]], 'touch')
+  const frame = q('.mg-lasso-frame')!
+  const before = store.doc.value
+
+  await drag(frame, [[40, 170], [44, 170], [40, 170]], 'touch')
+  expect(moves).toEqual([])
+  expect(store.doc.value).toBe(before)
+  const box = () => store.content.value.get('page-1')!.images[0].box
+  expect(box().x).toBeCloseTo(0.1)
+
+  await drag(frame, [[40, 170], [60, 170]], 'touch')
+  expect(moves.map(([, , done]) => done)).toEqual([false, true])
+  expect(box().x).toBeCloseTo(0.2)
+
+  const outside = await drag(paper(), [[150, 20], [150, 120]], 'touch')
+  expect(outside.defaultPrevented).toBe(false)
+  expect(moves).toHaveLength(2)
+  expect(q('path.mg-lasso-loop')).toBeNull()
 })
 
 test('a corner handle scales about the opposite corner', async () => {
@@ -339,6 +378,21 @@ test('Esc or a tap outside clears the selection', async () => {
 test('⌘C copies, ⌘X cuts and Delete removes the selection', async () => {
   await mount()
   await drag(paper(), LOOP)
+
+  // A native text selection keeps its own copy and delete keys.
+  const range = document.createRange()
+  range.selectNodeContents(q('.text-span')!)
+  document.getSelection()!.addRange(range)
+  const nativeCopy = new KeyboardEvent('keydown', { key: 'c', metaKey: true, bubbles: true, cancelable: true })
+  await act(() => {
+    document.dispatchEvent(nativeCopy)
+  })
+  await key({ key: 'Backspace' })
+  expect(nativeCopy.defaultPrevented).toBe(false)
+  expect(clipboard.value).toBeNull()
+  expect(store.content.value.get('page-1')!.strokes).toHaveLength(2)
+  document.getSelection()!.removeAllRanges()
+
   await key({ key: 'c', metaKey: true })
   expect(clipboard.value!.strokes).toHaveLength(1)
   expect(clipboard.value!.texts.map((t) => t.text)).toEqual(['hi'])
@@ -369,21 +423,35 @@ test('⌘C copies, ⌘X cuts and Delete removes the selection', async () => {
 })
 
 test('with objects false and skip on text spans, only ink is selected and text drags pass through', async () => {
-  await mount(false, (t) => t.closest('.text-span') !== null)
-  await drag(paper(), [[40, 170]])
-  expect(selected).toEqual([])
-  await drag(paper(), [[5, 5], [198, 5], [198, 298], [5, 298]])
-  expect(selected.map(ids)).toEqual([['a', 'far']])
+  for (const draws of [false, true]) {
+    fingerDraws.value = draws
+    selected = []
+    await act(() => {
+      render(null, host)
+    })
+    await mount(false, (t) => t.closest('.text-span') !== null)
+    await drag(paper(), [[40, 170]])
+    expect(selected).toEqual([])
+    await drag(paper(), [[5, 5], [198, 5], [198, 298], [5, 298]])
+    expect(selected.map(ids)).toEqual([['a', 'far']])
 
-  const span = q('.text-span')!
-  const reached = vi.fn()
-  span.addEventListener('pointerdown', reached)
-  const down = await drag(span, [[100, 100], [150, 150]], 'mouse')
-  expect(down.defaultPrevented).toBe(false)
-  expect(reached).toHaveBeenCalledTimes(1)
-  expect(q('path.mg-lasso-loop')).toBeNull()
-  expect(moves).toEqual([])
-  expect(selected).toHaveLength(1)
+    const span = q('.text-span')!
+    const reached = vi.fn()
+    span.addEventListener('pointerdown', reached)
+    const down = await drag(span, [[100, 100], [150, 150]], 'mouse')
+    expect(down.defaultPrevented).toBe(false)
+    expect(reached).toHaveBeenCalledTimes(1)
+    expect(q('path.mg-lasso-loop')).toBeNull()
+    expect(moves).toEqual([])
+    expect(selected).toHaveLength(1)
+  }
+  // With Draw with finger on, the page stops panning under the Lasso and the layer stays out of hit testing.
+  expect(q('.page')!.style.touchAction).toBe('none')
+  expect(q('.mg-lasso')!.getAttributeNames().sort()).toEqual(['class', 'style'])
+  await act(() => {
+    tool.value = 'pen'
+  })
+  expect(q('.page')!.style.touchAction).toBe('')
 })
 
 test('a finger never draws a loop', async () => {
