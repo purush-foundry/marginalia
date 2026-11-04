@@ -95,19 +95,22 @@ device checklist.
 
 - **Hero band** at the top of the library (and behind onboarding): on phones about a third of
   the viewport, on wide screens 240–320 px tall, fading into the surface colour at its lower
-  edge. Inside it, an original monochrome woodblock-style drawing as inline SVG: a great wave
-  with foam fingers along the bottom, a large sun disc, flat drifting clouds, two cranes, a
-  distant mountain. Grayscale only (ink lines, two or three flat grey tints, paper tone); no
-  text inside the SVG; ≤ 40 KB. Night mode inverts it to pale ink on dark paper through CSS,
-  not a second file. The library list sits below the band on the plain surface, unchanged.
+  edge. The library list sits below the band on the plain surface, unchanged.
+- **The owner's picture.** The band shows an image the owner drops into the root papers folder
+  in Drive, named `marginalia-home` with extension png, jpg, jpeg or webp (root folder only,
+  first match). `syncLibrary` records it in the index; the app downloads it on demand, caches
+  the bytes in IndexedDB, re-downloads when the Drive version changes, and shows it with
+  `object-fit: cover` and `filter: grayscale(1)` (night mode also dims it slightly). One drop
+  in Drive, every device. No settings picker.
+- **Fallback drawing.** When no such file exists, the band shows a small built-in grayscale
+  woodblock-style drawing (a great wave, sun, clouds, cranes, a distant mountain; inline SVG,
+  about 7 KB, no text). Night mode inverts it through CSS. It is already drawn; no further art
+  work is in scope.
 - **Words.** Over the band, one short quotation about reading or study (≤ 14 words) with its
   attribution, in a vertical cartouche on wide screens and a horizontal strip on phones, set in
   the display serif. One quotation per launch, rotating through a curated list of at most 16,
   public domain or short attributed lines (Seneca, Bacon, Descartes, Erasmus, Thoreau, Emerson,
   Schopenhauer, Feynman and the like). The builder picks them.
-- **Own artwork.** Settings → Home artwork: pick an image file (kept in IndexedDB as bytes,
-  ≤ 4 MB, not synced), shown in the band with `filter: grayscale(1)` so the owner's own
-  reference picture fits the monochrome look, or "Use the built-in drawing".
 - **Type.** Display serif stack for titles and the quotation:
   `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif`. Body stays system sans.
   No web fonts. The reader is otherwise untouched.
