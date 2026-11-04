@@ -859,6 +859,50 @@ describe('Reader tools', () => {
     }
   })
 
+  test('under Lasso a press on a highlight away from the text still reaches the highlight tap', async () => {
+    drive.loadSidecar.mockResolvedValue({
+      ...emptySidecar('p1', 'attention.pdf', 1),
+      highlights: [
+        { kind: 'area', id: 'fig', page: 1, color: 'green', box: { x: 0.5, y: 0.5, w: 0.3, h: 0.2 }, createdAt: 1, updatedAt: 1 },
+        { kind: 'text', id: 'txt', page: 1, color: 'yellow', boxes: [{ x: 0.1, y: 0.1, w: 0.4, h: 0.03 }], text: 'scaled', createdAt: 1, updatedAt: 1 },
+      ],
+    })
+    await open()
+    expect(tool.value).toBe('lasso')
+    // The scroller's bubbling pointerdown and the document's pointerup are what the viewer's highlight tap listens to.
+    const scroller = document.createElement('div')
+    const page = document.createElement('div')
+    page.className = 'mg-page-inner'
+    scroller.append(page)
+    document.body.append(scroller)
+    const seen: string[] = []
+    const onDown = () => seen.push('down')
+    const onUp = () => seen.push('up')
+    scroller.addEventListener('pointerdown', onDown)
+    document.addEventListener('pointerup', onUp)
+    const tap = async (x: number, y: number) => {
+      seen.length = 0
+      const init = { bubbles: true, cancelable: true, pointerType: 'mouse', pointerId: 1, button: 0, clientX: x, clientY: y }
+      const down = new PointerEvent('pointerdown', { ...init, buttons: 1 })
+      await act(async () => {
+        page.dispatchEvent(down)
+        page.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }))
+      })
+      return { prevented: down.defaultPrevented, seen: seen.slice() }
+    }
+    try {
+      await act(async () => render(viewer.props!.pageOverlay!(1, 600, 776), page))
+      expect(await tap(0.6 * 600, 0.6 * 776)).toEqual({ prevented: false, seen: ['down', 'up'] })
+      expect(await tap(0.45 * 600, 0.115 * 776)).toEqual({ prevented: false, seen: ['down', 'up'] })
+      expect(await tap(0.1 * 600, 0.9 * 776)).toEqual({ prevented: true, seen: [] })
+    } finally {
+      scroller.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('pointerup', onUp)
+      act(() => render(null, page))
+      scroller.remove()
+    }
+  })
+
   test('paper ink uses the page width in mm and night mode puts the highlighter below the ink', async () => {
     const ink = (id: string, t: 'pen' | 'highlighter'): InkStroke => ({
       kind: 'ink', id, page: 1, color: '#1c1c1a', width: 0.01, tool: t, points: [0.1, 0.1, 0.5, 0.2, 0.2, 0.5], createdAt: 1, updatedAt: 1,

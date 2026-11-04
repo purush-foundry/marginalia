@@ -127,12 +127,9 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 
 ### Notebook and lasso (v3 Phase B integration)
 
-- Under the Lasso a text box cannot be edited: the second tap of a double-tap lands on the
-  selection frame. Editing needs the Text tool (or a finger double-tap under an ink tool). An
-  **Edit** item in the object menu for a single text box would fix it.
-- On a paper page under the Lasso, a pen or mouse tap on an area highlight away from the text
-  no longer opens its bar; the lasso takes the press. Text highlights still open (the press lands
-  on a text span).
+- A lone selected text box takes its own presses, so dragging it moves it within its page only;
+  lasso it together with something else to carry it to another page.
+- On a paper page a lasso cannot start inside a highlight's box; the press goes to the highlight.
 - ⌘V prefers the in-app clipboard once something has been copied in the notebook, so an image
   copied from another app afterwards pastes only through **Image** or drop.
 - A selection dropped on a page of a different width keeps its page-width coordinates, so it

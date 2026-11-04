@@ -246,3 +246,12 @@
   width: 100%;
   margin-top: 6px;
 }
+
+/* A lone selected text box takes its own presses through the lasso frame; the frame's corners still scale. */
+.mg-nb-page:has(> .mg-nb-text[data-selected]) .mg-lasso-frame {
+  pointer-events: none;
+}
+
+.mg-nb-page:has(> .mg-nb-text[data-selected]) .mg-lasso-handle {
+  pointer-events: auto;
+}

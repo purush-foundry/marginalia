@@ -99,9 +99,9 @@ The layout and the split are remembered per device. The notebook loads the first
   the selection. Copy and paste stay inside the app.
 - **Text boxes:** pick **Text** and tap a page to drop a box 60 % of the page wide and type; the
   tool stays on Text so the next tap makes another box, and a box you leave empty disappears. Sizes
-  **S · M · L** (10 / 13 / 18 pt) and the colour come from the tool menu. Double-tap a box with the
-  Text tool to edit it again. With the Lasso, drag a selected box to move it and pull its side
-  handles to change its width; the text reflows.
+  **S · M · L** (10 / 13 / 18 pt) and the colour come from the tool menu. Double-tap a box to edit
+  it; the Text tool also places new boxes. With the Lasso, tap a box to select it, drag it to move
+  it on its page and pull its side handles to change its width; the text reflows.
 - **Images:** paste, drop, **Image**, or **To notes** from a Snip; they land on the current page at
   half its width. They are objects like text boxes: the Lasso selects, moves and scales them, and
   a Snip keeps its **p.N** chip.
@@ -127,8 +127,8 @@ selected tool and a finger never draws unless **Draw with finger** is on in Sett
 laptop the mouse draws under Pen, Highlighter and Eraser; **Lasso** or **Esc** stops it, and a
 paper always opens in Lasso so a mouse drag selects text. The keys **L**, **P**, **H**, **E** and
 **T** pick Lasso, Pen, Highlighter, Eraser and Text outside text fields. On a paper page the Lasso
-selects ink only: a drag that starts on the text still selects text, and the menu has no Front or
-Back. In night mode Black ink shows pale so
+selects ink only: a drag that starts on the text still selects text, a tap on a highlight still
+opens its bar, and the menu has no Front or Back. In night mode Black ink shows pale so
 it stays visible; it is still stored as Black.
 
 ### Pens

@@ -175,12 +175,15 @@ v3 Phase B added:
   it back; ⌘V pastes at the pointer, else centred on the current page, never in a text field or after
   a press in the other pane; Thumbnails opens a column beside the pages, a thumbnail tap scrolls to
   its page, and the phone sheet closes after the tap; a Lasso tap selects a text box (with its side
-  handles) or an image, the Pen does not select images, and a double-tap on text does not zoom.
+  handles) or an image, the Pen does not select images, and a double-tap on text does not zoom;
+  under Lasso a selected text box drags on its own and a double-tap edits it; a wrapped text box's
+  frame uses its measured height.
 - `src/ink/ToolMenu.test.tsx` — the Text panel's colours, Add colour and S · M · L; the Pen's Draw
   and hold; the Lasso's Rectangular.
 - `src/app/Reader.test.tsx` — a lasso on a PDF page selects ink only, moves it in page units, copies
-  it into the notebook clipboard and deletes it with undo, while presses on text and links pass
-  through; T picks Text, the notes pane's tool menu offers it, and Esc while typing keeps it.
+  it into the notebook clipboard and deletes it with undo, while presses on text, links and inside a
+  highlight's box (an area highlight, or a gap in a text highlight) pass through to the highlight
+  tap; T picks Text, the notes pane's tool menu offers it, and Esc while typing keeps it.
 
 ## Checked in headless Chrome (not on a device)
 

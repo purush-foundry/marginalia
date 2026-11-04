@@ -44,6 +44,7 @@ const DUPLICATE_OFFSET = 0.02
 const WIDE = '(min-width: 700px)'
 const NO_CONTENT: PageContent = { strokes: [], texts: [], images: [] }
 const NO_REFS: ItemRef[] = []
+const NO_HEIGHTS: ReadonlyMap<string, number> = new Map()
 const BAR_TOOLS: readonly { tool: Tool; label: string }[] = [
   { tool: 'lasso', label: 'Lasso' },
   { tool: 'pen', label: 'Pen' },
@@ -133,20 +134,26 @@ function figureBox(m: ImageObject, w: number) {
   return { left: px(m.box.x * w), top: px(m.box.y * w), width: px(m.box.w * w), height: px(m.box.w * m.aspect * w) }
 }
 
-// The page's items as the lasso sees them, bottom to top; a text box's height is estimated from its size and line count.
-function lassoItems(content: PageContent, widthMm: number): LassoItem[] {
+// The page's items as the lasso sees them, bottom to top; a text box uses its measured height, else an estimate from size and line count.
+function lassoItems(content: PageContent, widthMm: number, heights: ReadonlyMap<string, number>): LassoItem[] {
   return pageLayers(content).flatMap((layer): LassoItem[] => {
     if (layer.kind === 'ink') return layer.strokes.map((s) => ({ kind: 'stroke', id: s.id, points: s.points }))
     const { id, box } = layer.item
     if (layer.kind === 'image') return [{ kind: 'image', id, box: { ...box, h: box.w * layer.item.aspect } }]
     const lines = layer.item.text.split('\n').length
-    return [{ kind: 'text', id, box: { ...box, h: (lines * TEXT_SIZE_PT[layer.item.size] * MM_PER_PT * TEXT_LINE_HEIGHT) / widthMm } }]
+    const h = heights.get(id) ?? (lines * TEXT_SIZE_PT[layer.item.size] * MM_PER_PT * TEXT_LINE_HEIGHT) / widthMm
+    return [{ kind: 'text', id, box: { ...box, h } }]
   })
 }
 
-// Text boxes being edited and their resize handles keep the pointer from the lasso.
+// A lone selected text box, one being edited and the resize handles keep the pointer from the lasso.
 function lassoSkips(target: Element): boolean {
-  return target.closest('.mg-nb-text-handle, .mg-nb-text[contenteditable]') !== null
+  return target.closest('.mg-nb-text-handle, .mg-nb-text[data-selected], .mg-nb-text[contenteditable]') !== null
+}
+
+// True when both maps hold the same keys and values.
+function sameHeights(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  return a.size === b.size && [...a].every(([k, v]) => b.get(k) === v)
 }
 
 // True when the event target is a text field.
@@ -205,14 +212,27 @@ function PageView(props: PageViewProps) {
   const [live, setLive] = useState<Map<string, InkStroke[]> | null>(null)
   const inks = useMemo(() => content.strokes.map((s) => inkOf(s, 1 / toPage)), [content.strokes, toPage])
   const layers = useMemo(() => pageLayers(content), [content])
-  const items = useMemo(() => lassoItems(content, page.size.w), [content, page.size.w])
+  const pageRef = useRef<HTMLDivElement>(null)
+  const [heights, setHeights] = useState<ReadonlyMap<string, number>>(NO_HEIGHTS)
+  const items = useMemo(() => lassoItems(content, page.size.w, heights), [content, page.size.w, heights])
+
+  // Measures each text box's rendered height in page-width units after every render.
+  useLayoutEffect(() => {
+    const el = pageRef.current
+    if (!el || w <= 0) return
+    const next = new Map<string, number>()
+    for (const t of el.querySelectorAll<HTMLElement>(':scope > .mg-nb-text[data-id]')) {
+      if (t.offsetHeight > 0) next.set(t.dataset.id!, t.offsetHeight / w)
+    }
+    setHeights((prev) => (sameHeights(prev, next) ? prev : next))
+  })
   const dark = page.color === 'dark'
   const pos = { left: px(left), top: px(top), width: px(w), height: px(h) }
   const figures = content.images.filter((m) => m.pdfPage !== undefined)
   const soleText = selection.length === 1 && selection[0].kind === 'text' ? selection[0].id : null
   return (
     <>
-      <div class="mg-nb-page" data-page={page.id} data-color={page.color} style={pos}>
+      <div ref={pageRef} class="mg-nb-page" data-page={page.id} data-color={page.color} style={pos}>
         <PaperBackground template={page.template} color={page.color} cssW={w} widthMm={page.size.w} />
         {layers.map((layer) => {
           if (layer.kind === 'image') {
@@ -830,7 +850,10 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
                   menu={menuFor(id, refs)}
                   onSelect={(next) => setSelection(next.length ? { page: id, refs: next } : null)}
                   onMoved={(dx, dy, client) => moveSelection(id, refs, dx, dy, client)}
-                  onEdit={setEditing}
+                  onEdit={(id) => {
+                    setEditing(id)
+                    setSelection(null)
+                  }}
                   onDoneEditing={finishEditing}
                   onJumpToPage={onJumpToPage}
                   scroller={() => scrollerRef.current}

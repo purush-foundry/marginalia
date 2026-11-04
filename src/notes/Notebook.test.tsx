@@ -883,3 +883,43 @@ test('a Lasso tap selects a text box or an image; under the Pen an image tap sel
   await tapAt(text, 200, 120)
   expect(box(page('page-1'))[2]).toBe(840)
 })
+
+test('under Lasso a tap selects a text box, a drag on it moves it and a double-tap edits it', async () => {
+  await mount()
+  await act(() => {
+    store.addText({ page: 'page-1', box: { x: 0.1, y: 0.1, w: 0.5 }, text: 'Note', size: 'm', color: '#1c1c1a' })
+  })
+  await act(() => setTool('lasso'))
+  const text = $('.mg-nb-text')
+  await penPath(text, [[16 + 100, 16 + 90]])
+  expect(text.hasAttribute('data-selected')).toBe(true)
+
+  await penPath(text, [[16 + 100, 16 + 90], [16 + 140, 16 + 90], [16 + 184, 16 + 90]])
+  const [t] = store.doc.value.texts
+  expect(t.box.x).toBeCloseTo(0.2)
+  expect(t.box.y).toBeCloseTo(0.1)
+  expect(store.doc.value.texts.filter((x) => !x.deleted)).toHaveLength(1)
+
+  clock += 1000
+  await penPath(text, [[16 + 200, 16 + 90]])
+  clock += 100
+  await penPath(text, [[16 + 200, 16 + 90]])
+  expect(text.getAttribute('contenteditable')).toBe('plaintext-only')
+  expect(document.activeElement).toBe(text)
+  expect(host.querySelector('.mg-lasso-frame')).toBeNull()
+  expect(tool.value).toBe('lasso')
+})
+
+test('a long single-line text gets a lasso frame from its measured height', async () => {
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.matches('.mg-nb-text') ? 252 : 0
+  })
+  await mount()
+  await act(() => {
+    store.addText({ page: 'page-1', box: { x: 0.1, y: 0.1, w: 0.5 }, text: 'word '.repeat(200), size: 'm', color: '#1c1c1a' })
+  })
+  await act(() => setTool('lasso'))
+  await penPath(page('page-1'), [[16 + 200, 16 + 84 + 200]])
+  const frame = $('.mg-lasso-frame')
+  expect(box(frame)).toEqual([84 - 8, 84 - 8, 420 + 16, 252 + 16])
+})

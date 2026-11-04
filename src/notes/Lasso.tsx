@@ -77,8 +77,8 @@ export interface LassoLayerProps {
   rect: boolean
   objects: boolean
   selection: ItemRef[]
-  /** Pointerdowns on these targets are left alone. */
-  skip?(target: Element): boolean
+  /** Pointerdowns this returns true for are left alone. */
+  skip?(target: Element, e: PointerEvent): boolean
   onSelect(refs: ItemRef[]): void
   onMove(dx: number, dy: number, client: { x: number; y: number }, done: boolean): void
   onScale(origin: { x: number; y: number }, k: number, done: boolean): void
@@ -218,7 +218,7 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
       if (touch && (penActivity.down || now() - penActivity.lastUp < PALM_WINDOW_MS)) return
       if (e.pointerType === 'mouse' && e.button !== 0) return
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest('.mg-object-menu') || (target && live.current.props.skip?.(target))) return
+      if (target?.closest('.mg-object-menu') || (target && live.current.props.skip?.(target, e))) return
       const p = pagePoint(e)
       const b = live.current.frame
       const corner = target?.closest<HTMLElement>('.mg-lasso-handle')?.dataset.corner as Corner | undefined

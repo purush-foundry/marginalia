@@ -3,6 +3,7 @@ import { computed, effect, signal, useComputed, useSignal, type ReadonlySignal, 
 import type { RefObject } from 'preact'
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AskPanel } from '../ai/AskPanel'
+import { highlightAt } from '../annot/HighlightLayer'
 import { SelectionBar } from '../annot/SelectionBar'
 import { createAnnotationStore, type AnnotationStore } from '../annot/store'
 import { IMAGE_MAX_EDGE_PX } from '../config'
@@ -32,7 +33,7 @@ import { createNotebookStore, type NotebookStore } from '../notes/notebookStore'
 import { openPdf, type PageLink, type PdfDoc } from '../pdf/document'
 import { isIOS } from '../pdf/platform'
 import { Viewer, type PendingSelection, type ViewerHandle } from '../pdf/Viewer'
-import type { Anchor, Box, HighlightColor, InkStroke, PageText, Sidecar, Thread } from '../types'
+import type { Anchor, Box, Highlight, HighlightColor, InkStroke, PageText, Sidecar, Thread } from '../types'
 import { Icon } from './icons'
 import { folderHash, navigate } from './route'
 import { saveSettings, settings, type NotesLayout } from './settings'
@@ -66,6 +67,7 @@ const DUPLICATE_OFFSET = 0.02
 const NO_STROKES: InkStroke[] = []
 const NO_REFS: ItemRef[] = []
 const NO_THREADS: Thread[] = []
+const NO_HIGHLIGHTS: Highlight[] = []
 const DEFAULT_NOTE_COLOR: HighlightColor = 'yellow'
 const NOTE_W = 320
 const NOTE_H = 170
@@ -205,6 +207,7 @@ function mapStroke(s: InkStroke, aspect: number, f: (x: number, y: number) => [n
 
 interface PaperLassoProps {
   strokes: InkStroke[]
+  highlights: Highlight[]
   cssW: number
   cssH: number
   store: AnnotationStore
@@ -212,13 +215,20 @@ interface PaperLassoProps {
   onSelect(refs: ItemRef[]): void
 }
 
-/** Lasso over a paper page's ink: strokes only; presses on text, links and thread markers pass through; edits go to the annotation store. */
-function PaperLasso({ strokes, cssW, cssH, store, selection, onSelect }: PaperLassoProps) {
+/** Lasso over a paper page's ink: strokes only; presses on text, links, thread markers and highlights pass through; edits go to the annotation store. */
+function PaperLasso({ strokes, highlights, cssW, cssH, store, selection, onSelect }: PaperLassoProps) {
   const aspect = cssH / cssW
   const widthPoints = (s: InkStroke) => s.points.map((v, i) => (i % 3 === 1 ? v * aspect : v))
   const items = useMemo<LassoItem[]>(() => strokes.map((s) => ({ kind: 'stroke', id: s.id, points: widthPoints(s) })), [strokes, aspect])
   const picked = () => strokes.filter((s) => selection.some((r) => r.id === s.id))
   const ids = () => picked().map((s) => s.id)
+  // True when the press is on text, a link, a thread marker or inside a highlight's box.
+  const passes = (target: Element, e: PointerEvent) => {
+    if (target.closest('.textLayer span, .mg-link, .mg-thread-marker')) return true
+    const r = target.closest('.mg-page-inner')?.getBoundingClientRect()
+    if (!r) return false
+    return highlightAt(highlights, (e.clientX - r.left) / (r.width || cssW), (e.clientY - r.top) / (r.height || cssH)) !== null
+  }
   // Puts the selected ink in the notebook clipboard, in page-width units.
   const copy = () => {
     const list = picked().map((s) => ({
@@ -235,7 +245,7 @@ function PaperLasso({ strokes, cssW, cssH, store, selection, onSelect }: PaperLa
       rect={lassoSettings.value.rect}
       objects={false}
       selection={selection}
-      skip={(target) => target.closest('.textLayer span, .mg-link, .mg-thread-marker') !== null}
+      skip={passes}
       onSelect={onSelect}
       onMove={(dx, dy, _client, done) => done && store.updateStrokes(picked().map((s) => mapStroke(s, aspect, (x, y) => [x + dx, y + dy])))}
       onScale={(o, k, done) =>
@@ -354,6 +364,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   }, [showPaper])
 
   const inksByPage = useComputed(() => groupByPage(store.inks.value, (s) => s.page))
+  const highlightsByPage = useComputed(() => groupByPage(store.highlights.value, (h) => h.page))
   const threadsByPage = useComputed(() => groupByPage(store.threads.value, (t) => t.anchor.page))
   const status = useComputed(() => store.sidecar.value.reading.status).value
   const threadCount = useComputed(() => store.threads.value.length).value
@@ -687,6 +698,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       })}
       <PaperLasso
         strokes={inksByPage.value.get(page) ?? NO_STROKES}
+        highlights={highlightsByPage.value.get(page) ?? NO_HIGHLIGHTS}
         cssW={cssW}
         cssH={cssH}
         store={store}
