@@ -103,3 +103,8 @@ test('the fallback drawing has no text and stays under 40 KB', () => {
   expect(svg).not.toMatch(/<text|<foreignObject/)
   expect(Buffer.byteLength(svg)).toBeLessThanOrEqual(40 * 1024)
 })
+
+test('the band never shrinks inside the onboarding flex column', () => {
+  const css = readFileSync('src/library/hero.css', 'utf8')
+  expect(css).toMatch(/\.mg-hero\s*\{[^}]*flex-shrink:\s*0/)
+})

@@ -2,6 +2,7 @@
 .mg-hero {
   position: relative;
   height: 33dvh;
+  flex-shrink: 0;
   overflow: hidden;
 }
 
