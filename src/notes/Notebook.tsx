@@ -103,6 +103,11 @@ function anchoredScroll(scroll: Scroll, anchor: Point, before: Layout, after: La
   return { left: next.left + local.left, top: next.top + local.top }
 }
 
+// The clip's top-left moved so the whole clip stays on a page of the given height / width.
+function clampPaste(clip: Clip, at: Point, aspect: number): Point {
+  return { x: Math.max(0, Math.min(at.x, 1 - clip.w)), y: Math.max(0, Math.min(at.y, aspect - clip.h)) }
+}
+
 // Copy of flat [x, y, pressure] points with every y multiplied by k.
 function scaleY(points: number[], k: number): number[] {
   const out = points.slice()
@@ -201,6 +206,7 @@ interface PageViewProps {
   onEdit(id: string): void
   onDoneEditing(id: string): void
   onJumpToPage(page: number): void
+  onPasteAt?(at: Point): void
   scroller(): HTMLElement | null
 }
 
@@ -298,6 +304,7 @@ function PageView(props: PageViewProps) {
             onMove={(dx, dy, client, done) => done && props.onMoved(dx, dy, client)}
             onScale={(origin, k, done) => done && store.scaleItems(selection, origin, k)}
             menu={props.menu}
+            onPasteAt={props.onPasteAt}
           />
         )}
       </div>
@@ -669,12 +676,19 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     return { page: box.page.id, at: { x: 0.5 - clip.w / 2, y: box.h / box.w / 2 - clip.h / 2 } }
   }
 
+  // Inserts the clip with its top-left at a page point, kept on the page, and selects it under the Lasso.
+  const pasteAt = (page: string, at: Point) => {
+    const clip = clipboard.peek()
+    const size = store.pages.peek().find((p) => p.id === page)?.size
+    if (!clip || !size) return
+    const refs = store.insertClip(clip, page, clampPaste(clip, at, size.h / size.w))
+    if (tool.peek() === 'lasso') setSelection({ page, refs })
+  }
+
   const paste = () => {
     const clip = clipboard.peek()
     const target = clip && pasteTarget(clip)
-    if (!clip || !target) return
-    const refs = store.insertClip(clip, target.page, target.at)
-    if (tool.peek() === 'lasso') setSelection({ page: target.page, refs })
+    if (target) pasteAt(target.page, target.at)
   }
   const pasteRef = useRef(paste)
   pasteRef.current = paste
@@ -856,6 +870,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
                   }}
                   onDoneEditing={finishEditing}
                   onJumpToPage={onJumpToPage}
+                  onPasteAt={clipboard.value ? (at) => pasteAt(id, at) : undefined}
                   scroller={() => scrollerRef.current}
                 />
               )

@@ -1,4 +1,4 @@
-/* Lasso overlay: the dashed loop, the selection frame with corner handles and the object menu above it. */
+/* Lasso overlay: the dashed loop, the selection frame with corner handles and the object menu beside it. */
 .mg-lasso {
   position: absolute;
   top: 0;
@@ -78,12 +78,8 @@
 .mg-lasso-menu {
   position: absolute;
   z-index: 5;
-  transform: translate(-50%, calc(-100% - 8px));
+  width: max-content;
   pointer-events: auto;
-}
-
-.mg-lasso-menu[data-side='below'] {
-  transform: translate(-50%, 8px);
 }
 
 .mg-object-menu {
@@ -101,6 +97,7 @@
 
 .mg-object-menu-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   white-space: nowrap;
 }

@@ -814,6 +814,47 @@ test('⌘V pastes the clipboard at the pointer, else centred on the current page
   expect(pasted()).toHaveLength(3)
 })
 
+// A finger tap at the client point, inside act.
+async function fingerTap(el: Element, x: number, y: number) {
+  const init = { bubbles: true, cancelable: true, pointerType: 'touch', pointerId: 10, isPrimary: true, clientX: x, clientY: y, button: 0 }
+  await act(() => {
+    el.dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: 1 }))
+    el.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }))
+  })
+}
+
+test('under Lasso a tap on an empty page offers Paste and pastes the clip there, kept on the page', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await act(() => {
+    store.addStroke({ id: 'a', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#d33a2c', width: 0.004, points: [0.1, 0.2, 0.5, 0.3, 0.4, 0.5], createdAt: 1, updatedAt: 1 })
+    setTool('lasso')
+  })
+  const pasted = () => store.doc.value.strokes.filter((x) => x.id !== 'a')
+  const offer = () => host.querySelector<HTMLElement>('[role="menu"][aria-label="Paste"]')
+
+  await fingerTap(page('page-2'), 16 + 420, 1220 + 420)
+  expect(offer()).toBeNull()
+  await act(() => void copyItems(store.content.value.get('page-1')!, [{ kind: 'stroke', id: 'a' }]))
+  await fingerTap(page('page-2'), 16 + 420, 1220 + 420)
+  expect(page('page-2').contains(offer())).toBe(true)
+  await click(offer()!.querySelector<HTMLElement>('[role="menuitem"]')!)
+  expect(pasted()).toHaveLength(1)
+  expect(pasted()[0].page).toBe('page-2')
+  expect(pasted()[0].points[0]).toBeCloseTo(0.5)
+  expect(pasted()[0].points[1]).toBeCloseTo(0.5)
+  expect(offer()).toBeNull()
+  expect(page('page-2').querySelector('.mg-lasso-frame')).not.toBeNull()
+
+  // A paste at the bottom-right corner keeps the clip's box on the page.
+  await fingerTap(page('page-2'), 16 + 420, 1220 + 1000)
+  await fingerTap(page('page-1'), 16 + 830, 16 + 1180)
+  await click(offer()!.querySelector<HTMLElement>('[role="menuitem"]')!)
+  const [x, y] = pasted()[1].points
+  expect(pasted()[1].page).toBe('page-1')
+  expect(x).toBeCloseTo(1 - 0.2)
+  expect(y).toBeCloseTo(297 / 210 - 0.2)
+})
+
 test('Thumbnails opens the strip at 160 px and a thumbnail tap scrolls to its page', async () => {
   const listeners = new Set<() => void>()
   const media = { wide: true }

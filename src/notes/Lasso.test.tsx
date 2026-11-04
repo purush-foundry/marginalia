@@ -45,6 +45,32 @@ let scales: [{ x: number; y: number }, number, boolean][]
 let selected: ItemRef[][]
 let textId: string
 let imageId: string
+let pastes: { x: number; y: number }[]
+
+// The menu's laid-out size: one row of MENU_ROW_W px that wraps at its max-width, plus the colour grid when Recolor is open.
+const MENU_ROW_W = 470
+const MENU_ROW_H = 48
+function stubMenuSize() {
+  const width = (el: HTMLElement) => Math.min(MENU_ROW_W, parseFloat(el.style.maxWidth) || Infinity)
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('mg-lasso-menu') ? width(this) : 0
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    if (!this.classList.contains('mg-lasso-menu')) return 0
+    const rows = Math.ceil(MENU_ROW_W / width(this))
+    return rows * MENU_ROW_H + 8 + (this.querySelector('.mg-object-menu-colors') ? 92 : 0)
+  })
+}
+
+// The menu slot lies wholly inside a w×h page.
+function expectInside(slot: HTMLElement, w: number, h: number) {
+  const left = parseFloat(slot.style.left)
+  const top = parseFloat(slot.style.top)
+  expect(left).toBeGreaterThanOrEqual(0)
+  expect(top).toBeGreaterThanOrEqual(0)
+  expect(left + slot.offsetWidth).toBeLessThanOrEqual(w)
+  expect(top + slot.offsetHeight).toBeLessThanOrEqual(h)
+}
 
 // The lasso view of a page: strokes by their points, text boxes TEXT_H tall, images by their aspect.
 function lassoItems(c: PageContent): LassoItem[] {
@@ -55,7 +81,7 @@ function lassoItems(c: PageContent): LassoItem[] {
   ]
 }
 
-function Harness({ objects, skip }: { objects: boolean; skip?: (t: Element) => boolean }) {
+function Harness({ objects, skip, w = CSS_W }: { objects: boolean; skip?: (t: Element) => boolean; w?: number }) {
   const [selection, setSelection] = useState<ItemRef[]>([])
   const content = store.content.value.get('page-1')!
   const select = (refs: ItemRef[]) => {
@@ -72,7 +98,7 @@ function Harness({ objects, skip }: { objects: boolean; skip?: (t: Element) => b
       <span class="text-span">PDF text</span>
       <LassoLayer
         items={lassoItems(content)}
-        cssW={CSS_W}
+        cssW={w}
         aspect={ASPECT}
         rect={lassoSettings.value.rect}
         objects={objects}
@@ -100,14 +126,15 @@ function Harness({ objects, skip }: { objects: boolean; skip?: (t: Element) => b
           onFront: () => store.bringToFront(selection),
           onBack: () => store.sendToBack(selection),
         }}
+        onPasteAt={clipboard.value ? (at) => pastes.push(at) : undefined}
       />
     </div>
   )
 }
 
-async function mount(objects = true, skip?: (t: Element) => boolean) {
+async function mount(objects = true, skip?: (t: Element) => boolean, w = CSS_W) {
   await act(() => {
-    render(<Harness objects={objects} skip={skip} />, host)
+    render(<Harness objects={objects} skip={skip} w={w} />, host)
   })
 }
 
@@ -154,6 +181,8 @@ beforeEach(() => {
   penActivity.downOn = null
   penActivity.lastUp = -Infinity
   clipboard.value = null
+  pastes = []
+  stubMenuSize()
   moves = []
   scales = []
   selected = []
@@ -172,11 +201,11 @@ afterEach(() => {
 })
 
 test('a pen loop selects strokes and objects and opens the menu above the selection', async () => {
-  // Stroke 'a' and the text box sit 50 px lower here, leaving room for the menu above them.
+  // On a 400 px page with stroke 'a' and the text box 100 px lower there is room for the menu above them.
   store.moveItems([{ kind: 'stroke', id: 'a' }, { kind: 'text', id: textId }], 0, 0.25)
-  const loop: [number, number][] = [[30, 80], [150, 80], [150, 165], [30, 165], [30, 82]]
-  await mount()
-  const down = pointer('pointerdown', { x: 30, y: 80 })
+  const loop: [number, number][] = [[60, 160], [300, 160], [300, 330], [60, 330], [60, 164]]
+  await mount(true, undefined, 400)
+  const down = pointer('pointerdown', { x: 60, y: 160 })
   await act(() => {
     paper().dispatchEvent(down)
   })
@@ -189,23 +218,24 @@ test('a pen loop selects strokes and objects and opens the menu above the select
   expect(q('path.mg-lasso-loop')).not.toBeNull()
   expect(q('.mg-lasso-frame')).toBeNull()
   await act(() => {
-    paper().dispatchEvent(pointer('pointerup', { x: 30, y: 82 }))
+    paper().dispatchEvent(pointer('pointerup', { x: 60, y: 164 }))
   })
 
   expect(q('path.mg-lasso-loop')).toBeNull()
   expect(ids(last())).toEqual(['a', textId])
   const frame = q('.mg-lasso-frame')!
-  expect(parseFloat(frame.style.left)).toBeLessThanOrEqual(40)
-  expect(parseFloat(frame.style.left) + parseFloat(frame.style.width)).toBeGreaterThanOrEqual(140)
-  expect(parseFloat(frame.style.top)).toBeLessThanOrEqual(90)
-  expect(parseFloat(frame.style.top) + parseFloat(frame.style.height)).toBeGreaterThanOrEqual(160)
+  expect(parseFloat(frame.style.left)).toBeLessThanOrEqual(80)
+  expect(parseFloat(frame.style.left) + parseFloat(frame.style.width)).toBeGreaterThanOrEqual(280)
+  expect(parseFloat(frame.style.top)).toBeLessThanOrEqual(180)
+  expect(parseFloat(frame.style.top) + parseFloat(frame.style.height)).toBeGreaterThanOrEqual(320)
   expect(host.querySelectorAll('.mg-lasso-handle[data-corner]')).toHaveLength(4)
 
   const menu = q('[role="menu"][aria-label="Selection"]')!
   const slot = menu.parentElement!
   expect(slot.classList.contains('mg-lasso-menu')).toBe(true)
   expect(slot.dataset.side).toBe('above')
-  expect(parseFloat(slot.style.top)).toBe(parseFloat(frame.style.top))
+  expect(parseFloat(slot.style.top) + slot.offsetHeight + 8).toBeCloseTo(parseFloat(frame.style.top))
+  expectInside(slot, 400, 400 * ASPECT)
   expect([...menu.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Cut', 'Copy', 'Duplicate', 'Delete', 'Recolor', 'Front', 'Back'])
 
   // Pressing a menu button with the pen leaves the selection alone.
@@ -242,7 +272,78 @@ test('a selection near the top of the page opens the menu below it', async () =>
   expect(parseFloat(frame.style.top)).toBeCloseTo(10)
   const slot = q('.mg-lasso-menu')!
   expect(slot.dataset.side).toBe('below')
-  expect(parseFloat(slot.style.top)).toBeCloseTo(parseFloat(frame.style.top) + parseFloat(frame.style.height))
+  expect(parseFloat(slot.style.top)).toBeCloseTo(parseFloat(frame.style.top) + parseFloat(frame.style.height) + 8)
+})
+
+test('on a 358 px phone page the menu wraps to the page width and shows whole', async () => {
+  await mount(true, undefined, 358)
+  await drag(paper(), [[60, 60], [120, 60], [120, 120], [60, 120], [60, 62]])
+  expect(ids(last())).toEqual(['a'])
+  const slot = q('.mg-lasso-menu')!
+  expect(slot.style.maxWidth).toBe('342px')
+  expectInside(slot, 358, 358 * ASPECT)
+})
+
+test('a selection near the right edge keeps the menu inside the page', async () => {
+  store.addStroke({ id: 'edge', page: 'page-1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [0.95, 0.6, 0.5, 0.98, 0.65, 0.5], createdAt: 1, updatedAt: 1 })
+  await mount(true, undefined, 560)
+  await drag(paper(), [[520, 320], [555, 320], [555, 380], [520, 380], [520, 322]])
+  expect(ids(last())).toEqual(['edge'])
+  const slot = q('.mg-lasso-menu')!
+  expect(slot.dataset.side).toBe('above')
+  expectInside(slot, 560, 560 * ASPECT)
+})
+
+test('a selection spanning the page keeps the menu inside it, with Recolor open too', async () => {
+  store.addStroke({ id: 'tall', page: 'page-1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [0.45, 0.05, 0.5, 0.45, 1.45, 0.5], createdAt: 1, updatedAt: 1 })
+  await mount()
+  await drag(paper(), [[85, 1], [95, 1], [95, 299], [85, 299], [85, 3]])
+  expect(ids(last())).toEqual(['tall'])
+  const slot = q('.mg-lasso-menu')!
+  expect(slot.dataset.side).toBe('inside')
+  expectInside(slot, CSS_W, CSS_W * ASPECT)
+
+  await drag(paper(), [[20, 230], [199, 230], [199, 299], [20, 299]])
+  expect(ids(last())).toEqual(['far'])
+  expect(q('.mg-lasso-menu')!.dataset.side).toBe('above')
+  const recolor = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Recolor')!
+  await act(() => recolor.click())
+  expect(q('.mg-object-menu-colors')).not.toBeNull()
+  expectInside(q('.mg-lasso-menu')!, CSS_W, CSS_W * ASPECT)
+})
+
+test('with a clip, a tap on empty space offers Paste there; a tap elsewhere or a press off the page dismisses it', async () => {
+  await mount()
+  await drag(paper(), [[100, 20]], 'touch')
+  expect(q('[role="menu"][aria-label="Paste"]')).toBeNull()
+
+  copyItems(store.content.value.get('page-1')!, [{ kind: 'stroke', id: 'a' }])
+  await act(() => {})
+  await drag(paper(), [[100, 20]], 'touch')
+  const menu = q('[role="menu"][aria-label="Paste"]')!
+  expect([...menu.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent)).toEqual(['Paste'])
+  expectInside(q('.mg-lasso-menu')!, CSS_W, CSS_W * ASPECT)
+  await act(() => menu.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click())
+  expect(pastes).toEqual([{ x: 0.5, y: 0.1 }])
+  expect(q('[role="menu"][aria-label="Paste"]')).toBeNull()
+
+  await drag(paper(), [[100, 20]], 'touch')
+  expect(q('[role="menu"][aria-label="Paste"]')).not.toBeNull()
+  await drag(paper(), [[150, 40]], 'touch')
+  expect(q('[role="menu"][aria-label="Paste"]')).toBeNull()
+  await drag(paper(), [[150, 40]], 'pen')
+  expect(q('[role="menu"][aria-label="Paste"]')).not.toBeNull()
+  await act(() => {
+    document.body.dispatchEvent(pointer('pointerdown', { x: 0, y: 0, type: 'mouse' }))
+  })
+  expect(q('[role="menu"][aria-label="Paste"]')).toBeNull()
+
+  // With a selection the tap only clears it.
+  await drag(paper(), LOOP)
+  await drag(paper(), [[100, 20]], 'touch')
+  expect(last()).toEqual([])
+  expect(q('[role="menu"][aria-label="Paste"]')).toBeNull()
+  expect(pastes).toHaveLength(1)
 })
 
 test('a tap on an object with the Lasso selects it', async () => {

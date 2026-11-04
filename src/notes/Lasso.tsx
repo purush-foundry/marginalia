@@ -1,5 +1,5 @@
 import type { JSX } from 'preact'
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { itemsBounds, rectLoop, selectInLoop, type ItemRef, type LassoItem } from '../ink/lasso.ts'
 import { fingerDraws, penActivity, tool } from '../ink/tools.ts'
 import { now } from '../lib/ids.ts'
@@ -15,11 +15,14 @@ export interface ObjectMenuProps {
   onRecolor(color: string): void
   onFront?(): void
   onBack?(): void
+  /** Called after every render of the menu, so its holder can place it. */
+  onLayout?(): void
 }
 
 /** Actions on a lasso selection; Recolor opens a row of colours. */
 export function ObjectMenu(props: ObjectMenuProps): JSX.Element {
   const [colorsOpen, setColorsOpen] = useState(false)
+  useLayoutEffect(() => props.onLayout?.())
   const item = (label: string, onClick: () => void) => (
     <button type="button" role="menuitem" class="mg-object-menu-item" onClick={onClick}>
       {label}
@@ -83,6 +86,8 @@ export interface LassoLayerProps {
   onMove(dx: number, dy: number, client: { x: number; y: number }, done: boolean): void
   onScale(origin: { x: number; y: number }, k: number, done: boolean): void
   menu: ObjectMenuProps
+  /** Set while there is something to paste: a tap on empty space offers Paste at that point, in page-width units. */
+  onPasteAt?(at: { x: number; y: number }): void
 }
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -102,8 +107,8 @@ const PALM_WINDOW_MS = 500
 const TAP_SLOP_PX = 8
 const FRAME_PAD_PX = 8
 const MIN_SCALE = 0.05
-// A frame whose top is closer than this to the page top gets the menu below it.
-const MENU_ROOM_PX = 64
+const MENU_GAP_PX = 8
+const MENU_EDGE_PX = 8
 
 const fmt = (v: number) => String(Math.round(v * 100) / 100)
 const px = (v: number) => `${fmt(v)}px`
@@ -111,6 +116,18 @@ const px = (v: number) => `${fmt(v)}px`
 // The corner of the bounds opposite `corner`.
 function opposite(b: Bounds, corner: Corner): Point {
   return { x: corner.includes('w') ? b.x + b.w : b.x, y: corner.includes('n') ? b.y + b.h : b.y }
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+// Top-left of a w×h menu centred on cx beside the span [top, bottom] inside a pageW×pageH page: above when there is room, else below, else overlapping.
+function placeMenu(a: { cx: number; top: number; bottom: number }, w: number, h: number, pageW: number, pageH: number) {
+  const left = clamp(a.cx - w / 2, MENU_EDGE_PX, pageW - w - MENU_EDGE_PX)
+  const above = a.top - MENU_GAP_PX - h
+  if (above >= MENU_EDGE_PX) return { left, top: above, side: 'above' }
+  const below = a.bottom + MENU_GAP_PX
+  if (below + h <= pageH - MENU_EDGE_PX) return { left, top: below, side: 'below' }
+  return { left, top: clamp(below, MENU_EDGE_PX, pageH - h - MENU_EDGE_PX), side: 'inside' }
 }
 
 // True when the event happened inside a text field.
@@ -131,12 +148,37 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const [loop, setLoop] = useState<{ points: number[]; rect: boolean } | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
+  const [pasteAt, setPasteAt] = useState<Point | null>(null)
+  const pasteRef = useRef<Point | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuAnchor = useRef<{ cx: number; top: number; bottom: number } | null>(null)
   const active = tool.value === 'lasso'
   const frame = active && props.selection.length ? itemsBounds(props.items, props.selection) : null
   const live = useRef({ props, frame })
   live.current = { props, frame }
 
   const fingerLoops = active && fingerDraws.value
+
+  const showPaste = (p: Point | null) => {
+    pasteRef.current = p
+    setPasteAt(p)
+  }
+
+  // Drops the Paste offer when the Lasso, the clip or the empty selection goes away.
+  const offering = active && !!props.onPasteAt && !props.selection.length
+  useEffect(() => {
+    if (!offering) showPaste(null)
+  }, [offering])
+
+  // Closes the Paste offer on a press outside this page.
+  useEffect(() => {
+    if (!pasteAt) return
+    const away = (e: PointerEvent) => {
+      if (!(e.target instanceof Node && rootRef.current?.parentElement?.contains(e.target))) showPaste(null)
+    }
+    document.addEventListener('pointerdown', away, true)
+    return () => document.removeEventListener('pointerdown', away, true)
+  }, [pasteAt])
 
   // Stops the page from panning under a finger while the finger draws the loop.
   useEffect(() => {
@@ -155,6 +197,7 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
     const parent = root?.parentElement
     if (!root || !parent) return
     let g: Gesture | null = null
+    let dismissed = false
 
     const scaleOf = () => root.getBoundingClientRect().width || live.current.props.cssW
     const pagePoint = (e: PointerEvent): Point => {
@@ -182,12 +225,13 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
       return p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad
     }
 
-    // Selects the topmost object under the point, or clears the selection when there is none.
+    // Selects the topmost object under the point, else clears the selection, else offers Paste there unless the press closed an offer.
     const tap = (p: Point) => {
-      const { onSelect, selection } = live.current.props
+      const { onSelect, selection, onPasteAt } = live.current.props
       const hit = items().findLast((i) => i.box && p.x >= i.box.x && p.x <= i.box.x + i.box.w && p.y >= i.box.y && p.y <= i.box.y + i.box.h)
       if (hit) onSelect([{ kind: hit.kind, id: hit.id }])
       else if (selection.length) onSelect([])
+      else if (onPasteAt && !dismissed) showPaste(p)
     }
 
     const finish = (e: PointerEvent, cancelled: boolean) => {
@@ -218,7 +262,10 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
       if (touch && (penActivity.down || now() - penActivity.lastUp < PALM_WINDOW_MS)) return
       if (e.pointerType === 'mouse' && e.button !== 0) return
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest('.mg-object-menu') || (target && live.current.props.skip?.(target, e))) return
+      if (target?.closest('.mg-object-menu')) return
+      dismissed = pasteRef.current !== null
+      if (dismissed) showPaste(null)
+      if (target && live.current.props.skip?.(target, e)) return
       const p = pagePoint(e)
       const b = live.current.frame
       const corner = target?.closest<HTMLElement>('.mg-lasso-handle')?.dataset.corner as Corner | undefined
@@ -306,12 +353,29 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
   }, [])
 
   const h = cssW * aspect
+  // Places the open menu inside the page from its measured size.
+  const placeOpenMenu = () => {
+    const el = menuRef.current
+    const a = menuAnchor.current
+    if (!el || !a) return
+    const at = placeMenu(a, el.offsetWidth, el.offsetHeight, cssW, h)
+    el.style.left = px(at.left)
+    el.style.top = px(at.top)
+    el.dataset.side = at.side
+  }
+  useLayoutEffect(placeOpenMenu)
+  const menuSlot = (children: JSX.Element) => (
+    <div ref={menuRef} class="mg-lasso-menu" style={{ maxWidth: px(cssW - 2 * MENU_EDGE_PX) }}>
+      {children}
+    </div>
+  )
+  menuAnchor.current = null
   let frameView: JSX.Element | null = null
   if (frame) {
     const left = frame.x * cssW - FRAME_PAD_PX
     const top = frame.y * cssW - FRAME_PAD_PX
     const height = frame.h * cssW + 2 * FRAME_PAD_PX
-    const below = top < MENU_ROOM_PX
+    if (!preview) menuAnchor.current = { cx: (frame.x + frame.w / 2) * cssW, top, bottom: top + height }
     const style: Record<string, string> = { left: px(left), top: px(top), width: px(frame.w * cssW + 2 * FRAME_PAD_PX), height: px(height) }
     if (preview?.kind === 'move') style.transform = `translate(${px(preview.dx * cssW)}, ${px(preview.dy * cssW)})`
     if (preview?.kind === 'scale') {
@@ -325,16 +389,29 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
             <div key={c} class="mg-lasso-handle" data-corner={c} />
           ))}
         </div>
-        {!preview && (
-          <div
-            class="mg-lasso-menu"
-            data-side={below ? 'below' : 'above'}
-            style={{ left: px((frame.x + frame.w / 2) * cssW), top: px(below ? top + height : top) }}
-          >
-            <ObjectMenu {...props.menu} />
-          </div>
-        )}
+        {!preview && menuSlot(<ObjectMenu {...props.menu} onLayout={placeOpenMenu} />)}
       </>
+    )
+  } else if (active && pasteAt && props.onPasteAt) {
+    const at = pasteAt
+    const onPasteAt = props.onPasteAt
+    menuAnchor.current = { cx: at.x * cssW, top: at.y * cssW, bottom: at.y * cssW }
+    frameView = menuSlot(
+      <div class="mg-object-menu" role="menu" aria-label="Paste">
+        <div class="mg-object-menu-row">
+          <button
+            type="button"
+            role="menuitem"
+            class="mg-object-menu-item"
+            onClick={() => {
+              showPaste(null)
+              onPasteAt(at)
+            }}
+          >
+            Paste
+          </button>
+        </div>
+      </div>,
     )
   }
   return (
