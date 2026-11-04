@@ -20,6 +20,11 @@ const PATHS = {
   file: 'M6 3h8l5 5v13H6zM14 3v5h5',
   check: 'M5 12l5 5 9-10',
   notes: 'M6 3h12v18H6zM9 8h6M9 12h6M9 16h4',
+  lasso: 'M12 4c4.4 0 8 2.5 8 5.5S16.4 15 12 15s-8-2.5-8-5.5S7.6 4 12 4zM7.5 14c-1 1.5-.5 3.5 1.5 3.5s2.5 1.5 1 3.5',
+  highlighter: 'M15 4l5 5-8 8H8v-4zM8 13l3 3M4 20h7',
+  text: 'M5 7V4h14v3M12 4v16M9 20h6',
+  image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z',
+  plus: 'M12 5v14M5 12h14',
 } as const
 
 export type IconName = keyof typeof PATHS

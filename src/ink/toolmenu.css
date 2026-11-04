@@ -1,0 +1,208 @@
+/* Tool menu pill: a 44 px button docked to a host edge that expands into the tools, palettes and slot editors. */
+.mg-toolmenu {
+  position: absolute;
+  z-index: 20;
+  width: 44px;
+  height: 44px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.mg-toolmenu-main {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 3px solid var(--tool-color, var(--accent));
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  touch-action: none;
+}
+
+.mg-toolmenu-panel {
+  position: absolute;
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.mg-toolmenu[data-edge='right'] .mg-toolmenu-panel {
+  right: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='left'] .mg-toolmenu-panel {
+  left: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='top'] .mg-toolmenu-panel {
+  top: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-panel {
+  bottom: calc(100% + 8px);
+}
+
+.mg-toolmenu-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 104px;
+  box-sizing: border-box;
+  padding: 6px;
+  max-height: inherit;
+  max-width: inherit;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.mg-toolmenu[data-edge='top'] .mg-toolmenu-scroll,
+.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-scroll {
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+}
+
+.mg-toolmenu-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mg-toolmenu[data-edge='top'] .mg-toolmenu-group,
+.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-group {
+  flex-wrap: nowrap;
+}
+
+.mg-toolmenu-panel button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+  touch-action: manipulation;
+}
+
+.mg-toolmenu[data-edge='left'] .mg-toolmenu-text,
+.mg-toolmenu[data-edge='right'] .mg-toolmenu-text {
+  flex: 1 0 100%;
+}
+
+.mg-toolmenu-panel button[aria-pressed='true'],
+.mg-toolmenu-panel button[aria-checked='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mg-toolmenu-panel button.mg-slot {
+  padding: 0;
+  touch-action: none;
+}
+
+.mg-slot-color::before,
+.mg-preset::before {
+  content: '';
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.mg-slot-dot {
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mg-slot[data-lifted] {
+  opacity: 0.5;
+}
+
+.mg-slot[data-drop] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.mg-toolmenu-editor {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 176px;
+  box-sizing: border-box;
+  padding: 8px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.mg-toolmenu[data-edge='right'] .mg-toolmenu-editor {
+  right: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='left'] .mg-toolmenu-editor {
+  left: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='top'] .mg-toolmenu-editor {
+  top: calc(100% + 8px);
+}
+
+.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-editor {
+  bottom: calc(100% + 8px);
+}
+
+.mg-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 4px;
+}
+
+.mg-wheel {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  touch-action: none;
+}
+
+.mg-toolmenu-hex {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font: inherit;
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.mg-toolmenu-range {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  font-size: 13px;
+  text-align: center;
+}
+
+.mg-toolmenu-range input {
+  min-height: 44px;
+  touch-action: none;
+}
