@@ -581,7 +581,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         touchUi={touchUi}
         finePointer={finePointer}
         layout={layout}
-        canLayoutBoth={canLayoutBoth}
+        wide={canLayoutBoth}
         onLayout={chooseLayout}
         nightMode={s.nightMode}
         threadCount={threadCount}

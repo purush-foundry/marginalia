@@ -1,4 +1,4 @@
-// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes, Draw latch, undo/redo of the active pane, night, sidebar, threads, export.
+// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes (a Notes toggle below 700 px), Draw latch, undo/redo of the active pane, night, sidebar, threads, export.
 import type { ReadonlySignal, Signal } from '@preact/signals'
 import { mouseDraws, penTool } from '../ink/tools'
 import { PenStrip } from '../ink/PenStrip'
@@ -21,7 +21,8 @@ export interface ToolbarProps {
   touchUi: boolean
   finePointer: boolean
   layout: NotesLayout
-  canLayoutBoth: boolean
+  /** At least 700 px wide: the title, and Paper · Both · Notes; narrower gets Back alone and a Notes toggle. */
+  wide: boolean
   onLayout(layout: NotesLayout): void
   nightMode: boolean
   threadCount: number
@@ -64,10 +65,10 @@ export function Toolbar(props: ToolbarProps) {
     if (next && penTool.value === 'select') penTool.value = 'pen'
   }
   return (
-    <header class="mg-toolbar">
+    <header class={`mg-toolbar${props.wide ? '' : ' mg-toolbar-narrow'}`}>
       <div class="mg-toolbar-lead">
         <ToolButton icon="back" label="Library" onClick={props.onBack} />
-        {props.areaArmed.value ? (
+        {!props.wide ? null : props.areaArmed.value ? (
           <span class="mg-snip-hint" role="status">
             Drag a box
           </span>
@@ -84,20 +85,29 @@ export function Toolbar(props: ToolbarProps) {
           pressed={props.areaArmed.value}
           onClick={() => (props.areaArmed.value = !props.areaArmed.value)}
         />
-        <div class="mg-seg" role="radiogroup" aria-label="Layout">
-          {LAYOUTS.filter((l) => l.value !== 'both' || props.canLayoutBoth).map((l) => (
-            <button
-              key={l.value}
-              type="button"
-              role="radio"
-              class="btn mg-seg-item"
-              aria-checked={props.layout === l.value}
-              onClick={() => props.onLayout(l.value)}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
+        {props.wide ? (
+          <div class="mg-seg" role="radiogroup" aria-label="Layout">
+            {LAYOUTS.map((l) => (
+              <button
+                key={l.value}
+                type="button"
+                role="radio"
+                class="btn mg-seg-item"
+                aria-checked={props.layout === l.value}
+                onClick={() => props.onLayout(l.value)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <ToolButton
+            icon="notes"
+            label="Notes"
+            pressed={props.layout === 'notes'}
+            onClick={() => props.onLayout(props.layout === 'notes' ? 'paper' : 'notes')}
+          />
+        )}
         {!props.touchUi && props.finePointer && (
           <>
             <ToolButton icon="draw" label="Draw" pressed={latched} onClick={toggleLatch} />

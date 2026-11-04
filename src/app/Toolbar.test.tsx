@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { signal } from '@preact/signals'
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
@@ -21,7 +22,7 @@ function mount(overrides: Partial<ToolbarProps> = {}): ToolbarProps {
     touchUi: false,
     finePointer: true,
     layout: 'paper',
-    canLayoutBoth: true,
+    wide: true,
     onLayout: vi.fn(),
     nightMode: false,
     threadCount: 0,
@@ -71,9 +72,50 @@ describe('Toolbar', () => {
     expect(props.onLayout).toHaveBeenCalledWith('notes')
 
     act(() => render(null, root))
-    mount({ layout: 'notes', canLayoutBoth: false })
-    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Notes'])
-    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+    mount({ layout: 'notes', wide: false })
+    expect(radios()).toEqual([])
+  })
+
+  test('below 700 px the lead is Back only and a Notes toggle switches between paper and notes', () => {
+    const toggle = () => root.querySelector<HTMLButtonElement>('.mg-toolbar-tools button[aria-label="Notes"]')!
+    let props = mount({ wide: false, touchUi: true, layout: 'paper' })
+    expect(root.querySelector('[role="radiogroup"]')).toBeNull()
+    expect([...root.querySelectorAll('.mg-toolbar-lead > *')].map((e) => e.getAttribute('aria-label'))).toEqual(['Library'])
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+    act(() => toggle().click())
+    expect(props.onLayout).toHaveBeenCalledWith('notes')
+
+    act(() => render(null, root))
+    props = mount({ wide: false, touchUi: true, layout: 'notes' })
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    act(() => toggle().click())
+    expect(props.onLayout).toHaveBeenCalledWith('paper')
+
+    act(() => {
+      props.areaArmed.value = true
+    })
+    expect([...root.querySelectorAll('.mg-toolbar-lead > *')].map((e) => e.getAttribute('aria-label'))).toEqual(['Library'])
+  })
+
+  test('below 700 px eight 44 px controls come before Copy as Markdown and the lead takes only the Back button', () => {
+    const style = document.createElement('style')
+    style.textContent = readFileSync('src/app/reader.css', 'utf8')
+    document.head.append(style)
+    mount({ wide: false, touchUi: true })
+    const labels = [...root.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
+    expect(labels).toEqual(['Library', 'Snip', 'Notes', 'Undo', 'Redo', 'Night mode', 'Sidebar', 'Ask threads', 'Copy as Markdown'])
+    const lead = getComputedStyle(root.querySelector('.mg-toolbar-lead')!)
+    const [minWidth, grow] = [parseFloat(lead.minWidth) || 0, lead.flexGrow]
+    style.remove()
+    expect(minWidth).toBeLessThanOrEqual(44)
+    expect(grow).toBe('0')
+  })
+
+  test('from 700 px the lead shows the title and the layout control is the radiogroup', () => {
+    mount({ wide: true })
+    expect(root.querySelector('.mg-title')!.textContent).toBe('attention')
+    expect(root.querySelector('[role="radiogroup"][aria-label="Layout"]')).not.toBeNull()
+    expect(root.querySelector('.mg-toolbar-tools button[aria-label="Notes"]')).toBeNull()
   })
 
   test('touch devices get no pen strip; a laptop gets the Draw latch', () => {

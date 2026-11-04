@@ -26,6 +26,12 @@
   gap: 4px;
 }
 
+/* Below 700 px the lead holds only the Back button so the tools fit a phone's width. */
+.mg-toolbar-narrow .mg-toolbar-lead {
+  flex: none;
+  min-width: 0;
+}
+
 .mg-title {
   min-width: 0;
   overflow: hidden;

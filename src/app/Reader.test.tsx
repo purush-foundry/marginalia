@@ -141,6 +141,7 @@ const button = (label: string) => document.querySelector<HTMLButtonElement>(`but
 const lastSavedNotes = (): NotesDoc => drive.saveNotes.mock.calls.at(-1)![1] as NotesDoc
 const radios = () => [...root.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Layout"] [role="radio"]')]
 const radio = (label: string) => radios().find((r) => r.textContent === label)!
+const notesToggle = () => root.querySelector<HTMLButtonElement>('.mg-toolbar button[aria-label="Notes"]')
 const pointerDown = (el: Element) => void el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
 
 async function showSheet(layout: 'Notes' | 'Both' = 'Notes') {
@@ -373,9 +374,38 @@ describe('Reader notes', () => {
     expect(root.querySelector('.mg-divider[role="separator"][aria-orientation="vertical"][aria-label="Resize panes"]')).not.toBeNull()
 
     await act(async () => setWide(false))
-    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Notes'])
+    expect(radios()).toEqual([])
+    expect(notesToggle()!.getAttribute('aria-pressed')).toBe('false')
     expect(root.querySelector('.mg-pane-notes')).toBeNull()
     expect(root.querySelector('.mg-divider')).toBeNull()
+  })
+
+  test('at 390 px the toolbar shows Back and a Notes toggle; at 1024 px the title and the radiogroup', async () => {
+    const setWide = stubMedia(false)
+    await open()
+    expect(radios()).toEqual([])
+    expect(root.querySelector('.mg-title')).toBeNull()
+    expect(notesToggle()!.getAttribute('aria-pressed')).toBe('false')
+
+    await act(async () => setWide(true))
+    expect(notesToggle()).toBeNull()
+    expect(root.querySelector('.mg-title')!.textContent).toBe('attention')
+    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Both', 'Notes'])
+  })
+
+  test('the Notes toggle on a narrow window switches to the notes and back to the paper', async () => {
+    stubMedia(false)
+    await open()
+    await act(async () => notesToggle()!.click())
+    expect(settings.value.notesLayout).toBe('notes')
+    await vi.waitFor(() => expect(sheet.props).not.toBeNull())
+    expect(root.querySelector('.fake-viewer')).toBeNull()
+    expect(notesToggle()!.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => notesToggle()!.click())
+    expect(settings.value.notesLayout).toBe('paper')
+    await vi.waitFor(() => expect(root.querySelector('.fake-viewer')).not.toBeNull())
+    expect(notesToggle()!.getAttribute('aria-pressed')).toBe('false')
   })
 
   test('a stored Both on a narrow window shows the paper and keeps the setting', async () => {
@@ -384,8 +414,7 @@ describe('Reader notes', () => {
     await open()
     expect(root.querySelector('.fake-viewer')).not.toBeNull()
     expect(root.querySelector('.mg-pane-notes')).toBeNull()
-    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Notes'])
-    expect(radio('Paper').getAttribute('aria-checked')).toBe('true')
+    expect(notesToggle()!.getAttribute('aria-pressed')).toBe('false')
     expect(settings.value.notesLayout).toBe('both')
     expect(drive.loadNotes).not.toHaveBeenCalled()
   })
@@ -460,7 +489,7 @@ describe('Reader notes', () => {
     await vi.waitFor(() => expect(settings.value.notesLayout).toBe('notes'))
 
     images.prepareImage.mockRejectedValueOnce(new Error('decode'))
-    await act(async () => radio('Paper').click())
+    await act(async () => notesToggle()!.click())
     await areaSelect(viewer.props!)
     await act(async () => button('To notes')!.click())
     await vi.waitFor(() => expect(toast.value).toBe('Could not add to notes'))

@@ -19,6 +19,7 @@ const PATHS = {
   folder: 'M3 6h6l2 2h10v11H3z',
   file: 'M6 3h8l5 5v13H6zM14 3v5h5',
   check: 'M5 12l5 5 9-10',
+  notes: 'M6 3h12v18H6zM9 8h6M9 12h6M9 16h4',
 } as const
 
 export type IconName = keyof typeof PATHS
