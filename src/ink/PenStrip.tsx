@@ -1,6 +1,6 @@
 // Pen tools, widths and colours for the toolbar (one row) or the tool puck popover (three rows).
 import { Icon, type IconName } from '../app/icons.tsx'
-import { PEN_COLORS, PEN_WIDTHS, penColor, penTool, penWidth, type PenTool } from './tools.ts'
+import { PEN_COLORS, PEN_WIDTHS, inkDisplayColor, penColor, penTool, penWidth, type PenTool } from './tools.ts'
 import './ink.css'
 
 const TOOLS: { tool: PenTool; icon: IconName; label: string }[] = [
@@ -59,7 +59,7 @@ export function PenStrip({ withSelect, layout = 'row' }: { withSelect: boolean; 
             aria-label={c.name}
             title={c.name}
             aria-pressed={penColor.value === c.value}
-            style={{ '--swatch': c.value }}
+            style={{ '--swatch': inkDisplayColor(c.value) }}
             onClick={() => pick(() => (penColor.value = c.value))}
           />
         ))}

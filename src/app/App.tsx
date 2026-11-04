@@ -3,7 +3,7 @@ import { signal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
-import { fingerDraws } from '../ink/tools'
+import { fingerDraws, nightInk } from '../ink/tools'
 import { Library } from '../library/Library'
 import { Onboarding } from './Onboarding'
 import { applyUpdate, updateReady } from './pwa'
@@ -93,6 +93,10 @@ export function App() {
   useEffect(() => {
     fingerDraws.value = s.fingerDraws
   }, [s.fingerDraws])
+
+  useEffect(() => {
+    nightInk.value = s.nightMode
+  }, [s.nightMode])
 
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
 

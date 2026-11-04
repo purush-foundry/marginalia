@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PenStrip } from './PenStrip.tsx'
-import { DEFAULT_PEN_COLOR, DEFAULT_PEN_WIDTH, penColor, penTool, penWidth } from './tools.ts'
+import { DEFAULT_PEN_COLOR, DEFAULT_PEN_WIDTH, nightInk, penColor, penTool, penWidth } from './tools.ts'
 
 const root = document.createElement('div')
 const button = (label: string) => root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
@@ -12,6 +12,7 @@ beforeEach(() => {
   penTool.value = 'pen'
   penColor.value = DEFAULT_PEN_COLOR
   penWidth.value = DEFAULT_PEN_WIDTH
+  nightInk.value = false
 })
 
 afterEach(() => {
@@ -47,6 +48,15 @@ describe('PenStrip', () => {
     act(() => button('Eraser')!.click())
     expect(penTool.value).toBe('eraser')
     expect(button('Eraser')!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows the Black swatch in the pale ink at night and still picks Black', () => {
+    nightInk.value = true
+    act(() => render(<PenStrip withSelect />, root))
+    expect(button('Black')!.style.getPropertyValue('--swatch')).toBe('#e8e6e1')
+    expect(button('Red')!.style.getPropertyValue('--swatch')).toBe('#d33a2c')
+    act(() => button('Black')!.click())
+    expect(penColor.value).toBe('#1c1c1a')
   })
 
   it('leaves Select out without withSelect', () => {

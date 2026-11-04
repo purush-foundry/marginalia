@@ -10,6 +10,7 @@ vi.mock('../drive/auth', async (orig) => ({
 const { maybeRenew } = await import('../drive/auth')
 const { App } = await import('./App')
 const { settings } = await import('./settings')
+const { nightInk } = await import('../ink/tools')
 
 const root = document.createElement('div')
 
@@ -36,7 +37,7 @@ describe('App gesture hooks', () => {
 })
 
 describe('App theme', () => {
-  test('the theme-color meta follows night mode', () => {
+  test('the theme-color meta and the night ink follow night mode', () => {
     const meta = document.createElement('meta')
     meta.name = 'theme-color'
     meta.content = '#f6f6f4'
@@ -49,11 +50,13 @@ describe('App theme', () => {
     })
     expect(meta.content).toBe('#151515')
     expect(document.documentElement.dataset.theme).toBe('night')
+    expect(nightInk.value).toBe(true)
 
     act(() => {
       settings.value = { ...settings.value, nightMode: false }
     })
     expect(meta.content).toBe('#f6f6f4')
+    expect(nightInk.value).toBe(false)
     meta.remove()
   })
 })

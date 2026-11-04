@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS, settings } from '../app/settings.ts'
 import { Puck } from './Puck.tsx'
-import { DEFAULT_PEN_COLOR, penColor, penTool } from './tools.ts'
+import { DEFAULT_PEN_COLOR, nightInk, penColor, penTool } from './tools.ts'
 
 const host = document.createElement('div')
 host.style.position = 'relative'
@@ -28,6 +28,7 @@ beforeEach(() => {
   document.body.append(host)
   penTool.value = 'pen'
   penColor.value = DEFAULT_PEN_COLOR
+  nightInk.value = false
   settings.value = { ...DEFAULT_SETTINGS }
   act(() => render(<Puck visible />, host))
 })
@@ -159,6 +160,18 @@ describe('Puck', () => {
     })
     expect(puck().dataset.tool).toBe('eraser')
     expect(puck().style.getPropertyValue('--puck-color')).toBe('#2f6fed')
+  })
+
+  it('rings Black in the pale ink at night', () => {
+    act(() => {
+      penColor.value = '#1c1c1a'
+    })
+    expect(puck().style.getPropertyValue('--puck-color')).toBe('#1c1c1a')
+    act(() => {
+      nightInk.value = true
+    })
+    expect(puck().style.getPropertyValue('--puck-color')).toBe('#e8e6e1')
+    expect(penColor.value).toBe('#1c1c1a')
   })
 
   it('removes its listeners and timer when unmounted with the palette open', () => {

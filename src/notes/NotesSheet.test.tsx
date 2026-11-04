@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { toast } from '../app/ui.ts'
-import { fingerDraws, mouseDraws, penTool } from '../ink/tools.ts'
+import { fingerDraws, mouseDraws, nightInk, penTool } from '../ink/tools.ts'
 import { emptyNotes, type NotesDoc, type TextBlock } from '../types.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
 import { NotesSheet, type NotesSheetHandle } from './NotesSheet.tsx'
@@ -23,6 +23,7 @@ beforeEach(() => {
   penTool.value = 'pen'
   mouseDraws.value = false
   fingerDraws.value = false
+  nightInk.value = false
   host = document.createElement('div')
   document.body.appendChild(host)
   store = createNotesStore(emptyNotes('pdf', 'a.pdf', 1), vi.fn<(d: NotesDoc) => void>())
@@ -357,6 +358,18 @@ test('ink keeps its pixel positions when the sheet grows', async () => {
   expect(sheet.style.height).toBe(`${4 * 400 + 900}px`)
   expect(host.querySelectorAll('.ink-layer path')).toHaveLength(2)
   expect(pathOf(0)).toBe(before)
+})
+
+test('Black ink on the sheet shows in the pale ink at night and stays Black in the doc', async () => {
+  store.addStroke({ id: 's', kind: 'ink', color: '#1c1c1a', width: 0.004, points: [0.1, 0.2, 0.5, 0.5, 1, 0.5], createdAt: 1, updatedAt: 1 })
+  await mount()
+  const fill = () => host.querySelector('.ink-layer path')!.getAttribute('fill')
+  expect(fill()).toBe('#1c1c1a')
+  await act(() => {
+    nightInk.value = true
+  })
+  expect(fill()).toBe('#e8e6e1')
+  expect(store.strokes.value[0].color).toBe('#1c1c1a')
 })
 
 test('a drag-selection that ends outside a text block keeps the selection', async () => {

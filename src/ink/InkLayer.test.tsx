@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InkStroke } from '../types.ts'
 import { InkLayer, type InkLayerProps } from './InkLayer.tsx'
-import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
+import { fingerDraws, mouseDraws, nightInk, penActivity, penColor, penTool, penWidth } from './tools.ts'
 
 // happy-dom's PointerEvent honours pointerType, pressure, coalescedEvents and predictedEvents from the init dict.
 interface P {
@@ -104,6 +104,7 @@ beforeEach(() => {
   penWidth.value = 0.004
   mouseDraws.value = false
   fingerDraws.value = false
+  nightInk.value = false
   penActivity.down = false
   penActivity.downOn = null
   penActivity.lastUp = -Infinity
@@ -209,6 +210,18 @@ describe('InkLayer live render', () => {
     ctx.fill.mockClear()
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('fills the live Black stroke in the pale ink at night and stores Black', async () => {
+    penColor.value = '#1c1c1a'
+    nightInk.value = true
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.3 }))
+    text.dispatchEvent(pointer('pointermove', { x: 100, y: 200, pressure: 0.6 }))
+    flush()
+    expect(ctx.fillStyle).toBe('#e8e6e1')
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200, pressure: 0 }))
+    expect(added[0].color).toBe('#1c1c1a')
+  })
 
   it('fills the live stroke once per frame with the outline the committed stroke gets', async () => {
     const text = await mount()
@@ -705,5 +718,27 @@ describe('InkLayer input routing on the page element', () => {
     })
     expect(penActivity.down).toBe(true)
     expect(text.isConnected).toBe(false)
+  })
+})
+
+describe('InkLayer night ink', () => {
+  const black: InkStroke = { kind: 'ink', id: 'k', createdAt: 1, updatedAt: 1, page: 3, tool: 'pen', color: '#1c1c1a', width: 0.004, points: [0.1, 0.1, 0.5, 0.5, 0.5, 0.5] }
+  const red: InkStroke = { ...black, id: 'r', color: '#d33a2c' }
+  const fills = () => [...layer.querySelectorAll('svg path')].map((p) => p.getAttribute('fill'))
+
+  it('draws a Black stroke in the pale ink at night without changing its stored colour; other colours stay', async () => {
+    nightInk.value = true
+    await mount({ strokes: [black, red] })
+    expect(fills()).toEqual(['#e8e6e1', '#d33a2c'])
+    expect(black.color).toBe('#1c1c1a')
+  })
+
+  it('draws a Black stroke in Black by day, and follows a switch to night', async () => {
+    await mount({ strokes: [black] })
+    expect(fills()).toEqual(['#1c1c1a'])
+    await act(() => {
+      nightInk.value = true
+    })
+    expect(fills()).toEqual(['#e8e6e1'])
   })
 })

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
 import { inkOutlinePath, simplifyPoints, strokeHitsPoint } from './geometry.ts'
-import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
+import { fingerDraws, inkDisplayColor, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 import './ink.css'
 
 export interface InkLayerProps {
@@ -72,7 +72,7 @@ function StrokePath({ stroke, cssW, cssH }: { stroke: InkStroke; cssW: number; c
     () => inkOutlinePath(stroke.points, stroke.width, cssW, cssH),
     [stroke.points, stroke.width, cssW, cssH],
   )
-  return <path d={d} fill={stroke.color} />
+  return <path d={d} fill={inkDisplayColor(stroke.color)} />
 }
 
 export function InkLayer(props: InkLayerProps) {
@@ -123,7 +123,7 @@ export function InkLayer(props: InkLayerProps) {
       const { cssW, cssH } = propsRef.current
       const pts = simplifyPoints(s.points, SIMPLIFY_PX / cssW).concat(s.predicted)
       s.ctx.clearRect(0, 0, cssW, cssH)
-      s.ctx.fillStyle = s.color
+      s.ctx.fillStyle = inkDisplayColor(s.color)
       s.ctx.fill(new Path2D(inkOutlinePath(pts, s.width, cssW, cssH)))
     }
 

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { Icon } from '../app/icons.tsx'
 import { saveSettings, settings } from '../app/settings.ts'
 import { PenStrip } from './PenStrip.tsx'
-import { penColor, penTool } from './tools.ts'
+import { inkDisplayColor, penColor, penTool } from './tools.ts'
 import './puck.css'
 
 export const PUCK_LONG_PRESS_MS = 350
@@ -128,7 +128,7 @@ export function Puck({ visible }: { visible: boolean }) {
         class="mg-puck"
         aria-label="Pen tools"
         data-tool={penTool.value}
-        style={{ top: `${top}px`, '--puck-color': penColor.value }}
+        style={{ top: `${top}px`, '--puck-color': inkDisplayColor(penColor.value) }}
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
