@@ -793,6 +793,24 @@ test('a lasso move across a page boundary re-parents the selection to the page u
   expect(store.doc.value.strokes[0]).toMatchObject({ page: 'page-1', points: before })
 })
 
+test('undoing a cross-page move drops the selection, so Delete removes nothing', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await penPath(page('page-1'), [[116, 1016], [316, 1116]])
+  await act(() => setTool('lasso'))
+  await penPath(page('page-1'), [[96, 990], [336, 990], [336, 1140], [96, 1140], [96, 1000]])
+  await penPath(page('page-1'), [[216, 1066], [216, 1266], [216, 1466]])
+  expect(store.doc.value.strokes[0].page).toBe('page-2')
+  expect(page('page-2').querySelector('.mg-lasso-frame')).not.toBeNull()
+
+  await act(() => store.undo())
+  expect(store.doc.value.strokes[0].page).toBe('page-1')
+  expect(host.querySelector('.mg-lasso-frame')).toBeNull()
+  await keyDown('Delete')
+  expect(store.doc.value.strokes.filter((x) => !x.deleted)).toHaveLength(1)
+  await act(() => store.redo())
+  expect(host.querySelector('.mg-lasso-frame')).toBeNull()
+})
+
 test('a paste without files pastes the clip at the pointer, else centred on the current page, kept on the page', async () => {
   await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
   await act(() => {

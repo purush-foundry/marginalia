@@ -156,6 +156,12 @@ function lassoSkips(target: Element): boolean {
   return target.closest('.mg-nb-text-handle, .mg-nb-text[data-selected], .mg-nb-text[contenteditable]') !== null
 }
 
+// True when every ref names a live item in the page's content.
+function allOn(content: PageContent | undefined, refs: ItemRef[]): boolean {
+  const lists = { stroke: content?.strokes, text: content?.texts, image: content?.images }
+  return refs.every((r) => lists[r.kind]?.some((i) => i.id === r.id))
+}
+
 // True when both maps hold the same keys and values.
 function sameHeights(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
   return a.size === b.size && [...a].every(([k, v]) => b.get(k) === v)
@@ -372,6 +378,12 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
   const pages = store.pages.value
   const content = store.content.value
   const layout = useMemo(() => layoutPages(pages, pane.w, zoom), [pages, pane.w, zoom])
+  const selected = selection && allOn(content.get(selection.page), selection.refs) ? selection : null
+
+  // Drops a selection whose items left its page, as an undo of a cross-page move does.
+  useEffect(() => {
+    if (selection && !selected) setSelection((cur) => (cur === selection ? null : cur))
+  })
   const layoutRef = useRef(layout)
   layoutRef.current = layout
   const paneRef = useRef(pane)
@@ -856,7 +868,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
           >
             {layout.pages.map((b) => {
               const id = b.page.id
-              const refs = selection?.page === id ? selection.refs : NO_REFS
+              const refs = selected?.page === id ? selected.refs : NO_REFS
               return (
                 <PageView
                   key={id}
