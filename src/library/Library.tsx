@@ -7,6 +7,7 @@ import { folderHash, paperHash } from '../app/route'
 import { connectDrive, formatBytes } from '../app/Settings'
 import { settingsOpen } from '../app/ui'
 import type { ReadStatus } from '../types'
+import { Hero } from './Hero'
 import './library.css'
 
 interface PaperInfo {
@@ -78,6 +79,7 @@ export function Library({ folderId }: { folderId?: string }) {
 
   return (
     <div class="mg-lib">
+      <Hero />
       <header class="mg-lib-head">
         <nav class="mg-crumbs" aria-label="Folders">
           {crumbs.map((c, i) => (

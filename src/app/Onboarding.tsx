@@ -4,6 +4,7 @@ import { listChildren, listMyDriveFolders } from '../drive/api'
 import { authError, authState, gisAvailable } from '../drive/auth'
 import { library, setRootFolder } from '../drive/library'
 import { FOLDER_MIME, type DriveNode } from '../types'
+import { Hero } from '../library/Hero'
 import { Icon } from './icons'
 import { navigate } from './route'
 import { RedirectSignIn, Settings, connectDrive } from './Settings'
@@ -16,6 +17,7 @@ function ConnectStep() {
   const offline = !online.value || (ready && !gisAvailable.value)
   return (
     <div class="mg-onboard">
+      <Hero />
       <h1>Marginalia</h1>
       <p class="mg-muted">Read and annotate the papers in one Google Drive folder, on every device.</p>
       <button
@@ -82,6 +84,7 @@ export function RootPicker() {
 
   return (
     <div class="mg-onboard">
+      <Hero />
       <h1>Choose your papers folder</h1>
       <p class="mg-muted">Marginalia shows this folder and its subfolders. Annotations are saved next to each PDF.</p>
       <nav class="mg-crumbs" aria-label="Folders">
