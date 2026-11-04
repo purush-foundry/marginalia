@@ -148,6 +148,35 @@ describe('annotation store', () => {
     expect(store.inks.value.map((s) => s.id)).toEqual(['s1'])
   })
 
+  it('updateStrokes, addStrokes and removeStrokes are one undo step each', () => {
+    const { store, persist } = make()
+    const ids = () => store.inks.value.map((s) => s.id)
+    persist.mockClear()
+
+    store.addStrokes([stroke('a'), stroke('b'), stroke('c')])
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(ids()).toEqual(['a', 'b', 'c'])
+
+    store.updateStrokes([{ ...stroke('a'), color: '#f00' }, { ...stroke('b'), points: [0.5, 0.5, 1] }, stroke('missing')])
+    expect(persist).toHaveBeenCalledTimes(2)
+    expect(store.inks.value.map((s) => [s.id, s.color, s.points[0]])).toEqual([['a', '#f00', 0], ['b', '#000', 0.5], ['c', '#000', 0]])
+    expect(store.inks.value[0].updatedAt).toBeGreaterThan(1)
+
+    store.removeStrokes(['a', 'c', 'missing'])
+    expect(persist).toHaveBeenCalledTimes(3)
+    expect(ids()).toEqual(['b'])
+    expect(store.sidecar.value.inks.find((s) => s.id === 'a')?.deleted).toBe(true)
+
+    store.undo()
+    expect(ids()).toEqual(['a', 'b', 'c'])
+    store.undo()
+    expect(store.inks.value.map((s) => [s.color, s.points[0]])).toEqual([['#000', 0], ['#000', 0], ['#000', 0]])
+    store.undo()
+    expect(ids()).toEqual([])
+    store.redo()
+    expect(ids()).toEqual(['a', 'b', 'c'])
+  })
+
   it('saving a thread persists without an undo step; removing one is undoable', () => {
     const { store, persist } = make()
     store.upsertThread(thread('a', 1))

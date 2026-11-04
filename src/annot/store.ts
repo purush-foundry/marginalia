@@ -19,6 +19,12 @@ export interface AnnotationStore {
   removeStroke(id: string): void
   /** Tombstones a stroke and adds the pieces, as one undo step. */
   replaceStroke(id: string, pieces: InkStroke[]): void
+  /** Replaces the live strokes with these versions, as one undo step. */
+  updateStrokes(next: InkStroke[]): void
+  /** Adds the strokes as one undo step. */
+  addStrokes(list: InkStroke[]): void
+  /** Tombstones the live strokes, as one undo step. */
+  removeStrokes(ids: string[]): void
   upsertThread(t: Thread): void
   removeThread(id: string): void
   setReading(patch: Partial<ReadingState>): void
@@ -121,8 +127,9 @@ export function createAnnotationStore(
     redoStack.value = []
   }
 
-  // Applies new versions of items as one undo step.
+  // Applies new versions of items as one undo step; nothing happens for none.
   function change(items: Put[]): void {
+    if (!items.length) return
     const t = now()
     const entry: HistoryEntry = items.map(({ collection, item }) => ({
       collection,
@@ -138,6 +145,12 @@ export function createAnnotationStore(
     const before = find(collection, id)
     if (!before || before.deleted) return
     change([{ collection, item: { ...before, deleted: true } }])
+  }
+
+  // The live stroke with this id.
+  function liveInk(id: string): InkStroke | undefined {
+    const s = find('inks', id) as InkStroke | undefined
+    return s && !s.deleted ? s : undefined
   }
 
   function undo(): void {
@@ -201,6 +214,14 @@ export function createAnnotationStore(
         { collection: 'inks', item: { ...original, deleted: true } },
         ...pieces.map((item) => ({ collection: 'inks' as const, item })),
       ])
+    },
+    updateStrokes(next) {
+      change(next.filter((s) => liveInk(s.id)).map((item) => ({ collection: 'inks' as const, item })))
+    },
+    addStrokes: (list) => change(list.map((item) => ({ collection: 'inks' as const, item }))),
+    removeStrokes(ids) {
+      const gone = [...new Set(ids)].map(liveInk).filter((s) => s !== undefined)
+      change(gone.map((s) => ({ collection: 'inks' as const, item: { ...s, deleted: true } })))
     },
     upsertThread: (t) => put([{ collection: 'threads', item: { ...t, updatedAt: now() } }]),
     removeThread: (id) => tombstone('threads', id),

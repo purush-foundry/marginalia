@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest'
-import { emptyNotebook, type NotesDocV2 } from './model.ts'
+import { compareZ, emptyNotebook, type NotesDocV2 } from './model.ts'
+import type { Clip } from './clipboard.ts'
 import { createNotebookStore, type NewStroke } from './notebookStore.ts'
 
 function make(doc: NotesDocV2 = emptyNotebook('pdf', 'a.pdf', 1)) {
@@ -251,4 +252,165 @@ test('replaceFromRemote swaps the doc and clears history', () => {
   expect(persist).not.toHaveBeenCalled()
   store.undo()
   expect(store.doc.value).toBe(remote)
+})
+
+// Ids of a page's live items, bottom to top.
+function zOrder(store: Store, page = 'page-1'): string[] {
+  const c = store.content.value.get(page)!
+  return [...c.strokes, ...c.texts, ...c.images].sort(compareZ).map((x) => x.id)
+}
+
+const live = (store: Store, page = 'page-1') => store.content.value.get(page)!
+
+test('moveItems to another page re-parents the items on top of that page in one step', () => {
+  const { store, persist } = make()
+  store.addStroke({ ...stroke('s1'), points: [0.1, 0.2, 0.5, 0.3, 0.4, 0.6] })
+  const t = store.addText({ page: 'page-1', box, text: 'hi', size: 'm', color: '#000' })
+  const other = store.pages.value[1].id
+  store.addStroke(stroke('there', other))
+  const third = store.pages.value[2].id
+  const before = store.doc.value.strokes.find((s) => s.id === 's1')!
+  persist.mockClear()
+
+  store.moveItems([{ kind: 'stroke', id: 's1' }, { kind: 'text', id: t.id }], 0.1, -0.1, other)
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(zOrder(store)).toEqual([])
+  expect(zOrder(store, other)).toEqual(['there', 's1', t.id])
+  const moved = live(store, other).strokes.find((s) => s.id === 's1')!
+  moved.points.forEach((v, i) => expect(v).toBeCloseTo([0.2, 0.1, 0.5, 0.4, 0.3, 0.6][i]))
+  expect(moved.updatedAt).toBeGreaterThan(0)
+  expect(live(store, other).texts[0].box).toMatchObject({ w: 0.5 })
+  expect(live(store, other).texts[0].box.x).toBeCloseTo(0.2)
+  expect(live(store, other).texts[0].box.y).toBeCloseTo(0)
+  expect(pageIds(store)).toEqual(['page-1', other, third])
+
+  store.undo()
+  expect(zOrder(store)).toEqual(['s1', t.id])
+  expect(store.doc.value.strokes.find((s) => s.id === 's1')!.points).toEqual(before.points)
+  expect(zOrder(store, other)).toEqual(['there'])
+
+  store.moveItems([{ kind: 'stroke', id: 's1' }], 0.05, 0)
+  expect(live(store).strokes[0]).toMatchObject({ page: 'page-1', z: before.z })
+  expect(live(store).strokes[0].points[0]).toBeCloseTo(0.15)
+})
+
+test('scaleItems scales stroke points and width and object boxes about the origin', () => {
+  const { store } = make()
+  store.addStroke({ ...stroke('s1'), width: 0.01, points: [0.2, 0.2, 0.5, 0.4, 0.6, 0.7] })
+  const t = store.addText({ page: 'page-1', box: { x: 0.4, y: 0.2, w: 0.2 }, text: 'hi', size: 's', color: '#000' })
+  const img = store.addImage({ page: 'page-1', src: 'x', aspect: 2, box: { x: 0.2, y: 0.4, w: 0.1 } })
+  const refs = [{ kind: 'stroke', id: 's1' }, { kind: 'text', id: t.id }, { kind: 'image', id: img.id }] as const
+
+  store.scaleItems([...refs], { x: 0.2, y: 0.2 }, 2)
+  const c = live(store)
+  c.strokes[0].points.forEach((v, i) => expect(v).toBeCloseTo([0.2, 0.2, 0.5, 0.6, 1, 0.7][i]))
+  expect(c.strokes[0].width).toBeCloseTo(0.02)
+  expect(c.texts[0]).toMatchObject({ size: 's', text: 'hi' })
+  ;(['x', 'y', 'w'] as const).forEach((k) => expect(c.texts[0].box[k]).toBeCloseTo({ x: 0.6, y: 0.2, w: 0.4 }[k]))
+  ;(['x', 'y', 'w'] as const).forEach((k) => expect(c.images[0].box[k]).toBeCloseTo({ x: 0.2, y: 0.6, w: 0.2 }[k]))
+  expect(c.images[0].aspect).toBe(2)
+
+  store.undo()
+  expect(live(store).strokes[0].width).toBe(0.01)
+  expect(live(store).texts[0].box).toEqual({ x: 0.4, y: 0.2, w: 0.2 })
+  expect(live(store).images[0].box).toEqual({ x: 0.2, y: 0.4, w: 0.1 })
+})
+
+test('recolorItems changes strokes and texts and leaves images', () => {
+  const { store, persist } = make()
+  store.addStroke(stroke('s1'))
+  const t = store.addText({ page: 'page-1', box, text: 'hi', size: 'm', color: '#000' })
+  const img = store.addImage({ page: 'page-1', src: 'x', aspect: 1 })
+  const before = store.doc.value.images.find((m) => m.id === img.id)
+  persist.mockClear()
+
+  store.recolorItems([{ kind: 'stroke', id: 's1' }, { kind: 'text', id: t.id }, { kind: 'image', id: img.id }], '#d33a2c')
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(live(store).strokes[0].color).toBe('#d33a2c')
+  expect(live(store).texts[0].color).toBe('#d33a2c')
+  expect(store.doc.value.images.find((m) => m.id === img.id)).toBe(before)
+
+  store.undo()
+  expect(live(store).strokes[0].color).toBe('#000')
+  expect(live(store).texts[0].color).toBe('#000')
+})
+
+test('bringToFront and sendToBack keep the selection\'s relative order', () => {
+  const { store, persist } = make()
+  for (const id of ['a', 'b', 'c']) store.addStroke(stroke(id))
+  const t = store.addText({ page: 'page-1', box, text: 'hi', size: 'm', color: '#000' })
+  store.addStroke(stroke('d'))
+  const sel = [{ kind: 'text', id: t.id }, { kind: 'stroke', id: 'a' }] as const
+  persist.mockClear()
+
+  store.bringToFront([...sel])
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(zOrder(store)).toEqual(['b', 'c', 'd', 'a', t.id])
+  store.sendToBack([{ kind: 'stroke', id: 'd' }, { kind: 'stroke', id: 'c' }])
+  expect(zOrder(store)).toEqual(['c', 'd', 'b', 'a', t.id])
+  store.sendToBack([...sel])
+  expect(zOrder(store)).toEqual(['a', t.id, 'c', 'd', 'b'])
+
+  store.undo()
+  store.undo()
+  store.undo()
+  expect(zOrder(store)).toEqual(['a', 'b', 'c', t.id, 'd'])
+})
+
+test('duplicateItems and insertClip add copies with new ids', () => {
+  const { store, persist } = make()
+  store.addStroke({ ...stroke('s1'), points: [0.1, 0.2, 0.5] })
+  const img = store.addImage({ page: 'page-1', src: 'x', aspect: 1, pdfPage: 3, box: { x: 0.3, y: 0.3, w: 0.2 } })
+  store.addStroke(stroke('top'))
+  persist.mockClear()
+
+  const copies = store.duplicateItems([{ kind: 'image', id: img.id }, { kind: 'stroke', id: 's1' }], 0.05)
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(copies.map((r) => r.kind)).toEqual(['stroke', 'image'])
+  expect(copies.map((r) => r.id)).not.toContain('s1')
+  expect(copies.map((r) => r.id)).not.toContain(img.id)
+  expect(zOrder(store)).toEqual(['s1', img.id, 'top', ...copies.map((r) => r.id)])
+  const dupStroke = live(store).strokes.find((s) => s.id === copies[0].id)!
+  dupStroke.points.forEach((v, i) => expect(v).toBeCloseTo([0.15, 0.25, 0.5][i]))
+  const dupImage = live(store).images.find((m) => m.id === copies[1].id)!
+  expect(dupImage).toMatchObject({ src: 'x', pdfPage: 3, aspect: 1, page: 'page-1' })
+  expect(dupImage.box.x).toBeCloseTo(0.35)
+  expect(dupImage.box.y).toBeCloseTo(0.35)
+  store.undo()
+  expect(zOrder(store)).toEqual(['s1', img.id, 'top'])
+
+  const other = store.pages.value[1].id
+  const clip: Clip = {
+    strokes: [{ tool: 'pen', pen: 'ball', color: '#123', width: 0.004, points: [0, 0.1, 0.5] }],
+    texts: [{ box: { x: 0.1, y: 0, w: 0.3 }, text: 'pasted', size: 'l', color: '#000' }],
+    images: [],
+    w: 0.4,
+    h: 0.1,
+  }
+  persist.mockClear()
+  const pasted = store.insertClip(clip, other, { x: 0.5, y: 0.5 })
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(pasted.map((r) => r.kind)).toEqual(['text', 'stroke'])
+  expect(zOrder(store, other)).toEqual(pasted.map((r) => r.id))
+  expect(live(store, other).strokes[0]).toMatchObject({ page: other, color: '#123', points: [0.5, 0.6, 0.5] })
+  expect(live(store, other).texts[0]).toMatchObject({ page: other, text: 'pasted', size: 'l', box: { x: 0.6, y: 0.5, w: 0.3 } })
+  expect(store.pages.value).toHaveLength(3)
+  store.undo()
+  expect(zOrder(store, other)).toEqual([])
+  expect(store.pages.value).toHaveLength(2)
+})
+
+test('removeItems tombstones every kind in one undo step', () => {
+  const { store, persist } = make()
+  store.addStroke(stroke('s1'))
+  const t = store.addText({ page: 'page-1', box, text: 'hi', size: 'm', color: '#000' })
+  const img = store.addImage({ page: 'page-1', src: 'x', aspect: 1 })
+  persist.mockClear()
+
+  store.removeItems([{ kind: 'stroke', id: 's1' }, { kind: 'text', id: t.id }, { kind: 'image', id: img.id }])
+  expect(persist).toHaveBeenCalledTimes(1)
+  expect(zOrder(store)).toEqual([])
+  expect(store.doc.value.texts.find((x) => x.id === t.id)?.deleted).toBe(true)
+  store.undo()
+  expect(zOrder(store)).toEqual(['s1', t.id, img.id])
 })

@@ -1,6 +1,8 @@
 import { computed, signal, type ReadonlySignal } from '@preact/signals'
 import { newId, now } from '../lib/ids.ts'
+import type { ItemRef } from '../ink/lasso.ts'
 import { compareOrder, orderBetween } from '../lib/order.ts'
+import type { Clip } from './clipboard.ts'
 import {
   PAGE_SIZES, compareZ,
   type ImageObject, type NotePage, type NotebookStroke, type NotesDocV2, type ObjectBox, type PageContent, type PageStyle, type TextObject,
@@ -36,6 +38,22 @@ export interface NotebookStore {
   addImage(img: { page: string; src: string; aspect: number; pdfPage?: number; box?: ObjectBox }): ImageObject
   updateImage(id: string, patch: { box: ObjectBox }): void
   removeObject(kind: 'texts' | 'images', id: string): void
+  /** Shifts the items; `toPage` re-parents them on top of that page. One undo step. */
+  moveItems(refs: ItemRef[], dx: number, dy: number, toPage?: string): void
+  /** Scales stroke points and widths and object positions and widths about `origin`; text size is unchanged. One undo step. */
+  scaleItems(refs: ItemRef[], origin: { x: number; y: number }, k: number): void
+  /** Sets the colour of the strokes and texts among the items. One undo step. */
+  recolorItems(refs: ItemRef[], color: string): void
+  /** Puts the items above everything on their page, keeping their order. One undo step. */
+  bringToFront(refs: ItemRef[]): void
+  /** Puts the items below everything on their page, keeping their order. One undo step. */
+  sendToBack(refs: ItemRef[]): void
+  /** Tombstones the items. One undo step. */
+  removeItems(refs: ItemRef[]): void
+  /** Copies the items with new ids on top of their page, shifted right and down by `offset`; returns the copies bottom to top. One undo step. */
+  duplicateItems(refs: ItemRef[], offset: number): ItemRef[]
+  /** Adds the clip's items on top of `page` with the clip's top-left at `at`; returns them bottom to top. One undo step. */
+  insertClip(clip: Clip, page: string, at: { x: number; y: number }): ItemRef[]
   undo(): void
   redo(): void
   /** Replaces state with a merged doc from the sync layer; clears undo history. */
@@ -54,9 +72,25 @@ interface Change {
 
 type HistoryEntry = Change[]
 type Put = { collection: Collection; item: AnyItem }
+type ItemCollection = 'strokes' | 'texts' | 'images'
+type ItemPut = { collection: ItemCollection; item: PageItem }
+
+const COLLECTION_OF: Record<ItemRef['kind'], ItemCollection> = { stroke: 'strokes', text: 'texts', image: 'images' }
+const KIND_OF: Record<ItemCollection, ItemRef['kind']> = { strokes: 'stroke', texts: 'text', images: 'image' }
 
 const MAX_HISTORY = 100
 const DEFAULT_IMAGE_W = 0.5
+
+// Copy of an item with each position (x, y) mapped to (x * k + dx, y * k + dy) and its stroke or box width scaled by k.
+function transformed(item: PageItem, k: number, dx: number, dy: number): PageItem {
+  if ('points' in item) {
+    const points = item.points.map((v, i) => (i % 3 === 0 ? v * k + dx : i % 3 === 1 ? v * k + dy : v))
+    return { ...item, points, width: item.width * k }
+  }
+  return { ...item, box: { x: item.box.x * k + dx, y: item.box.y * k + dy, w: item.box.w * k } }
+}
+
+const refOf = ({ collection, item }: ItemPut): ItemRef => ({ kind: KIND_OF[collection], id: item.id })
 
 // The style of a page, or A4 blank white when there is none.
 function styleOf(page: NotePage | undefined): PageStyle {
@@ -118,8 +152,9 @@ export function createNotebookStore(initial: NotesDocV2, persist: (doc: NotesDoc
     typing = null
   }
 
-  // Applies new versions of items as one undo step and returns the stamped versions.
+  // Applies new versions of items as one undo step and returns the stamped versions; nothing happens for none.
   function change(items: Put[]): AnyItem[] {
+    if (!items.length) return []
     const t = now()
     const entry: HistoryEntry = items.map(({ collection, item }) => ({
       collection,
@@ -167,6 +202,49 @@ export function createNotebookStore(initial: NotesDocV2, persist: (doc: NotesDoc
       if (item.page === page && !item.deleted && (top === null || item.z > top)) top = item.z
     }
     return orderBetween(top, null)
+  }
+
+  // The lowest z key among the page's live items, or null when it has none.
+  function zBottom(page: string): string | null {
+    const { strokes, texts, images } = state.value
+    let bottom: string | null = null
+    for (const item of [...strokes, ...texts, ...images]) {
+      if (item.page === page && !item.deleted && (bottom === null || item.z < bottom)) bottom = item.z
+    }
+    return bottom
+  }
+
+  // The items with z keys above everything on their pages, in the given order.
+  function stackOnTop(list: ItemPut[]): ItemPut[] {
+    const last = new Map<string, string>()
+    return list.map(({ collection, item }) => {
+      const prev = last.get(item.page)
+      const z = prev === undefined ? zOnTop(item.page) : orderBetween(prev, null)
+      last.set(item.page, z)
+      return { collection, item: { ...item, z } }
+    })
+  }
+
+  // The items with z keys below everything on their pages, in the given order.
+  function stackBelow(list: ItemPut[]): ItemPut[] {
+    const first = new Map<string, string | null>()
+    return [...list].reverse().map(({ collection, item }) => {
+      const next = first.has(item.page) ? first.get(item.page)! : zBottom(item.page)
+      const z = orderBetween(null, next)
+      first.set(item.page, z)
+      return { collection, item: { ...item, z } }
+    }).reverse()
+  }
+
+  // The live items the refs name, once each, bottom to top.
+  function picked(refs: ItemRef[]): ItemPut[] {
+    const out: ItemPut[] = []
+    for (const { kind, id } of refs) {
+      const collection = COLLECTION_OF[kind]
+      const item = live(collection, id) as PageItem | undefined
+      if (item && !out.some((p) => p.item === item)) out.push({ collection, item })
+    }
+    return out.sort((a, b) => compareZ(a.item, b.item))
   }
 
   // Adds an item on top of its page, plus a following page when the rule calls for one, as one undo step.
@@ -278,6 +356,52 @@ export function createNotebookStore(initial: NotesDocV2, persist: (doc: NotesDoc
       if (before) change([{ collection: 'images', item: { ...before, box: patch.box } }])
     },
     removeObject: (kind, id) => tombstone(kind, id),
+    moveItems(refs, dx, dy, toPage) {
+      const target = toPage !== undefined && live('pages', toPage) ? toPage : undefined
+      const moved = picked(refs).map(({ collection, item }) => ({ collection, item: transformed(item, 1, dx, dy) }))
+      const staying = moved.filter((p) => target === undefined || p.item.page === target)
+      const leaving = moved.filter((p) => !staying.includes(p)).map((p) => ({ ...p, item: { ...p.item, page: target! } }))
+      change([...staying, ...stackOnTop(leaving), ...(leaving.length ? autoPage(target!) : [])])
+    },
+    scaleItems(refs, origin, k) {
+      change(picked(refs).map(({ collection, item }) => ({ collection, item: transformed(item, k, origin.x * (1 - k), origin.y * (1 - k)) })))
+    },
+    recolorItems(refs, color) {
+      const inked = picked(refs).filter((p) => p.collection !== 'images' && (p.item as NotebookStroke | TextObject).color !== color)
+      change(inked.map(({ collection, item }) => ({ collection, item: { ...item, color } })))
+    },
+    bringToFront(refs) {
+      change(stackOnTop(picked(refs)))
+    },
+    sendToBack(refs) {
+      change(stackBelow(picked(refs)))
+    },
+    removeItems(refs) {
+      change(picked(refs).map(({ collection, item }) => ({ collection, item: { ...item, deleted: true } })))
+    },
+    duplicateItems(refs, offset) {
+      const t = now()
+      const copies = stackOnTop(
+        picked(refs).map(({ collection, item }) => ({
+          collection,
+          item: { ...transformed(item, 1, offset, offset), id: newId(), createdAt: t, updatedAt: t },
+        })),
+      )
+      change(copies)
+      return copies.map(refOf)
+    },
+    insertClip(clip, page, at) {
+      const t = now()
+      const fresh = { id: '', page, z: '', createdAt: t, updatedAt: t }
+      const list: ItemPut[] = [
+        ...clip.images.map((m) => ({ collection: 'images' as const, item: { ...m, ...fresh } })),
+        ...clip.texts.map((x) => ({ collection: 'texts' as const, item: { ...x, ...fresh } })),
+        ...clip.strokes.map((s) => ({ collection: 'strokes' as const, item: { ...s, ...fresh } })),
+      ]
+      const placed = stackOnTop(list.map(({ collection, item }) => ({ collection, item: { ...transformed(item, 1, at.x, at.y), id: newId() } })))
+      change([...placed, ...autoPage(page)])
+      return placed.map(refOf)
+    },
     undo,
     redo,
     replaceFromRemote(doc) {
