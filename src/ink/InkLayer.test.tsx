@@ -986,18 +986,31 @@ describe('InkLayer pen hover', () => {
     expect(move.defaultPrevented).toBe(false)
     expect(dot.hidden).toBe(false)
     expect([dot.style.left, dot.style.top]).toEqual(['50px', '60px'])
-    expect(parseFloat(dot.style.width)).toBeCloseTo((0.35 / 210) * 200)
+    expect(parseFloat(dot.style.width)).toBe(6)
     expect(dot.style.background).toBe('#1c1c1a')
 
     await act(() => {
       setTool('highlighter')
     })
     text.dispatchEvent(hover(70, 80))
-    expect(parseFloat(dot.style.width)).toBeCloseTo((5 / 210) * 200)
+    expect(parseFloat(dot.style.width)).toBe(6)
     expect(dot.style.background).toBe('#ffe066')
 
     ;(text.parentElement as HTMLElement).dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'pen', pointerId: 2 }))
     expect(dot.hidden).toBe(true)
+  })
+
+  it('the dot is at least 6 px across and grows with the stroke width beyond that', async () => {
+    const text = await mount({ pageWidthMm: 210, cssW: 840 })
+    const dot = layer.querySelector('.ink-hover-dot') as HTMLElement
+    text.dispatchEvent(hover(50, 60))
+    expect(parseFloat(dot.style.width)).toBe(6)
+    expect(parseFloat(dot.style.height)).toBe(6)
+    await act(() => {
+      setTool('highlighter')
+    })
+    text.dispatchEvent(hover(50, 60))
+    expect(parseFloat(dot.style.width)).toBeCloseTo((5 / 210) * 840)
   })
 
   it('shows no dot under the eraser or lasso, or once the pen touches', async () => {

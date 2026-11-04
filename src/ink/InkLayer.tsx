@@ -63,6 +63,7 @@ const TAP_SLOP_PX = 12
 const DOUBLE_TAP_GAP_MS = 300
 // Most eraser circles tested along the path between two samples; a longer jump spaces them wider.
 const MAX_ERASE_STEPS = 64
+const HOVER_DOT_MIN_PX = 6
 
 // Isotropic points of a stroke and their bounding box [minX, minY, maxX, maxY].
 interface IsoStroke {
@@ -370,7 +371,7 @@ export function InkLayer(props: InkLayerProps) {
       if (dotRef.current) dotRef.current.hidden = true
     }
 
-    // Shows a dot of the active colour and width under a hovering pen while the pen or highlighter is selected.
+    // Shows a dot of the active colour and width, at least HOVER_DOT_MIN_PX across, under a hovering pen while the pen or highlighter is selected.
     const hoverDot = (e: PointerEvent) => {
       const dot = dotRef.current
       const t = tool.peek()
@@ -381,7 +382,7 @@ export function InkLayer(props: InkLayerProps) {
       }
       const p = propsRef.current
       dot.style.background = inkDisplayColor(activeColor(t), paperIsDark(p))
-      placeAt(dot, e, mmToFraction(activeWidthMm(t), pageMm(p)) * p.cssW)
+      placeAt(dot, e, Math.max(HOVER_DOT_MIN_PX, mmToFraction(activeWidthMm(t), pageMm(p)) * p.cssW))
     }
 
     const swallow = (e: Event) => {
