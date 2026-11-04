@@ -49,14 +49,20 @@ export function Toolbar(props: ToolbarProps) {
     <header class="mg-toolbar">
       <div class="mg-toolbar-lead">
         <ToolButton icon="back" label="Library" onClick={props.onBack} />
-        <span class="mg-title" title={props.title}>
-          {props.title}
-        </span>
+        {props.areaArmed.value ? (
+          <span class="mg-snip-hint" role="status">
+            Drag a box
+          </span>
+        ) : (
+          <span class="mg-title" title={props.title}>
+            {props.title}
+          </span>
+        )}
       </div>
       <div class="mg-toolbar-tools">
         <ToolButton
-          icon="area"
-          label="Area select"
+          icon="snip"
+          label="Snip"
           pressed={props.areaArmed.value}
           onClick={() => (props.areaArmed.value = !props.areaArmed.value)}
         />

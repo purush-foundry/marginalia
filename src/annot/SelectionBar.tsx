@@ -13,6 +13,8 @@ export interface SelectionBarProps {
   onAsk(): void
   onNote(): void
   onCopy?(): void
+  onCopyImage?(): void
+  onToNotes?(): void
   onDelete?(): void
   onDismiss(): void
 }
@@ -52,7 +54,7 @@ export function SelectionBar(props: SelectionBarProps) {
     const w = el?.offsetWidth || FALLBACK_WIDTH
     const h = el?.offsetHeight || BAR_HEIGHT
     setPos(place(props.anchorRect, w, h))
-  }, [props.anchorRect, props.onCopy !== undefined, props.onDelete !== undefined])
+  }, [props.anchorRect, props.onCopy !== undefined, props.onCopyImage !== undefined, props.onDelete !== undefined])
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
@@ -78,7 +80,7 @@ export function SelectionBar(props: SelectionBarProps) {
       role="toolbar"
       aria-label="Selection actions"
       data-placement={pos.side}
-      style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+      style={{ top: `${pos.top}px`, left: `${pos.left}px`, flexWrap: 'wrap', maxWidth: 'calc(100vw - 16px)' }}
       onPointerDown={keepSelection}
       onMouseDown={keepSelection}
     >
@@ -100,6 +102,16 @@ export function SelectionBar(props: SelectionBarProps) {
       <button type="button" class="mg-selbar-btn" aria-label="Note" onClick={() => props.onNote()}>
         Note
       </button>
+      {props.onCopyImage && (
+        <button type="button" class="mg-selbar-btn" aria-label="Copy image" onClick={() => props.onCopyImage?.()}>
+          Copy image
+        </button>
+      )}
+      {props.onToNotes && (
+        <button type="button" class="mg-selbar-btn" aria-label="To notes" onClick={() => props.onToNotes?.()}>
+          To notes
+        </button>
+      )}
       {props.onCopy && (
         <button type="button" class="mg-selbar-btn" aria-label="Copy" onClick={() => props.onCopy?.()}>
           Copy

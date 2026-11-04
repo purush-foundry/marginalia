@@ -33,3 +33,23 @@ export async function copyText(text: string | Promise<string>): Promise<void> {
   }
   await navigator.clipboard.writeText(await text)
 }
+
+/** Copies a PNG to the clipboard, or downloads it when the clipboard cannot take images. */
+export async function copyImage(blob: Blob | Promise<Blob>, filename: string): Promise<'copied' | 'downloaded'> {
+  const png = Promise.resolve(blob)
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+      return 'copied'
+    } catch {
+      // Falls through to the download.
+    }
+  }
+  const url = URL.createObjectURL(await png)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  return 'downloaded'
+}

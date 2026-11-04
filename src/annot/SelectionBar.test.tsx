@@ -56,6 +56,22 @@ describe('SelectionBar', () => {
     expect(onCopy).toHaveBeenCalledOnce()
   })
 
+  it('shows Copy image and To notes only when handled, and calls them', () => {
+    const { bar } = mount({ anchorRect: new DOMRect(300, 400, 100, 20) })
+    expect(button(bar, 'Copy image')).toBeNull()
+    expect(button(bar, 'To notes')).toBeNull()
+
+    const onCopyImage = vi.fn()
+    const onToNotes = vi.fn()
+    const withImage = mount({ anchorRect: new DOMRect(300, 400, 100, 20), onCopyImage, onToNotes })
+    const labels = [...withImage.bar.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
+    expect(labels.slice(labels.indexOf('Note'))).toEqual(['Note', 'Copy image', 'To notes'])
+    button(withImage.bar, 'Copy image')!.click()
+    button(withImage.bar, 'To notes')!.click()
+    expect(onCopyImage).toHaveBeenCalledOnce()
+    expect(onToNotes).toHaveBeenCalledOnce()
+  })
+
   it('sits above the anchor when there is room', () => {
     const { bar } = mount({ anchorRect: new DOMRect(300, 400, 100, 20) })
     expect(bar.dataset.placement).toBe('above')

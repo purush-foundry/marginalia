@@ -26,7 +26,7 @@ import { folderHash, navigate } from './route'
 import { saveSettings, settings } from './settings'
 import { Sidebar, type SidebarTab } from './Sidebar'
 import { Toolbar } from './Toolbar'
-import { copyText, settingsOpen, showToast } from './ui'
+import { copyImage, copyText, settingsOpen, showToast } from './ui'
 import './reader.css'
 
 type Bar = { kind: 'selection'; sel: PendingSelection } | { kind: 'highlight'; id: string; rect: DOMRect }
@@ -280,6 +280,17 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const current = bar?.kind === 'highlight' ? store.highlights.value.find((h) => h.id === bar.id) : undefined
   const barText = bar?.kind === 'selection' ? (bar.sel.kind === 'text' ? bar.sel.text : '') : current?.kind === 'text' ? current.text : ''
 
+  const toNotes = (_page: number, _box: Box): void => undefined
+
+  const barArea =
+    bar?.kind === 'selection'
+      ? bar.sel.kind === 'area'
+        ? { page: bar.sel.page, box: bar.sel.boxes[0] }
+        : null
+      : current?.kind === 'area'
+        ? { page: current.page, box: current.box }
+        : null
+
   const barHandlers = bar && {
     anchorRect: bar.kind === 'selection' ? bar.sel.endRect : bar.rect,
     current,
@@ -309,6 +320,23 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       closeBar()
       setNote({ id, rect })
     },
+    onCopyImage: barArea
+      ? () => {
+          const { page, box } = barArea
+          const png = doc.renderCrop(page, box, IMAGE_MAX_EDGE_PX).then((r) => r.blob)
+          copyImage(png, `${title} p${page}.png`).then(
+            (how) => showToast(how === 'copied' ? 'Image copied' : 'Image saved'),
+            () => showToast('Could not copy'),
+          )
+          closeBar()
+        }
+      : undefined,
+    onToNotes: barArea
+      ? () => {
+          toNotes(barArea.page, barArea.box)
+          closeBar()
+        }
+      : undefined,
     onCopy: barText
       ? () => {
           copyText(barText).then(() => showToast('Copied'), () => showToast('Could not copy'))

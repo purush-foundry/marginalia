@@ -257,6 +257,22 @@ export function useAreaSelect(
       sink.emit({ page: d.page, boxes: [box], text, endRect, kind: 'area' })
     }
 
+    // Armed: the next primary-button pointer of any type starts the box before the ink layer or text selection sees it.
+    const onArmedPointerDown = (e: PointerEvent) => {
+      if (!live.current.props.areaSelectArmed.peek() || e.button !== 0 || flags.pinching) return
+      const target = e.target as Element
+      const pageEl = target.closest<HTMLElement>('.mg-page')
+      if (!pageEl || target.closest('.mg-link')) return
+      e.stopPropagation()
+      e.preventDefault()
+      if (state.drag && !(e.pointerType === 'pen' && state.pointerType === 'touch')) return
+      cancelLongPress()
+      state.pointerType = e.pointerType
+      if (areaShown.current) setArea(null)
+      sink.clear('area')
+      start(e.pointerId, e.clientX, e.clientY, pageEl)
+    }
+
     const onPointerDown = (e: PointerEvent) => {
       flags.areaPointer = null
       if (penIgnored(live, e)) return
@@ -267,11 +283,6 @@ export function useAreaSelect(
       if (target.closest('.mg-link')) return
       const pageEl = target.closest<HTMLElement>('.mg-page')
       if (!pageEl || flags.pinching) return
-      if (live.current.props.areaSelectArmed.peek() && e.button === 0) {
-        e.preventDefault()
-        start(e.pointerId, e.clientX, e.clientY, pageEl)
-        return
-      }
       if (e.pointerType !== 'touch' || !e.isPrimary || target.closest('.textLayer span')) return
       const { clientX, clientY, pointerId } = e
       longPress = {
@@ -319,6 +330,7 @@ export function useAreaSelect(
       if (target.closest('.mg-page') && !target.closest('.textLayer span')) e.preventDefault()
     }
 
+    el.addEventListener('pointerdown', onArmedPointerDown, { capture: true })
     el.addEventListener('pointerdown', onPointerDown)
     el.addEventListener('pointermove', onPointerMove)
     document.addEventListener('pointerup', onPointerEnd)
@@ -328,6 +340,7 @@ export function useAreaSelect(
     el.addEventListener('contextmenu', onContextMenu)
     return () => {
       cancelLongPress()
+      el.removeEventListener('pointerdown', onArmedPointerDown, { capture: true })
       el.removeEventListener('pointerdown', onPointerDown)
       el.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerEnd)

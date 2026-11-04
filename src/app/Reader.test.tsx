@@ -1,10 +1,12 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { IMAGE_MAX_EDGE_PX } from '../config'
 import type { PdfDoc } from '../pdf/document'
 import type { ViewerHandle, ViewerProps } from '../pdf/Viewer'
 import { emptySidecar, type Sidecar, type TextHighlight } from '../types'
 import { Reader } from './Reader'
+import { toast } from './ui'
 
 const viewer: { props: ViewerProps | null } = { props: null }
 const clearSelection = vi.fn()
@@ -150,6 +152,31 @@ describe('Reader', () => {
     })
     expect(button('Ask')).toBeNull()
     expect(clearSelection).toHaveBeenCalledOnce()
+  })
+
+  test('an area selection offers Copy image and To notes; Copy image renders the crop', async () => {
+    const png = new Blob(['png'], { type: 'image/png' })
+    doc.renderCrop.mockResolvedValue({ blob: png, mediaType: 'image/png' })
+    const write = vi.fn(async () => undefined)
+    vi.stubGlobal('ClipboardItem', class {})
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { write } })
+    try {
+      const props = await open()
+      const box = { x: 0.1, y: 0.2, w: 0.3, h: 0.3 }
+      await act(async () =>
+        props.onSelection({ page: 1, boxes: [box], text: 'words', endRect: new DOMRect(100, 300, 40, 16), kind: 'area' }),
+      )
+      expect(button('To notes')).not.toBeNull()
+      expect(button('Copy')).toBeNull()
+      await act(async () => button('Copy image')!.click())
+
+      expect(doc.renderCrop).toHaveBeenCalledWith(1, box, IMAGE_MAX_EDGE_PX)
+      await vi.waitFor(() => expect(write).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(toast.value).toBe('Image copied'))
+      expect(button('Copy image')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   test('closing the reader flushes pending writes and releases the document', async () => {

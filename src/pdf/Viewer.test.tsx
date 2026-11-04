@@ -65,6 +65,13 @@ function pointer(name: string, target: Element, init: PointerEventInit) {
   )
 }
 
+function textSpan(): HTMLSpanElement {
+  const span = document.createElement('span')
+  span.textContent = 'text'
+  root.querySelector('.mg-page[data-page="1"] .textLayer')!.append(span)
+  return span
+}
+
 beforeEach(() => {
   root = document.createElement('div')
   document.body.append(root)
@@ -186,6 +193,55 @@ describe('Viewer', () => {
     expect(root.querySelector('.mg-area')).toBeNull()
     expect(document.getSelection()!.rangeCount).toBe(0)
     expect(props.onSelection).toHaveBeenLastCalledWith(null)
+  })
+
+  it('an armed Snip takes the next pen stroke as a box even in the Pen tool', async () => {
+    const onAddStroke = vi.fn()
+    const props = mount({
+      areaSelectArmed: signal(true),
+      penDrawing: signal(true),
+      pageOverlay: (page, w, h) => (
+        <InkLayer page={page} cssW={w} cssH={h} strokes={[]} onAddStroke={onAddStroke} onEraseStroke={() => {}} />
+      ),
+    })
+    const span = textSpan()
+    pointer('pointerdown', span, { pointerType: 'pen', pointerId: 7, clientX: 60, clientY: 80, buttons: 1 })
+    act(() => pointer('pointermove', span, { pointerType: 'pen', pointerId: 7, clientX: 300, clientY: 400, buttons: 1 }))
+    await act(async () => pointer('pointerup', span, { pointerType: 'pen', pointerId: 7, clientX: 300, clientY: 400, buttons: 0 }))
+    await vi.waitFor(() =>
+      expect(props.onSelection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ kind: 'area', boxes: [{ x: 0.1, y: 0.1, w: 0.4, h: 0.4 }] }),
+      ),
+    )
+    expect(onAddStroke).not.toHaveBeenCalled()
+  })
+
+  it('an armed Snip takes a finger drag', async () => {
+    const props = mount({ areaSelectArmed: signal(true) })
+    const span = textSpan()
+    pointer('pointerdown', span, { pointerType: 'touch', pointerId: 3, clientX: 60, clientY: 80, buttons: 1 })
+    act(() => pointer('pointermove', span, { pointerType: 'touch', pointerId: 3, clientX: 300, clientY: 400, buttons: 1 }))
+    await act(async () => pointer('pointerup', span, { pointerType: 'touch', pointerId: 3, clientX: 300, clientY: 400, buttons: 0 }))
+    await vi.waitFor(() =>
+      expect(props.onSelection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ kind: 'area', boxes: [{ x: 0.1, y: 0.1, w: 0.4, h: 0.4 }] }),
+      ),
+    )
+  })
+
+  it('a pen landing during a touch-started snip takes the box over', async () => {
+    const props = mount({ areaSelectArmed: signal(true), penDrawing: signal(true) })
+    const span = textSpan()
+    pointer('pointerdown', span, { pointerType: 'touch', pointerId: 3, clientX: 10, clientY: 10, buttons: 1 })
+    act(() => pointer('pointermove', span, { pointerType: 'touch', pointerId: 3, clientX: 500, clientY: 700, buttons: 1 }))
+    pointer('pointerdown', span, { pointerType: 'pen', pointerId: 7, clientX: 60, clientY: 80, buttons: 1 })
+    act(() => pointer('pointermove', span, { pointerType: 'pen', pointerId: 7, clientX: 300, clientY: 400, buttons: 1 }))
+    await act(async () => pointer('pointerup', span, { pointerType: 'pen', pointerId: 7, clientX: 300, clientY: 400, buttons: 0 }))
+    await vi.waitFor(() =>
+      expect(props.onSelection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ kind: 'area', boxes: [{ x: 0.1, y: 0.1, w: 0.4, h: 0.4 }] }),
+      ),
+    )
   })
 
   it('flushes a pending reading position on unmount', () => {
