@@ -36,3 +36,25 @@
 .ink-layer[data-finger-draws] {
   touch-action: none;
 }
+
+/* Pen strip: one line in the toolbar, three rows in the tool puck popover. */
+.mg-penstrip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mg-penstrip.mg-penstrip-stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 0;
+}
+
+.mg-penstrip-dot {
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  background: currentColor;
+}

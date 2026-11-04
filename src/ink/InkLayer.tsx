@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
-import { simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { inkOutlinePath, simplifyPoints, strokeHitsPoint } from './geometry.ts'
 import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 import './ink.css'
 
@@ -29,6 +29,7 @@ interface LiveStroke {
   color: string
   width: number
   points: number[]
+  predicted: number[]
   left: number
   top: number
   w: number
@@ -59,12 +60,6 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
-// True when the stroke's recorded pressure varies, i.e. it came from a pressure-sensing pen.
-function pressureVaries(points: number[]): boolean {
-  for (let i = 5; i < points.length; i += 3) if (points[i] !== points[2]) return true
-  return false
-}
-
 // Normalised points with y rescaled to page-width units so distances are isotropic.
 function widthUnits(points: number[], aspect: number): number[] {
   const out = points.slice()
@@ -73,14 +68,10 @@ function widthUnits(points: number[], aspect: number): number[] {
 }
 
 function StrokePath({ stroke, cssW, cssH }: { stroke: InkStroke; cssW: number; cssH: number }) {
-  const d = useMemo(() => {
-    const px = stroke.points.slice()
-    for (let i = 0; i + 1 < px.length; i += 3) {
-      px[i] *= cssW
-      px[i + 1] *= cssH
-    }
-    return strokeOutlinePath(px, stroke.width * cssW, pressureVaries(stroke.points))
-  }, [stroke.points, stroke.width, cssW, cssH])
+  const d = useMemo(
+    () => inkOutlinePath(stroke.points, stroke.width, cssW, cssH),
+    [stroke.points, stroke.width, cssW, cssH],
+  )
   return <path d={d} fill={stroke.color} />
 }
 
@@ -97,6 +88,7 @@ export function InkLayer(props: InkLayerProps) {
     const parent = root?.parentElement
     if (!root || !parent) return
     let live: LiveStroke | null = null
+    let frameId = 0
     let tapStart = 0
     let tapValid = false
     let tapOrigin = new Map<number, [number, number]>()
@@ -110,7 +102,7 @@ export function InkLayer(props: InkLayerProps) {
       }
     }
 
-    const openCanvas = (color: string, widthPx: number): CanvasRenderingContext2D | null => {
+    const openCanvas = (): CanvasRenderingContext2D | null => {
       const canvas = canvasRef.current
       if (!canvas) return null
       const { cssW, cssH } = propsRef.current
@@ -120,14 +112,28 @@ export function InkLayer(props: InkLayerProps) {
       const ctx = canvas.getContext('2d')
       if (!ctx) return null
       ctx.setTransform(scale, 0, 0, scale, 0, 0)
-      ctx.strokeStyle = color
-      ctx.lineWidth = widthPx
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
       return ctx
     }
 
+    // Fills the live stroke's outline, predicted samples included, on the live canvas.
+    const frame = () => {
+      frameId = 0
+      const s = live
+      if (!s?.ctx) return
+      const { cssW, cssH } = propsRef.current
+      const pts = simplifyPoints(s.points, SIMPLIFY_PX / cssW).concat(s.predicted)
+      s.ctx.clearRect(0, 0, cssW, cssH)
+      s.ctx.fillStyle = s.color
+      s.ctx.fill(new Path2D(inkOutlinePath(pts, s.width, cssW, cssH)))
+    }
+
+    const schedule = () => {
+      if (!frameId) frameId = requestAnimationFrame(frame)
+    }
+
     const discard = () => {
+      if (frameId) cancelAnimationFrame(frameId)
+      frameId = 0
       live = null
       clearCanvas()
     }
@@ -160,23 +166,21 @@ export function InkLayer(props: InkLayerProps) {
       }
     }
 
+    // Normalised [x, y, pressure] of a sample on the live stroke's page.
+    const sampleOf = (s: LiveStroke, e: PointerEvent): [number, number, number] => [
+      clamp01((e.clientX - s.left) / s.w),
+      clamp01((e.clientY - s.top) / s.h),
+      s.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5,
+    ]
+
     const addSample = (s: LiveStroke, e: PointerEvent) => {
-      const x = clamp01((e.clientX - s.left) / s.w)
-      const y = clamp01((e.clientY - s.top) / s.h)
+      const [x, y, pressure] = sampleOf(s, e)
       if (s.tool === 'eraser') {
         eraseAt(s, x, y)
         return
       }
-      const pressure = s.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5
-      const n = s.points.length
       s.points.push(x, y, pressure)
-      if (s.ctx && n >= 3) {
-        const { cssW, cssH } = propsRef.current
-        s.ctx.beginPath()
-        s.ctx.moveTo(s.points[n - 3] * cssW, s.points[n - 2] * cssH)
-        s.ctx.lineTo(x * cssW, y * cssH)
-        s.ctx.stroke()
-      }
+      schedule()
     }
 
     const isLive = (e: PointerEvent) => live !== null && e.pointerId === live.pointerId
@@ -238,12 +242,13 @@ export function InkLayer(props: InkLayerProps) {
         color,
         width,
         points: [],
+        predicted: [],
         left: rect.left,
         top: rect.top,
         w: rect.width || cssW,
         h: rect.height || cssH,
         erased: new Set(),
-        ctx: tool === 'pen' ? openCanvas(color, width * cssW) : null,
+        ctx: tool === 'pen' ? openCanvas() : null,
       }
       addSample(live, e)
     }
@@ -256,7 +261,10 @@ export function InkLayer(props: InkLayerProps) {
       }
       if (!live || !isLive(e)) return
       swallow(e)
-      for (const sample of samplesOf(e)) addSample(live, sample)
+      const s = live
+      const predicted = typeof e.getPredictedEvents === 'function' ? e.getPredictedEvents() : []
+      s.predicted = predicted.flatMap((p) => sampleOf(s, p))
+      for (const sample of samplesOf(e)) addSample(s, sample)
     }
 
     const onPointerUp = (e: PointerEvent) => {

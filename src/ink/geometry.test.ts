@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { inkOutlinePath, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
 
 function pathNumbers(d: string): number[] {
   return (d.match(/-?\d+(\.\d+)?/g) ?? []).map(Number)
@@ -71,5 +71,13 @@ describe('simplifyPoints', () => {
     expect(simplifyPoints([0, 0, 0.5, 0.0001, 0, 0.5, 0.0002, 0, 0.5], 0.01)).toEqual([
       0, 0, 0.5, 0.0002, 0, 0.5,
     ])
+  })
+})
+
+describe('inkOutlinePath', () => {
+  it('scales normalised points to CSS px', () => {
+    expect(inkOutlinePath([0.1, 0.1, 0.5, 0.5, 0.5, 0.6], 0.01, 200, 400)).toBe(
+      strokeOutlinePath([20, 40, 0.5, 100, 200, 0.6], 2, true),
+    )
   })
 })

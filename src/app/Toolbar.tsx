@@ -1,10 +1,9 @@
 // Reader toolbar: back, title, area select, pen strip or Draw latch, undo/redo, night, sidebar, threads, export.
 import type { Signal } from '@preact/signals'
 import type { AnnotationStore } from '../annot/store'
-import { mouseDraws, penColor, penTool, type PenTool } from '../ink/tools'
+import { mouseDraws, penTool } from '../ink/tools'
+import { PenStrip } from '../ink/PenStrip'
 import { Icon, type IconName } from './icons'
-
-export const PEN_COLORS = ['#d33a2c', '#1c1c1a', '#2f6fed', '#1f9d55'] as const
 
 export interface ToolbarProps {
   title: string
@@ -35,42 +34,6 @@ function ToolButton(props: { icon: IconName; label: string; pressed?: boolean; d
     >
       <Icon name={props.icon} />
     </button>
-  )
-}
-
-const TOOLS: Array<{ tool: PenTool; icon: IconName; label: string }> = [
-  { tool: 'pen', icon: 'pen', label: 'Pen' },
-  { tool: 'eraser', icon: 'eraser', label: 'Eraser' },
-  { tool: 'select', icon: 'select', label: 'Select' },
-]
-
-function PenStrip({ withSelect }: { withSelect: boolean }) {
-  return (
-    <span class="mg-penstrip" role="group" aria-label="Pen tools">
-      {TOOLS.filter((t) => withSelect || t.tool !== 'select').map((t) => (
-        <ToolButton
-          key={t.tool}
-          icon={t.icon}
-          label={t.label}
-          pressed={penTool.value === t.tool}
-          onClick={() => (penTool.value = t.tool)}
-        />
-      ))}
-      {PEN_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          class="btn mg-tool mg-swatch"
-          aria-label={`Ink ${c}`}
-          aria-pressed={penColor.value === c}
-          style={{ '--swatch': c }}
-          onClick={() => {
-            penColor.value = c
-            if (penTool.value !== 'pen') penTool.value = 'pen'
-          }}
-        />
-      ))}
-    </span>
   )
 }
 

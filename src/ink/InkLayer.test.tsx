@@ -5,7 +5,7 @@ import type { InkStroke } from '../types.ts'
 import { InkLayer, type InkLayerProps } from './InkLayer.tsx'
 import { fingerDraws, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 
-// happy-dom's PointerEvent honours pointerType, pressure and coalescedEvents from the init dict.
+// happy-dom's PointerEvent honours pointerType, pressure, coalescedEvents and predictedEvents from the init dict.
 interface P {
   x: number
   y: number
@@ -13,6 +13,7 @@ interface P {
   id?: number
   pressure?: number
   coalesced?: { x: number; y: number; pressure?: number }[]
+  predicted?: { x: number; y: number; pressure?: number }[]
 }
 
 function pointer(name: string, p: P): PointerEvent {
@@ -32,6 +33,7 @@ function pointer(name: string, p: P): PointerEvent {
   return new PointerEvent(name, {
     ...init(p),
     coalescedEvents: p.coalesced?.map((q) => new PointerEvent(name, init(q))),
+    predictedEvents: p.predicted?.map((q) => new PointerEvent(name, init(q))),
   })
 }
 
@@ -181,6 +183,59 @@ describe('InkLayer pen', () => {
     expect(paths).toHaveLength(1)
     expect(paths[0].getAttribute('fill')).toBe('#00f')
     expect(paths[0].getAttribute('d')).toMatch(/^M/)
+  })
+})
+
+describe('InkLayer live render', () => {
+  let paths: string[]
+  let frames: FrameRequestCallback[]
+  const ctx = { setTransform: vi.fn(), clearRect: vi.fn(), fill: vi.fn(), fillStyle: '' }
+  const flush = () => frames.splice(0).forEach((cb) => cb(0))
+
+  beforeEach(() => {
+    paths = []
+    frames = []
+    vi.stubGlobal(
+      'Path2D',
+      class {
+        constructor(d: string) {
+          paths.push(d)
+        }
+      },
+    )
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+    ctx.fill.mockClear()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('fills the live stroke once per frame with the outline the committed stroke gets', async () => {
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.3 }))
+    text.dispatchEvent(pointer('pointermove', { x: 60, y: 120, pressure: 0.5 }))
+    text.dispatchEvent(pointer('pointermove', { x: 100, y: 200, pressure: 0.6 }))
+    expect(frames).toHaveLength(1)
+    flush()
+    expect(ctx.fill).toHaveBeenCalledTimes(1)
+    const lastLive = paths.at(-1)!
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200, pressure: 0 }))
+    await mount({ strokes: added })
+    expect(layer.querySelector('svg path')!.getAttribute('d')).toBe(lastLive)
+  })
+
+  it('draws predicted samples live but never stores them', async () => {
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.3 }))
+    text.dispatchEvent(
+      pointer('pointermove', { x: 100, y: 200, pressure: 0.6, predicted: [{ x: 180, y: 360, pressure: 0.6 }] }),
+    )
+    flush()
+    const predictedFrame = paths.at(-1)!
+    text.dispatchEvent(pointer('pointerup', { x: 100, y: 200, pressure: 0 }))
+    expect(added[0].points).toEqual([0.1, 0.1, 0.3, 0.5, 0.5, 0.6])
+    await mount({ strokes: added })
+    expect(layer.querySelector('svg path')!.getAttribute('d')).not.toBe(predictedFrame)
   })
 })
 

@@ -33,6 +33,22 @@ export function strokeOutlinePath(points: number[], widthPx: number, pressureIsR
   return d.trimEnd() + ' Z'
 }
 
+// True when the stroke's recorded pressure varies, i.e. it came from a pressure-sensing pen.
+export function pressureVaries(points: number[]): boolean {
+  for (let i = 5; i < points.length; i += 3) if (points[i] !== points[2]) return true
+  return false
+}
+
+// Outline of a stroke with normalised points and width, as an SVG path in CSS px.
+export function inkOutlinePath(points: number[], width: number, cssW: number, cssH: number): string {
+  const px = points.slice()
+  for (let i = 0; i + 1 < px.length; i += 3) {
+    px[i] *= cssW
+    px[i + 1] *= cssH
+  }
+  return strokeOutlinePath(px, width * cssW, pressureVaries(points))
+}
+
 function segmentDistanceSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax
   const dy = by - ay
