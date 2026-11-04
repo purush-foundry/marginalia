@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { smoothStrokePoints } from './geometry.ts'
 import { adjustShape, fitShape } from './shapes.ts'
 
 // Hand-drawn style samples along a polyline: one every `step` units, jittered, pressure varying.
@@ -34,6 +35,35 @@ function expectCorners(points: number[], corners: [number, number][], tol = 3) {
   }
 }
 
+// The samples where the path turns, plus both ends.
+function vertices(points: number[]): [number, number][] {
+  const p = xy(points)
+  const out = [p[0]]
+  for (let i = 1; i + 1 < p.length; i++) {
+    const [ux, uy, vx, vy] = [p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1], p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]]
+    if (Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)) > 1e-6) out.push(p[i])
+  }
+  return [...out, p[p.length - 1]]
+}
+
+// Largest gap between consecutive samples.
+function maxGap(points: number[]): number {
+  const p = xy(points)
+  return Math.max(...p.slice(1).map(([x, y], i) => Math.hypot(x - p[i][0], y - p[i][1])))
+}
+
+// Distance from a point to the polyline through the given vertices.
+function distToPolyline([x, y]: [number, number], v: [number, number][]): number {
+  let best = Infinity
+  for (let i = 1; i < v.length; i++) {
+    const [[ax, ay], [bx, by]] = [v[i - 1], v[i]]
+    const len2 = (bx - ax) ** 2 + (by - ay) ** 2
+    const t = len2 ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / len2)) : 0
+    best = Math.min(best, Math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay)))
+  }
+  return best
+}
+
 function expectClosed(points: number[]) {
   expect(points.slice(-3)).toEqual(points.slice(0, 3))
 }
@@ -58,7 +88,7 @@ test('a closed loop without corners fits an ellipse', () => {
   expect(new Set(pressures(shape.points))).toEqual(new Set([0.5]))
 })
 
-test('a closed stroke with four corners fits a rectangle of 5 samples', () => {
+test('a closed stroke with four corners fits a rectangle of 4 corners with samples every 2 units', () => {
   const corners: [number, number][] = [
     [10, 10],
     [110, 10],
@@ -67,7 +97,8 @@ test('a closed stroke with four corners fits a rectangle of 5 samples', () => {
   ]
   const shape = fitShape(jittered([...corners, corners[0]]))!
   expect(shape.kind).toBe('rectangle')
-  expect(shape.points).toHaveLength(5 * 3)
+  expect(vertices(shape.points)).toHaveLength(5)
+  expect(maxGap(shape.points)).toBeLessThanOrEqual(2)
   expectClosed(shape.points)
   expectCorners(shape.points, corners)
   expect(shape.anchor[0]).toBeCloseTo(60, 0)
@@ -76,7 +107,7 @@ test('a closed stroke with four corners fits a rectangle of 5 samples', () => {
   for (const overshoot of [0, 10, 20]) {
     const fromEdge = fitShape(jittered([[60, 10], ...corners.slice(1), corners[0], [60 + overshoot, 10]]))!
     expect(fromEdge.kind).toBe('rectangle')
-    expect(fromEdge.points).toHaveLength(5 * 3)
+    expect(vertices(fromEdge.points)).toHaveLength(5)
     expectCorners(fromEdge.points, corners)
   }
 })
@@ -90,7 +121,8 @@ test('a closed stroke with three corners fits a triangle', () => {
   for (const overshoot of [0, 10, 20]) {
     const shape = fitShape(jittered([[50, 0], ...corners, [50 + overshoot, 0]]))!
     expect(shape.kind).toBe('triangle')
-    expect(shape.points).toHaveLength(4 * 3)
+    expect(vertices(shape.points)).toHaveLength(4)
+    expect(maxGap(shape.points)).toBeLessThanOrEqual(2)
     expectClosed(shape.points)
     expectCorners(shape.points, corners)
   }
@@ -115,8 +147,9 @@ test('a straight stroke ending in a hook fits an arrow', () => {
   ])
   const shape = fitShape(samples)!
   expect(shape.kind).toBe('arrow')
-  const [tail, tip, barbA, tip2, barbB] = xy(shape.points)
-  expect(xy(shape.points)).toHaveLength(5)
+  const [tail, tip, barbA, tip2, barbB] = vertices(shape.points)
+  expect(vertices(shape.points)).toHaveLength(5)
+  expect(maxGap(shape.points)).toBeLessThanOrEqual(2)
   expect(tail).toEqual([samples[0], samples[1]])
   expect(tip2).toEqual(tip)
   expectCorners(shape.points, [[100, 50]])
@@ -130,6 +163,28 @@ test('a straight stroke ending in a hook fits an arrow', () => {
   expect(turns[0]).toBeCloseTo(-turns[1], 6)
   expect(Math.abs(turns[0])).toBeCloseTo(Math.PI / 6, 6)
   expect(shape.anchor).toEqual(tail)
+})
+
+test('a snapped 150-unit rectangle renders with straight edges', () => {
+  const corners: [number, number][] = [
+    [10, 10],
+    [160, 10],
+    [160, 160],
+    [10, 160],
+  ]
+  const shape = fitShape(jittered([[85, 10], ...corners.slice(1), corners[0], [85, 10]]))!
+  expect(shape.kind).toBe('rectangle')
+  const edges = vertices(shape.points)
+  const drift = smoothStrokePoints(shape.points).map(([x, y]) => distToPolyline([x, y], edges))
+  expect(Math.max(...drift)).toBeLessThan(1)
+})
+
+test('a snapped arrow renders with a straight shaft and barbs', () => {
+  const shape = fitShape(jittered([[0, 50], [200, 50], [180, 35]]))!
+  expect(shape.kind).toBe('arrow')
+  const edges = vertices(shape.points)
+  const drift = smoothStrokePoints(shape.points).map(([x, y]) => distToPolyline([x, y], edges))
+  expect(Math.max(...drift)).toBeLessThan(1)
 })
 
 test('a scribble fits nothing', () => {

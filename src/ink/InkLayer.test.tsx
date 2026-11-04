@@ -506,9 +506,14 @@ describe('InkLayer live render', () => {
       draw(text, along([[60, 40], [140, 40], [140, 120], [40, 120], [40, 40], [60, 40]], 2))
       vi.advanceTimersByTime(500)
       flush()
-      const rectangle = [140, 40, 140, 120, 40, 120, 40, 40, 140, 40].flatMap((v, i) =>
-        i % 2 === 0 ? [v / 200] : [v / 400, 0.5],
-      )
+      const corners = [[140, 40], [140, 120], [40, 120], [40, 40], [140, 40]]
+      const px: number[][] = [corners[0]]
+      for (let i = 1; i < corners.length; i++) {
+        const [[ax, ay], [bx, by]] = [corners[i - 1], corners[i]]
+        const n = Math.ceil(Math.hypot(bx - ax, by - ay) / 2)
+        for (let k = 1; k <= n; k++) px.push(k === n ? [bx, by] : [ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n])
+      }
+      const rectangle = px.flatMap(([x, y]) => [x / 200, y / 400, 0.5])
       expect(paths.at(-1)).toBe(highlighterPath(rectangle, 200, 400))
       text.dispatchEvent(pointer('pointerup', { x: 60, y: 40 }))
       expect(added).toHaveLength(1)

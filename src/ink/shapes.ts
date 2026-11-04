@@ -115,8 +115,19 @@ function centre(pts: Pt[]): Pt {
   return [(x0 + x1) / 2, (y0 + y1) / 2]
 }
 
+// The polyline with each segment split into equal pieces no longer than `step`; every vertex is kept.
+function densify(pts: Pt[], step: number): Pt[] {
+  const out: Pt[] = [pts[0]]
+  for (let i = 1; i < pts.length; i++) {
+    const [a, b] = [pts[i - 1], pts[i]]
+    const n = Math.max(1, Math.ceil(dist(a, b) / step))
+    for (let k = 1; k <= n; k++) out.push(k === n ? b : [a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n])
+  }
+  return out
+}
+
 function polygon(kind: ShapeKind, at: Pt[]): Shape {
-  return { kind, points: flat([...at, at[0]]), anchor: centre(at) }
+  return { kind, points: flat(densify([...at, at[0]], RESAMPLE)), anchor: centre(at) }
 }
 
 function ellipse(pts: Pt[]): Shape {
@@ -127,7 +138,7 @@ function ellipse(pts: Pt[]): Shape {
     const a = (k / (ELLIPSE_SAMPLES - 1)) * 2 * Math.PI
     ring.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)])
   }
-  return polygon('ellipse', ring)
+  return { kind: 'ellipse', points: flat([...ring, ring[0]]), anchor: [cx, cy] }
 }
 
 // Arrow along tail→tip with two barbs BARB of the shaft long at ±BARB_ANGLE, drawn tail, tip, barb, tip, barb.
@@ -138,7 +149,7 @@ function arrow(tail: Pt, tip: Pt): Shape {
     tip[0] + BARB * shaft * Math.cos(back + side * BARB_ANGLE),
     tip[1] + BARB * shaft * Math.sin(back + side * BARB_ANGLE),
   ]
-  return { kind: 'arrow', points: flat([tail, tip, barb(1), tip, barb(-1)]), anchor: tail }
+  return { kind: 'arrow', points: flat(densify([tail, tip, barb(1), tip, barb(-1)], RESAMPLE)), anchor: tail }
 }
 
 /** The shape a stroke was meant to be, or null when it is too short or nothing fits. */
