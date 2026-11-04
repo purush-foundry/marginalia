@@ -70,9 +70,22 @@
   text-align: left;
 }
 
+/* Thumbnail column beside the scroller. */
+.mg-nb-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.mg-nb-body > .mg-thumbs .mg-thumb-svg {
+  width: 120px;
+  height: auto;
+}
+
 .mg-nb-scroller {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -107,10 +120,6 @@
   pointer-events: none;
 }
 
-.mg-nb-figure {
-  position: absolute;
-}
-
 .mg-nb-page > svg.ink-pen,
 .mg-nb-page > svg.ink-hl {
   position: absolute;
@@ -129,27 +138,6 @@
 
 .mg-nb-chip-slot {
   position: absolute;
-}
-
-.mg-nb-image {
-  display: block;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-}
-
-.mg-nb-text {
-  position: absolute;
-  margin: 0;
-  font-family: var(--font);
-  line-height: 1.35;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .mg-nb-chip {

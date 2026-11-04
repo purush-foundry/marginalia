@@ -7,16 +7,19 @@ import { TOOL_MENU_LONG_PRESS_MS, ToolMenu } from './ToolMenu.tsx'
 import {
   DEFAULT_ERASER_SETTINGS,
   DEFAULT_HIGHLIGHTER_SETTINGS,
+  DEFAULT_LASSO_SETTINGS,
   DEFAULT_PALETTES,
   DEFAULT_PEN_SETTINGS,
   eraserSettings,
   highlighterSettings,
+  lassoSettings,
   nightInk,
   palettes,
   penSettings,
   previousTool,
   selectColor,
   setTool,
+  textSize,
   tool,
   type Tool,
 } from './tools.ts'
@@ -118,6 +121,8 @@ beforeEach(() => {
   penSettings.value = DEFAULT_PEN_SETTINGS
   highlighterSettings.value = DEFAULT_HIGHLIGHTER_SETTINGS
   eraserSettings.value = DEFAULT_ERASER_SETTINGS
+  lassoSettings.value = DEFAULT_LASSO_SETTINGS
+  textSize.value = 'm'
   nightInk.value = false
   settings.value = { ...DEFAULT_SETTINGS }
   act(() => render(<ToolMenu tools={['lasso', 'pen', 'highlighter', 'eraser']} />, host))
@@ -254,6 +259,53 @@ describe('ToolMenu', () => {
     expect(straight.getAttribute('aria-checked')).toBe('false')
     click(straight)
     expect(highlighterSettings.value.straight).toBe(true)
+  })
+
+  it('the text panel offers colours and S · M · L; the pen panel Draw and hold; the lasso panel Rectangular', () => {
+    act(() => render(<ToolMenu tools={['lasso', 'pen', 'highlighter', 'eraser', 'text']} />, host))
+    select('text')
+    expand()
+    const labels = [...panel()!.querySelectorAll('.mg-toolmenu-tool')].map((b) => b.getAttribute('aria-label'))
+    expect(labels).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Text'])
+    expect(byLabel('Text').getAttribute('aria-pressed')).toBe('true')
+    expect(colorSlots().map((b) => b.style.getPropertyValue('--swatch'))).toEqual(DEFAULT_PALETTES.text.colors)
+    expect(widthSlots()).toHaveLength(0)
+    expect(byLabel('Add colour')).not.toBeNull()
+    click(byLabel('Colour 2'))
+    expect(palettes.value.text.colorIndex).toBe(1)
+    click(byLabel('Colour 2'))
+    expect(byLabel('Edit colour')).not.toBeNull()
+    click(byLabel('#2f9e9e'))
+    expect(palettes.value.text.colors[1]).toBe('#2f9e9e')
+    expect(palettes.value.pen.colors).toEqual(DEFAULT_PALETTES.pen.colors)
+    click(byLabel('Add colour'))
+    expect(palettes.value.text.colors).toHaveLength(4)
+
+    const sizes = host.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Text size"]')!
+    expect([...sizes.querySelectorAll('[role="radio"]')].map((r) => [r.textContent, r.getAttribute('aria-checked')])).toEqual([
+      ['S', 'false'],
+      ['M', 'true'],
+      ['L', 'false'],
+    ])
+    click(byText('radio', 'L'))
+    expect(textSize.value).toBe('l')
+    expect(host.querySelector('[role="switch"]')).toBeNull()
+
+    click(byLabel('Pen'))
+    expect(host.querySelector('[aria-label="Text size"]')).toBeNull()
+    const hold = byText('switch', 'Draw and hold')
+    expect(hold.getAttribute('aria-checked')).toBe('true')
+    click(hold)
+    expect(penSettings.value.drawAndHold).toBe(false)
+    expect(byText('switch', 'Draw and hold').getAttribute('aria-checked')).toBe('false')
+
+    click(byLabel('Lasso'))
+    expect(colorSlots()).toHaveLength(0)
+    const rect = byText('switch', 'Rectangular')
+    expect(rect.getAttribute('aria-checked')).toBe('false')
+    click(rect)
+    expect(lassoSettings.value.rect).toBe(true)
+    expect(byText('switch', 'Rectangular').getAttribute('aria-checked')).toBe('true')
   })
 
   it('tapping the selected colour slot opens the colour editor; a preset, the wheel and a HEX value set the slot', () => {

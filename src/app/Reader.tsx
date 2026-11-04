@@ -1,5 +1,5 @@
 // Reader: loads a paper and its sidecar, then wires the paper and notes panes, ink, selection bar, sidebar and Ask panel.
-import { computed, signal, useComputed, useSignal, type ReadonlySignal, type Signal } from '@preact/signals'
+import { computed, effect, signal, useComputed, useSignal, type ReadonlySignal, type Signal } from '@preact/signals'
 import type { RefObject } from 'preact'
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AskPanel } from '../ai/AskPanel'
@@ -18,11 +18,15 @@ import {
   saveSidecar,
 } from '../drive/library'
 import { notebookToMarkdown, sidecarToMarkdown } from '../export/markdown'
+import { PRESET_COLORS } from '../ink/color'
 import { InkLayer } from '../ink/InkLayer'
+import type { ItemRef, LassoItem } from '../ink/lasso'
 import { ToolMenu } from '../ink/ToolMenu'
-import { isInkTool, pageWidthMm, setTool, tool, type Tool } from '../ink/tools'
+import { isInkTool, lassoSettings, pageWidthMm, setTool, tool, type Tool } from '../ink/tools'
 import { newId, now } from '../lib/ids'
+import { copyItems } from '../notes/clipboard'
 import { IMAGE_LONG_EDGE_PX, prepareImage } from '../notes/images'
+import { LassoLayer } from '../notes/Lasso'
 import { Notebook, type NotebookHandle } from '../notes/Notebook'
 import { createNotebookStore, type NotebookStore } from '../notes/notebookStore'
 import { openPdf, type PageLink, type PdfDoc } from '../pdf/document'
@@ -54,10 +58,13 @@ interface Loaded {
 type Pane = 'paper' | 'notes'
 
 const NAV_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
-const TOOL_KEYS: Record<string, Tool> = { l: 'lasso', p: 'pen', h: 'highlighter', e: 'eraser' }
+const TOOL_KEYS: Record<string, Tool> = { l: 'lasso', p: 'pen', h: 'highlighter', e: 'eraser', t: 'text' }
 const MENU_TOOLS: readonly Tool[] = ['lasso', 'pen', 'highlighter', 'eraser']
+const NOTES_MENU_TOOLS: readonly Tool[] = [...MENU_TOOLS, 'text']
+const DUPLICATE_OFFSET = 0.02
 
 const NO_STROKES: InkStroke[] = []
+const NO_REFS: ItemRef[] = []
 const NO_THREADS: Thread[] = []
 const DEFAULT_NOTE_COLOR: HighlightColor = 'yellow'
 const NOTE_W = 320
@@ -185,6 +192,84 @@ function findQuote(pageText: PageText, quote: string): Box | undefined {
   return head ? pageText.lines.find((l) => norm(l.text).includes(head))?.box : undefined
 }
 
+// Copy of a paper stroke with each point mapped in page-width units (y times the page aspect) and its width times k.
+function mapStroke(s: InkStroke, aspect: number, f: (x: number, y: number) => [number, number], k = 1): InkStroke {
+  const points = s.points.slice()
+  for (let i = 0; i + 1 < points.length; i += 3) {
+    const [x, y] = f(points[i], points[i + 1] * aspect)
+    points[i] = x
+    points[i + 1] = y / aspect
+  }
+  return { ...s, points, width: s.width * k }
+}
+
+interface PaperLassoProps {
+  strokes: InkStroke[]
+  cssW: number
+  cssH: number
+  store: AnnotationStore
+  selection: ItemRef[]
+  onSelect(refs: ItemRef[]): void
+}
+
+/** Lasso over a paper page's ink: strokes only; presses on text, links and thread markers pass through; edits go to the annotation store. */
+function PaperLasso({ strokes, cssW, cssH, store, selection, onSelect }: PaperLassoProps) {
+  const aspect = cssH / cssW
+  const widthPoints = (s: InkStroke) => s.points.map((v, i) => (i % 3 === 1 ? v * aspect : v))
+  const items = useMemo<LassoItem[]>(() => strokes.map((s) => ({ kind: 'stroke', id: s.id, points: widthPoints(s) })), [strokes, aspect])
+  const picked = () => strokes.filter((s) => selection.some((r) => r.id === s.id))
+  const ids = () => picked().map((s) => s.id)
+  // Puts the selected ink in the notebook clipboard, in page-width units.
+  const copy = () => {
+    const list = picked().map((s) => ({
+      id: s.id, page: '', z: '', tool: s.tool ?? 'pen', pen: s.pen ?? 'fountain', color: s.color, width: s.width,
+      points: widthPoints(s), createdAt: s.createdAt, updatedAt: s.updatedAt,
+    }))
+    copyItems({ strokes: list, texts: [], images: [] }, selection)
+  }
+  return (
+    <LassoLayer
+      items={items}
+      cssW={cssW}
+      aspect={aspect}
+      rect={lassoSettings.value.rect}
+      objects={false}
+      selection={selection}
+      skip={(target) => target.closest('.textLayer span, .mg-link, .mg-thread-marker') !== null}
+      onSelect={onSelect}
+      onMove={(dx, dy, _client, done) => done && store.updateStrokes(picked().map((s) => mapStroke(s, aspect, (x, y) => [x + dx, y + dy])))}
+      onScale={(o, k, done) =>
+        done && store.updateStrokes(picked().map((s) => mapStroke(s, aspect, (x, y) => [o.x + (x - o.x) * k, o.y + (y - o.y) * k], k)))
+      }
+      menu={{
+        colors: PRESET_COLORS,
+        onCut() {
+          copy()
+          store.removeStrokes(ids())
+          onSelect([])
+        },
+        onCopy: copy,
+        onDuplicate() {
+          const t = now()
+          const copies = picked().map((s) => ({
+            ...mapStroke(s, aspect, (x, y) => [x + DUPLICATE_OFFSET, y + DUPLICATE_OFFSET]),
+            id: newId(),
+            createdAt: t,
+            updatedAt: t,
+          }))
+          store.addStrokes(copies)
+          onSelect(copies.map((s) => ({ kind: 'stroke', id: s.id })))
+        },
+        onDelete() {
+          store.removeStrokes(ids())
+          onSelect([])
+        },
+        onRecolor: (color) => store.updateStrokes(picked().map((s) => ({ ...s, color }))),
+      }}
+    />
+  )
+}
+
 function NoteEditor(props: { rect: DOMRect; initial: string; onSave(note: string): void; onCancel(): void }) {
   const [draft, setDraft] = useState(props.initial)
   const ref = useRef<HTMLDivElement>(null)
@@ -250,6 +335,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const [jumpTarget, setJumpTarget] = useState<{ page: number; box?: Box } | null>(null)
   const [notesFailed, setNotesFailed] = useState(false)
   const [notesAttempt, setNotesAttempt] = useState(0)
+  const [paperSelection, setPaperSelection] = useState<{ page: number; refs: ItemRef[] } | null>(null)
   const touchUi = s.penSeen || isIPadOS() || s.fingerDraws
   const wide = () => matches(WIDE)
   const canLayoutBoth = useMedia(WIDE)
@@ -326,6 +412,15 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const state = useRef({ bar, note, thread, sidebar })
   state.current = { bar, note, thread, sidebar }
 
+  // Clears the paper lasso selection when the tool leaves Lasso.
+  useEffect(
+    () =>
+      effect(() => {
+        if (tool.value !== 'lasso') setPaperSelection(null)
+      }),
+    [],
+  )
+
   // Opens and leaves the reader in Lasso on a device without touch UI.
   useEffect(() => {
     if (touchUi) return
@@ -353,7 +448,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       if (cur.thread) setThread(null)
       else if (cur.sidebar && !wide()) setSidebar(null)
       else if (areaArmed.value) areaArmed.value = false
-      else if (tool.peek() !== 'lasso') setTool('lasso')
+      else if (tool.peek() !== 'lasso' && !typing) setTool('lasso')
     }
     const undo = () => historyRef.current.undo()
     const redo = () => historyRef.current.redo()
@@ -590,6 +685,14 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
           </button>
         )
       })}
+      <PaperLasso
+        strokes={inksByPage.value.get(page) ?? NO_STROKES}
+        cssW={cssW}
+        cssH={cssH}
+        store={store}
+        selection={paperSelection?.page === page ? paperSelection.refs : NO_REFS}
+        onSelect={(refs) => setPaperSelection(refs.length ? { page, refs } : null)}
+      />
     </>
   )
 
@@ -680,7 +783,10 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
           {showNotes && (
             <div
               class="mg-pane mg-pane-notes"
-              onPointerDownCapture={() => (lastPane.value = 'notes')}
+              onPointerDownCapture={() => {
+                lastPane.value = 'notes'
+                setPaperSelection(null)
+              }}
               onFocusIn={() => (lastPane.value = 'notes')}
             >
               {notes ? (
@@ -695,7 +801,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               ) : (
                 <p class="mg-muted mg-notes-loading">Loading notes…</p>
               )}
-              {active === 'notes' && <ToolMenu tools={MENU_TOOLS} />}
+              {active === 'notes' && <ToolMenu tools={NOTES_MENU_TOOLS} />}
             </div>
           )}
         </div>

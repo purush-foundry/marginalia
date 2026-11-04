@@ -4,7 +4,8 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { IMAGE_MAX_EDGE_PX } from '../config'
 import type { PdfDoc } from '../pdf/document'
-import { previousTool, setTool, tool } from '../ink/tools'
+import { lassoSettings, previousTool, setTool, tool, DEFAULT_LASSO_SETTINGS } from '../ink/tools'
+import { clipboard } from '../notes/clipboard'
 import { emptyNotebook, type NotesDocV2, type TextObject } from '../notes/model'
 import type { NotebookProps } from '../notes/Notebook'
 import type { ViewerHandle, ViewerProps } from '../pdf/Viewer'
@@ -115,6 +116,8 @@ beforeEach(() => {
   settings.value = DEFAULT_SETTINGS
   tool.value = 'pen'
   previousTool.value = 'pen'
+  lassoSettings.value = DEFAULT_LASSO_SETTINGS
+  clipboard.value = null
   stubMedia(true)
   vi.clearAllMocks()
   drive.getPdfBlob.mockImplementation(async (_id: string, onProgress?: (f: number) => void) => {
@@ -676,9 +679,17 @@ describe('Reader tools', () => {
     const page = document.createElement('div')
     document.body.append(page)
     try {
-      await act(async () => render(props.pageOverlay!(1, 600, 776), page))
+      await act(async () =>
+        render(
+          <>
+            <div class="textLayer"><span>Attention</span></div>
+            {props.pageOverlay!(1, 600, 776)}
+          </>,
+          page,
+        ),
+      )
       const down = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', pointerId: 1, button: 0, buttons: 1 })
-      page.dispatchEvent(down)
+      page.querySelector('.textLayer span')!.dispatchEvent(down)
       expect(down.defaultPrevented).toBe(false)
     } finally {
       act(() => render(null, page))
@@ -732,6 +743,120 @@ describe('Reader tools', () => {
     expect(tool.value).toBe('highlighter')
     await key('Escape')
     expect(tool.value).toBe('lasso')
+  })
+
+  test('T picks the Text tool', async () => {
+    await open()
+    expect(tool.value).toBe('lasso')
+    await key('t')
+    expect(tool.value).toBe('text')
+    await key('l')
+    const field = document.createElement('textarea')
+    root.append(field)
+    await key('t', {}, field)
+    expect(tool.value).toBe('lasso')
+    field.remove()
+
+    await showNotebook()
+    await key('T')
+    expect(tool.value).toBe('text')
+    await act(async () => {
+      root.querySelector('.mg-pane-notes .mg-toolmenu-main')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+    })
+    const tools = [...root.querySelectorAll('.mg-pane-notes .mg-toolmenu [role="group"][aria-label="Tool"] button')]
+    expect(tools.map((b) => b.getAttribute('aria-label'))).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Text'])
+
+    // Esc while typing in a text box leaves the Text tool selected.
+    const box = document.createElement('div')
+    box.setAttribute('contenteditable', 'plaintext-only')
+    root.append(box)
+    await key('Escape', {}, box)
+    expect(tool.value).toBe('text')
+    box.remove()
+    await key('Escape')
+    expect(tool.value).toBe('lasso')
+  })
+
+  test('a lasso on a PDF page selects ink only and a drag starting on text still selects text', async () => {
+    const ink = (id: string, points: number[]): InkStroke => ({
+      kind: 'ink', id, page: 1, color: '#1c1c1a', width: 0.004, tool: 'pen', points, createdAt: 1, updatedAt: 1,
+    })
+    drive.loadSidecar.mockResolvedValue({
+      ...emptySidecar('p1', 'attention.pdf', 1),
+      inks: [ink('a', [0.1, 0.1, 0.5, 0.2, 0.2, 0.5]), ink('b', [0.6, 0.6, 0.5, 0.7, 0.7, 0.5])],
+    })
+    await open()
+    expect(tool.value).toBe('lasso')
+    const page = document.createElement('div')
+    document.body.append(page)
+    const overlay = () =>
+      act(async () =>
+        render(
+          <>
+            <div class="textLayer"><span>Attention</span></div>
+            <button type="button" class="mg-link" />
+            {viewer.props!.pageOverlay!(1, 600, 776)}
+          </>,
+          page,
+        ),
+      )
+    const mouse = (target: Element, type: string, x: number, y: number) => {
+      const e = new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'mouse', pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })
+      target.dispatchEvent(e)
+      return e
+    }
+    const drag = async (target: Element, points: [number, number][]) => {
+      await act(async () => {
+        mouse(target, 'pointerdown', ...points[0])
+        for (const p of points.slice(1)) mouse(target, 'pointermove', ...p)
+        mouse(target, 'pointerup', ...points[points.length - 1])
+      })
+      await overlay()
+    }
+    const live = () => lastSaved().inks.filter((s) => !s.deleted)
+    try {
+      await overlay()
+      const span = page.querySelector('.textLayer span')!
+      let down: PointerEvent | null = null
+      await act(async () => {
+        down = mouse(span, 'pointerdown', 70, 90)
+        mouse(span, 'pointermove', 300, 400)
+        mouse(span, 'pointerup', 300, 400)
+      })
+      await overlay()
+      expect(down!.defaultPrevented).toBe(false)
+      expect(page.querySelector('.mg-lasso-loop')).toBeNull()
+      expect(mouse(page.querySelector('.mg-link')!, 'pointerdown', 500, 700).defaultPrevented).toBe(false)
+      await act(async () => void mouse(page.querySelector('.mg-link')!, 'pointerup', 500, 700))
+      expect(page.querySelector('.mg-lasso-frame')).toBeNull()
+
+      await drag(page, [[40, 60], [140, 60], [140, 170], [40, 170], [40, 65]])
+      expect(page.querySelector('.mg-lasso-frame')).not.toBeNull()
+      const items = [...page.querySelectorAll('[role="menu"][aria-label="Selection"] .mg-object-menu-row > [role="menuitem"]')]
+      expect(items.map((b) => b.textContent)).toEqual(['Cut', 'Copy', 'Duplicate', 'Delete', 'Recolor'])
+
+      await drag(page, [[90, 110], [120, 150], [150, 188]])
+      const moved = live().find((s) => s.id === 'a')!
+      ;[0.2, 0.1 + 78 / 776, 0.5, 0.3, 0.2 + 78 / 776, 0.5].forEach((v, i) => expect(moved.points[i]).toBeCloseTo(v))
+      expect(live().find((s) => s.id === 'b')!.points).toEqual([0.6, 0.6, 0.5, 0.7, 0.7, 0.5])
+
+      const menuItem = (label: string) =>
+        [...page.querySelectorAll<HTMLButtonElement>('[aria-label="Selection"] [role="menuitem"]')].find((b) => b.textContent === label)!
+      await act(async () => menuItem('Copy').click())
+      expect(clipboard.value!.strokes).toHaveLength(1)
+      expect(clipboard.value!.strokes[0]).not.toHaveProperty('kind')
+      expect(clipboard.value!.strokes[0].points[1]).toBeCloseTo(0)
+      expect(clipboard.value!.h).toBeCloseTo(0.1 * 776 / 600)
+      await act(async () => menuItem('Delete').click())
+      await overlay()
+      expect(live().map((s) => s.id)).toEqual(['b'])
+      expect(page.querySelector('.mg-lasso-frame')).toBeNull()
+      await key('z', { metaKey: true })
+      expect(live().map((s) => s.id).sort()).toEqual(['a', 'b'])
+    } finally {
+      act(() => render(null, page))
+      page.remove()
+    }
   })
 
   test('paper ink uses the page width in mm and night mode puts the highlighter below the ink', async () => {

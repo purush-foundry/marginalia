@@ -1,15 +1,25 @@
+import { effect } from '@preact/signals'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { Icon } from '../app/icons.tsx'
 import { showToast } from '../app/ui.ts'
+import { PRESET_COLORS } from '../ink/color.ts'
 import { InkLayer, StrokeSvg } from '../ink/InkLayer.tsx'
-import { fingerDraws, inkDisplayColor, MM_PER_PT, penActivity, setTool, tool, type Tool } from '../ink/tools.ts'
+import type { ItemRef, LassoItem } from '../ink/lasso.ts'
+import {
+  activeColor, fingerDraws, inkDisplayColor, lassoSettings, MM_PER_PT, penActivity, setTool, textSize, tool, type Tool,
+} from '../ink/tools.ts'
 import { now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
+import { clipboard, copyItems, type Clip } from './clipboard.ts'
+import { ImageObjectView } from './ImageObject.tsx'
 import { ImageTooLargeError, prepareImage } from './images.ts'
+import { LassoLayer, type ObjectMenuProps } from './Lasso.tsx'
 import { pageLayers, type ImageObject, type NotebookStroke, type NotePage, type PageContent } from './model.ts'
 import type { NewStroke, NotebookStore } from './notebookStore.ts'
 import { PaperBackground } from './paper.tsx'
 import { TemplateSheet } from './TemplateSheet.tsx'
+import { TEXT_SIZE_PT, TextBox, textBoxAt } from './TextBox.tsx'
+import { Thumbnails } from './Thumbnails.tsx'
 import { clampZoom, NOTEBOOK_GAP_PX, pageCssWidth, PULL_ADD_PX, zoomScroll } from './viewport.ts'
 import './notebook.css'
 
@@ -28,13 +38,18 @@ const DOUBLE_TAP_MS = 300
 const DOUBLE_TAP_PX = 30
 const WHEEL_ZOOM_RATE = 0.01
 const WHEEL_COMMIT_MS = 120
-const TEXT_PT: Record<'s' | 'm' | 'l', number> = { s: 10, m: 13, l: 18 }
+const TEXT_TAP_PX = 8
+const TEXT_LINE_HEIGHT = 1.35
+const DUPLICATE_OFFSET = 0.02
+const WIDE = '(min-width: 700px)'
 const NO_CONTENT: PageContent = { strokes: [], texts: [], images: [] }
+const NO_REFS: ItemRef[] = []
 const BAR_TOOLS: readonly { tool: Tool; label: string }[] = [
   { tool: 'lasso', label: 'Lasso' },
   { tool: 'pen', label: 'Pen' },
   { tool: 'highlighter', label: 'Highlighter' },
   { tool: 'eraser', label: 'Eraser' },
+  { tool: 'text', label: 'Text' },
 ]
 
 interface PageBox {
@@ -54,6 +69,7 @@ interface Layout {
 
 type Point = { x: number; y: number }
 type Scroll = { left: number; top: number }
+type Selection = { page: string; refs: ItemRef[] }
 
 // Pages stacked a gap apart from the top and centred across the content width.
 function layoutPages(pages: NotePage[], paneW: number, zoom: number): Layout {
@@ -71,11 +87,15 @@ function layoutPages(pages: NotePage[], paneW: number, zoom: number): Layout {
   return { pages: boxes, width, height: boxes.length ? top : 0 }
 }
 
+// The page whose box is nearest the content offset y.
+function pageNear(layout: Layout, y: number): PageBox | undefined {
+  const away = (b: PageBox) => Math.max(b.top - y, y - b.top - b.h, 0)
+  return layout.pages.reduce<PageBox | undefined>((best, b) => (!best || away(b) < away(best) ? b : best), undefined)
+}
+
 // Scroll that keeps the page point under `anchor` still when the layout goes from `before` (zoom `from`) to `after` (zoom `to`).
 function anchoredScroll(scroll: Scroll, anchor: Point, before: Layout, after: Layout, from: number, to: number): Scroll {
-  const y = scroll.top + anchor.y
-  const away = (b: PageBox) => Math.max(b.top - y, y - b.top - b.h, 0)
-  const box = before.pages.reduce<PageBox | undefined>((best, b) => (!best || away(b) < away(best) ? b : best), undefined)
+  const box = pageNear(before, scroll.top + anchor.y)
   const next = box && after.pages.find((b) => b.page.id === box.page.id)
   if (!box || !next) return zoomScroll(scroll, anchor, from, to)
   const local = zoomScroll({ left: scroll.left - box.left, top: scroll.top - box.top }, anchor, from, to)
@@ -113,6 +133,41 @@ function figureBox(m: ImageObject, w: number) {
   return { left: px(m.box.x * w), top: px(m.box.y * w), width: px(m.box.w * w), height: px(m.box.w * m.aspect * w) }
 }
 
+// The page's items as the lasso sees them, bottom to top; a text box's height is estimated from its size and line count.
+function lassoItems(content: PageContent, widthMm: number): LassoItem[] {
+  return pageLayers(content).flatMap((layer): LassoItem[] => {
+    if (layer.kind === 'ink') return layer.strokes.map((s) => ({ kind: 'stroke', id: s.id, points: s.points }))
+    const { id, box } = layer.item
+    if (layer.kind === 'image') return [{ kind: 'image', id, box: { ...box, h: box.w * layer.item.aspect } }]
+    const lines = layer.item.text.split('\n').length
+    return [{ kind: 'text', id, box: { ...box, h: (lines * TEXT_SIZE_PT[layer.item.size] * MM_PER_PT * TEXT_LINE_HEIGHT) / widthMm } }]
+  })
+}
+
+// Text boxes being edited and their resize handles keep the pointer from the lasso.
+function lassoSkips(target: Element): boolean {
+  return target.closest('.mg-nb-text-handle, .mg-nb-text[contenteditable]') !== null
+}
+
+// True when the event target is a text field.
+function inTextField(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
+}
+
+// Live result of a media query.
+function useMedia(query: string): boolean {
+  const [on, setOn] = useState(() => typeof matchMedia === 'function' && matchMedia(query).matches)
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return
+    const list = matchMedia(query)
+    const update = () => setOn(list.matches)
+    update()
+    list.addEventListener('change', update)
+    return () => list.removeEventListener('change', update)
+  }, [query])
+  return on
+}
+
 function imageFiles(list: ArrayLike<File> | null | undefined): File[] {
   return Array.from(list ?? []).filter((f) => f.type.startsWith('image/'))
 }
@@ -130,20 +185,31 @@ interface PageViewProps {
   box: PageBox
   content: PageContent
   store: NotebookStore
+  /** This page's lasso selection. */
+  selection: ItemRef[]
+  editing: string | null
+  menu: ObjectMenuProps
+  onSelect(refs: ItemRef[]): void
+  onMoved(dx: number, dy: number, client: Point): void
+  onEdit(id: string): void
+  onDoneEditing(id: string): void
   onJumpToPage(page: number): void
+  scroller(): HTMLElement | null
 }
 
-/** One sheet of paper with its z-ordered ink, images and text under one input ink layer; p.N chips sit above the page. */
-function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
+/** One sheet of paper with its z-ordered ink, images and text boxes under one ink layer and the lasso; p.N chips sit above the page. */
+function PageView(props: PageViewProps) {
+  const { box, content, store, selection, editing, onSelect } = props
   const { page, index, left, top, w, h } = box
   const toPage = page.size.h / page.size.w
   const [live, setLive] = useState<Map<string, InkStroke[]> | null>(null)
   const inks = useMemo(() => content.strokes.map((s) => inkOf(s, 1 / toPage)), [content.strokes, toPage])
   const layers = useMemo(() => pageLayers(content), [content])
+  const items = useMemo(() => lassoItems(content, page.size.w), [content, page.size.w])
   const dark = page.color === 'dark'
-  const ptPx = w / (page.size.w / MM_PER_PT)
   const pos = { left: px(left), top: px(top), width: px(w), height: px(h) }
   const figures = content.images.filter((m) => m.pdfPage !== undefined)
+  const soleText = selection.length === 1 && selection[0].kind === 'text' ? selection[0].id : null
   return (
     <>
       <div class="mg-nb-page" data-page={page.id} data-color={page.color} style={pos}>
@@ -152,21 +218,33 @@ function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
           if (layer.kind === 'image') {
             const m = layer.item
             return (
-              <div key={m.id} class="mg-nb-figure" style={figureBox(m, w)}>
-                <img class="mg-nb-image" src={m.src} alt="" draggable={false} />
-              </div>
+              <ImageObjectView
+                key={m.id}
+                item={m}
+                cssW={w}
+                selected={false}
+                onSelect={() => {
+                  if (tool.peek() === 'lasso') onSelect([{ kind: 'image', id: m.id }])
+                }}
+                onChange={(b) => store.updateImage(m.id, { box: b })}
+              />
             )
           }
           if (layer.kind === 'text') {
             const t = layer.item
             return (
-              <div
+              <TextBox
                 key={t.id}
-                class="mg-nb-text"
-                style={{ left: px(t.box.x * w), top: px(t.box.y * w), width: px(t.box.w * w), fontSize: px(TEXT_PT[t.size] * ptPx), color: inkDisplayColor(t.color, dark) }}
-              >
-                {t.text}
-              </div>
+                item={{ ...t, color: inkDisplayColor(t.color, dark) }}
+                cssW={w}
+                widthMm={page.size.w}
+                editing={editing === t.id}
+                selected={soleText === t.id}
+                onEdit={() => props.onEdit(t.id)}
+                onChange={(patch) => store.updateText(t.id, patch)}
+                onDone={() => props.onDoneEditing(t.id)}
+                scroller={props.scroller}
+              />
             )
           }
           const strokes = layer.strokes.flatMap((s) => live?.get(s.id) ?? [inkOf(s, 1 / toPage)])
@@ -187,12 +265,27 @@ function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
             onLivePieces={setLive}
           />
         )}
+        {w > 0 && (
+          <LassoLayer
+            items={items}
+            cssW={w}
+            aspect={toPage}
+            rect={lassoSettings.value.rect}
+            objects={true}
+            selection={selection}
+            skip={lassoSkips}
+            onSelect={onSelect}
+            onMove={(dx, dy, client, done) => done && props.onMoved(dx, dy, client)}
+            onScale={(origin, k, done) => done && store.scaleItems(selection, origin, k)}
+            menu={props.menu}
+          />
+        )}
       </div>
       {figures.length > 0 && (
         <div class="mg-nb-chips" data-page={page.id} style={pos}>
           {figures.map((m) => (
             <div key={m.id} class="mg-nb-chip-slot" style={figureBox(m, w)}>
-              <button type="button" class="mg-nb-chip" aria-label={`Go to page ${m.pdfPage}`} onClick={() => onJumpToPage(m.pdfPage!)}>
+              <button type="button" class="mg-nb-chip" aria-label={`Go to page ${m.pdfPage}`} onClick={() => props.onJumpToPage(m.pdfPage!)}>
                 <span>p.{m.pdfPage}</span>
               </button>
             </div>
@@ -203,7 +296,7 @@ function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
   )
 }
 
-/** Lasso · Pen · Highlighter · Eraser buttons for the active tool. */
+/** Lasso · Pen · Highlighter · Eraser · Text buttons for the active tool. */
 function ToolRow() {
   const current = tool.value
   return (
@@ -225,8 +318,9 @@ function ToolRow() {
   )
 }
 
-/** The notebook pane: fixed pages on a grey canvas with pinch, double-tap and Ctrl-wheel zoom and pull-to-add. */
+/** The notebook pane: fixed pages on a grey canvas with pinch, double-tap and Ctrl-wheel zoom, pull-to-add, the lasso, text boxes and thumbnails. */
 export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -238,6 +332,15 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [armed, setArmed] = useState(false)
   const [sheetFor, setSheetFor] = useState<string | null>(null)
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [thumbs, setThumbs] = useState(false)
+  const [shownPage, setShownPage] = useState<string | null>(null)
+  const wide = useMedia(WIDE)
+  const editingRef = useRef(editing)
+  editingRef.current = editing
+  const lastPointer = useRef<{ page: string; x: number; y: number } | null>(null)
+  const textTap = useRef<{ id: number; x: number; y: number; page: HTMLElement; editing: string | null } | null>(null)
 
   const pages = store.pages.value
   const content = store.content.value
@@ -300,7 +403,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     let pinch: { ids: [number, number]; d0: number; anchor: Point; scroll: Scroll; scale: number } | null = null
     let wheel: { anchor: Point; scroll: Scroll; scale: number } | null = null
     let wheelTimer: ReturnType<typeof setTimeout> | undefined
-    let finger: { id: number; x: number; y: number; t: number; moved: boolean; endY: number | null } | null = null
+    let finger: { id: number; x: number; y: number; t: number; moved: boolean; endY: number | null; onText: boolean } | null = null
     let lastTap: { x: number; y: number; t: number } | null = null
     let pulled = false
 
@@ -364,7 +467,8 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
         pagesEl.style.transformOrigin = `${scroll.left + anchor.x}px ${scroll.top + anchor.y}px`
       } else if (down.length === 1 && !pinch && !fingerDraws.value) {
         const t = down[0]
-        finger = { id: t.identifier, x: t.clientX, y: t.clientY, t: now(), moved: false, endY: atEnd() ? t.clientY : null }
+        const onText = e.target instanceof Element && e.target.closest('.mg-nb-text') !== null
+        finger = { id: t.identifier, x: t.clientX, y: t.clientY, t: now(), moved: false, endY: atEnd() ? t.clientY : null, onText }
       }
     }
 
@@ -403,7 +507,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
         store.addPage()
         return
       }
-      if (f.moved) {
+      if (f.moved || f.onText) {
         lastTap = null
         return
       }
@@ -521,12 +625,166 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     else store.addPage(pages[pages.findIndex((p) => p.id === current) - 1]?.id ?? null)
   }
 
+  // Clears the lasso selection when the tool leaves Lasso.
+  useEffect(
+    () =>
+      effect(() => {
+        if (tool.value !== 'lasso') setSelection(null)
+      }),
+    [],
+  )
+
+  const contentOf = (page: string) => store.content.peek().get(page) ?? NO_CONTENT
+
+  // Where a paste lands: the clip's top-left at the last pointer on a page, else the clip centred on the current page.
+  const pasteTarget = (clip: Clip): { page: string; at: Point } | null => {
+    const last = lastPointer.current
+    const el = last && Array.from(pagesRef.current?.querySelectorAll<HTMLElement>('.mg-nb-page') ?? []).find((p) => p.dataset.page === last.page)
+    if (last && el) {
+      const r = el.getBoundingClientRect()
+      return { page: last.page, at: { x: (last.x - r.left) / r.width, y: (last.y - r.top) / r.width } }
+    }
+    const box = layoutRef.current.pages.find((b) => b.page.id === currentPage())
+    if (!box) return null
+    return { page: box.page.id, at: { x: 0.5 - clip.w / 2, y: box.h / box.w / 2 - clip.h / 2 } }
+  }
+
+  const paste = () => {
+    const clip = clipboard.peek()
+    const target = clip && pasteTarget(clip)
+    if (!clip || !target) return
+    const refs = store.insertClip(clip, target.page, target.at)
+    if (tool.peek() === 'lasso') setSelection({ page: target.page, refs })
+  }
+  const pasteRef = useRef(paste)
+  pasteRef.current = paste
+
+  // ⌘/Ctrl-V outside text fields pastes the in-app clipboard; a press outside the notebook hands it and the selection to the other pane.
+  useEffect(() => {
+    let inside = true
+    const onDown = (e: PointerEvent) => {
+      const target = e.target instanceof Element ? e.target : null
+      inside = !!target && !!rootRef.current?.contains(target)
+      if (!inside && !target?.closest('.mg-toolmenu')) setSelection(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (!inside || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v' || !clipboard.peek() || inTextField(e.target)) return
+      e.preventDefault()
+      pasteRef.current()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [])
+
+  // Remembers the last pointer over a page, outside the object menu, as the paste point.
+  const trackPointer = (e: PointerEvent) => {
+    const target = e.target instanceof Element ? e.target : null
+    const pageEl = target?.closest<HTMLElement>('.mg-nb-page')
+    if (pageEl?.dataset.page && !target?.closest('.mg-lasso-menu')) lastPointer.current = { page: pageEl.dataset.page, x: e.clientX, y: e.clientY }
+  }
+
+  // Moves a page's selection; a drop over another page re-parents it there with dy carried across the page tops.
+  const moveSelection = (from: string, refs: ItemRef[], dx: number, dy: number, client: Point) => {
+    const scroller = scrollerRef.current
+    const layout = layoutRef.current
+    const src = layout.pages.find((b) => b.page.id === from)
+    if (!scroller || !src) return
+    const dst = pageNear(layout, client.y - scroller.getBoundingClientRect().top + scroller.scrollTop) ?? src
+    if (dst === src) {
+      store.moveItems(refs, dx, dy)
+      return
+    }
+    store.moveItems(refs, dx, dy - (dst.top - src.top) / src.w, dst.page.id)
+    setSelection({ page: dst.page.id, refs })
+  }
+
+  const menuFor = (page: string, refs: ItemRef[]): ObjectMenuProps => ({
+    colors: PRESET_COLORS,
+    onCut() {
+      copyItems(contentOf(page), refs)
+      store.removeItems(refs)
+      setSelection(null)
+    },
+    onCopy: () => void copyItems(contentOf(page), refs),
+    onDuplicate: () => setSelection({ page, refs: store.duplicateItems(refs, DUPLICATE_OFFSET) }),
+    onDelete() {
+      store.removeItems(refs)
+      setSelection(null)
+    },
+    onRecolor: (color) => store.recolorItems(refs, color),
+    onFront: () => store.bringToFront(refs),
+    onBack: () => store.sendToBack(refs),
+    onPaste: clipboard.value ? paste : undefined,
+  })
+
+  // Ends editing a text box; a box left empty is removed.
+  const finishEditing = (id: string) => {
+    setEditing((cur) => (cur === id ? null : cur))
+    const t = store.doc.peek().texts.find((x) => x.id === id && !x.deleted)
+    if (t && !t.text.trim()) store.removeObject('texts', id)
+  }
+
+  // A tap with the Text tool off any text box drops a new box there and edits it; a tap while editing only finishes the edit.
+  const onPagesDown = (e: PointerEvent) => {
+    const target = e.target instanceof Element ? e.target : null
+    const page = target?.closest<HTMLElement>('.mg-nb-page')
+    const primary = e.pointerType === 'touch' ? e.isPrimary : e.button === 0
+    const onText = target?.closest('.mg-nb-text, .mg-nb-text-frame')
+    textTap.current = tool.peek() === 'text' && primary && page && !onText ? { id: e.pointerId, x: e.clientX, y: e.clientY, page, editing: editingRef.current } : null
+  }
+
+  const onPagesUp = (e: PointerEvent) => {
+    const t = textTap.current
+    textTap.current = null
+    if (!t || t.id !== e.pointerId || Math.hypot(e.clientX - t.x, e.clientY - t.y) > TEXT_TAP_PX || !t.page.dataset.page) return
+    if (t.editing) {
+      finishEditing(t.editing)
+      return
+    }
+    const r = t.page.getBoundingClientRect()
+    const box = textBoxAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.width)
+    const item = store.addText({ page: t.page.dataset.page, box, text: '', size: textSize.peek(), color: activeColor('text') })
+    setEditing(item.id)
+  }
+
+  // Keeps the strip's current page in step with scrolling while it is open.
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (!thumbs || !scroller) return
+    const update = () => setShownPage(currentPage())
+    update()
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [thumbs])
+
+  // Scrolls a page to the top; the bottom sheet closes after the jump.
+  const jumpTo = (id: string) => {
+    const scroller = scrollerRef.current
+    const box = layoutRef.current.pages.find((b) => b.page.id === id)
+    if (!scroller || !box) return
+    scroller.scrollTop = box.top - NOTEBOOK_GAP_PX
+    setShownPage(id)
+    if (!wide) setThumbs(false)
+  }
+
+  const strip = (layout: 'column' | 'sheet') => (
+    <Thumbnails store={store} current={shownPage} layout={layout} onJump={jumpTo} onClose={() => setThumbs(false)} />
+  )
+
   const sheetPage = pages.find((p) => p.id === sheetFor)
 
   return (
-    <div class="mg-notebook" onPaste={onPaste} onDragOver={(e) => carriesFiles(e) && e.preventDefault()} onDrop={onDrop}>
+    <div ref={rootRef} class="mg-notebook" onPaste={onPaste} onDragOver={(e) => carriesFiles(e) && e.preventDefault()} onDrop={onDrop}>
       <div class="mg-nb-bar">
         <ToolRow />
+        <button type="button" class="btn mg-nb-tool" onClick={() => inputRef.current?.click()}>
+          Image
+        </button>
+        <input ref={inputRef} type="file" accept="image/*" hidden onChange={onPicked} />
         <div class="mg-nb-menu-anchor" ref={menuRef}>
           <button type="button" class="btn mg-nb-tool" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
             Add Page
@@ -539,21 +797,50 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
             </div>
           )}
         </div>
+        <button type="button" class="btn mg-nb-tool" aria-expanded={thumbs} onClick={() => setThumbs((open) => !open)}>
+          Thumbnails
+        </button>
         <button type="button" class="btn mg-nb-tool" disabled={pages.length === 0} onClick={() => setSheetFor(currentPage())}>
           Template
         </button>
-        <button type="button" class="btn mg-nb-tool" onClick={() => inputRef.current?.click()}>
-          Image
-        </button>
-        <input ref={inputRef} type="file" accept="image/*" hidden onChange={onPicked} />
       </div>
-      <div ref={scrollerRef} class="mg-nb-scroller" data-ink-viewport="" tabIndex={0}>
-        <div ref={pagesRef} class="mg-nb-pages" style={{ width: px(layout.width), height: px(layout.height) }}>
-          {layout.pages.map((b) => (
-            <PageView key={b.page.id} box={b} content={content.get(b.page.id) ?? NO_CONTENT} store={store} onJumpToPage={onJumpToPage} />
-          ))}
+      <div class="mg-nb-body">
+        {thumbs && wide && strip('column')}
+        <div ref={scrollerRef} class="mg-nb-scroller" data-ink-viewport="" tabIndex={0}>
+          <div
+            ref={pagesRef}
+            class="mg-nb-pages"
+            style={{ width: px(layout.width), height: px(layout.height) }}
+            onPointerDownCapture={trackPointer}
+            onPointerMoveCapture={trackPointer}
+            onPointerDown={onPagesDown}
+            onPointerUp={onPagesUp}
+          >
+            {layout.pages.map((b) => {
+              const id = b.page.id
+              const refs = selection?.page === id ? selection.refs : NO_REFS
+              return (
+                <PageView
+                  key={id}
+                  box={b}
+                  content={content.get(id) ?? NO_CONTENT}
+                  store={store}
+                  selection={refs}
+                  editing={editing}
+                  menu={menuFor(id, refs)}
+                  onSelect={(next) => setSelection(next.length ? { page: id, refs: next } : null)}
+                  onMoved={(dx, dy, client) => moveSelection(id, refs, dx, dy, client)}
+                  onEdit={setEditing}
+                  onDoneEditing={finishEditing}
+                  onJumpToPage={onJumpToPage}
+                  scroller={() => scrollerRef.current}
+                />
+              )
+            })}
+          </div>
         </div>
       </div>
+      {thumbs && !wide && strip('sheet')}
       {armed && (
         <div class="mg-nb-pull" role="status">
           Release to add a page

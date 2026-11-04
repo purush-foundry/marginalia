@@ -16,7 +16,7 @@ export interface ImageObjectProps {
   selected: boolean
   onSelect(): void
   onChange(box: ObjectBox): void
-  onJumpToPage(page: number): void
+  onJumpToPage?(page: number): void
 }
 
 interface Gesture {
@@ -111,7 +111,7 @@ export function ImageObjectView({ item, cssW, selected, onSelect, onChange, onJu
       }}
     >
       <img class="mg-nb-image" src={item.src} alt="" draggable={false} />
-      {page !== undefined && (
+      {page !== undefined && onJumpToPage && (
         <button
           type="button"
           class="mg-nb-chip"

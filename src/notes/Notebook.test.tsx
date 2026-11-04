@@ -2,8 +2,12 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { toast } from '../app/ui.ts'
-import { eraserSettings, fingerDraws, penActivity, previousTool, setTool, tool, DEFAULT_ERASER_SETTINGS } from '../ink/tools.ts'
+import {
+  activeColor, eraserSettings, fingerDraws, lassoSettings, penActivity, previousTool, setTool, textSize, tool,
+  DEFAULT_ERASER_SETTINGS, DEFAULT_LASSO_SETTINGS,
+} from '../ink/tools.ts'
 import { orderBetween } from '../lib/order.ts'
+import { clipboard, copyItems } from './clipboard.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
 import { emptyNotebook, PAGE_SIZES, type NotesDocV2, type PageSize } from './model.ts'
 import { Notebook, type NotebookHandle } from './Notebook.tsx'
@@ -49,6 +53,9 @@ beforeEach(() => {
   tool.value = 'pen'
   previousTool.value = 'pen'
   eraserSettings.value = DEFAULT_ERASER_SETTINGS
+  lassoSettings.value = DEFAULT_LASSO_SETTINGS
+  textSize.value = 'm'
+  clipboard.value = null
   fingerDraws.value = false
   penActivity.down = false
   penActivity.downOn = null
@@ -80,6 +87,7 @@ afterEach(() => {
   render(null, host)
   host.remove()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 async function mount(doc: NotesDocV2 = notebook()) {
@@ -118,6 +126,20 @@ function pen(el: Element, name: string, x: number, y: number) {
     }),
   )
 }
+
+// A pen press through the given client points, released at the last one.
+async function penPath(el: Element, points: [number, number][]) {
+  await act(() => {
+    pen(el, 'pointerdown', ...points[0])
+    for (const p of points.slice(1)) pen(el, 'pointermove', ...p)
+    pen(el, 'pointerup', ...points[points.length - 1])
+  })
+}
+
+const keyDown = (key: string, init: KeyboardEventInit = {}, target: EventTarget = document.body) =>
+  act(() => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+  })
 
 type Finger = { id: number; x: number; y: number }
 
@@ -602,13 +624,13 @@ test('a stroke drawn after an image renders above it, an earlier one below', asy
   expect(page('page-1').querySelector('.ink-layer svg')).toBeNull()
 })
 
-test('the tool row picks Lasso, Pen, Highlighter and Eraser', async () => {
+test('the tool row picks Lasso, Pen, Highlighter, Eraser and Text', async () => {
   await mount()
   const row = Array.from(host.querySelectorAll<HTMLButtonElement>('.mg-nb-bar button[aria-pressed]'))
-  expect(row.map((b) => b.getAttribute('aria-label'))).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser'])
+  expect(row.map((b) => b.getAttribute('aria-label'))).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Text'])
   const bar = Array.from(host.querySelectorAll('.mg-nb-bar button')).map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())
-  expect(bar.slice(0, 5)).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Add Page'])
-  for (const [label, t] of [['Lasso', 'lasso'], ['Highlighter', 'highlighter'], ['Eraser', 'eraser'], ['Pen', 'pen']] as const) {
+  expect(bar).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Text', 'Image', 'Add Page', 'Thumbnails', 'Template'])
+  for (const [label, t] of [['Lasso', 'lasso'], ['Highlighter', 'highlighter'], ['Eraser', 'eraser'], ['Text', 'text'], ['Pen', 'pen']] as const) {
     await click(row.find((b) => b.getAttribute('aria-label') === label)!)
     expect(tool.value).toBe(t)
     expect(row.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.getAttribute('aria-label'))).toEqual([label])
@@ -672,4 +694,192 @@ test('a stroke on one page does not re-outline the ink of another', async () => 
     pen(page('page-2'), 'pointerup', 216, 1420)
   })
   expect(outlines.count - before).toBe(1)
+})
+
+test('the Text tool drops a 60 % box at the tap and edits it', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await click(host.querySelector<HTMLElement>('.mg-nb-bar button[aria-label="Text"]')!)
+  expect(tool.value).toBe('text')
+  await penPath(page('page-2'), [[16 + 168, 1220 + 252]])
+  const [t] = store.doc.value.texts
+  expect(t).toMatchObject({ page: 'page-2', text: '', size: 'm', color: activeColor('text') })
+  expect(t.box.x).toBeCloseTo(0.2)
+  expect(t.box.y).toBeCloseTo(0.3)
+  expect(t.box.w).toBeCloseTo(0.6)
+  const el = page('page-2').querySelector<HTMLElement>(`.mg-nb-text[data-id="${t.id}"]`)!
+  expect(el.getAttribute('contenteditable')).toBe('plaintext-only')
+  expect(document.activeElement).toBe(el)
+  expect(tool.value).toBe('text')
+
+  await act(() => {
+    el.textContent = 'Hi'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(store.doc.value.texts[0].text).toBe('Hi')
+
+  // A tap while a box is being edited only finishes it.
+  await penPath(page('page-1'), [[16 + 756, 16 + 420]])
+  expect(store.doc.value.texts).toHaveLength(1)
+  expect(el.hasAttribute('contenteditable')).toBe(false)
+
+  textSize.value = 'l'
+  await scrollTo(0)
+  await penPath(page('page-1'), [[16 + 756, 16 + 420]])
+  const second = store.doc.value.texts[1]
+  expect(second).toMatchObject({ page: 'page-1', size: 'l' })
+  expect(second.box.x).toBeCloseTo(0.4)
+  expect(second.box.y).toBeCloseTo(0.5)
+
+  // A box left empty is removed when editing ends; a tap on an existing box adds none.
+  await penPath(page('page-1'), [[16 + 100, 16 + 100]])
+  expect(store.content.value.get('page-1')!.texts).toHaveLength(0)
+  await penPath(el, [[16 + 200, 1220 + 260]])
+  expect(store.content.value.get('page-2')!.texts).toHaveLength(1)
+  expect(tool.value).toBe('text')
+})
+
+test('a lasso move across a page boundary re-parents the selection to the page under the pointer', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await penPath(page('page-1'), [[116, 1016], [316, 1116]])
+  const [s] = store.doc.value.strokes
+  const before = s.points.slice()
+  await act(() => setTool('lasso'))
+  await penPath(page('page-1'), [[96, 990], [336, 990], [336, 1140], [96, 1140], [96, 1000]])
+  expect(page('page-1').querySelector('.mg-lasso-frame')).not.toBeNull()
+  expect(page('page-1').querySelector('[role="menu"][aria-label="Selection"]')).not.toBeNull()
+
+  await penPath(page('page-1'), [[216, 1066], [216, 1266], [216, 1466]])
+  const moved = store.doc.value.strokes[0]
+  expect(moved.page).toBe('page-2')
+  expect(moved.points[0]).toBeCloseTo(before[0])
+  expect(moved.points[1]).toBeCloseTo(before[1] + 400 / 840 - 1204 / 840)
+  expect(moved.points[1]).toBeCloseTo(196 / 840)
+  expect(page('page-1').querySelector('.mg-lasso-frame')).toBeNull()
+  expect(page('page-2').querySelector('.mg-lasso-frame')).not.toBeNull()
+
+  // A move within a page keeps the page; leaving the Lasso clears the selection.
+  await penPath(page('page-2'), [[216, 1416], [256, 1416]])
+  expect(store.doc.value.strokes[0].page).toBe('page-2')
+  expect(store.doc.value.strokes[0].points[0]).toBeCloseTo(before[0] + 40 / 840)
+  await act(() => setTool('pen'))
+  await act(() => setTool('lasso'))
+  expect(host.querySelector('.mg-lasso-frame')).toBeNull()
+
+  await act(() => store.undo())
+  await act(() => store.undo())
+  expect(store.doc.value.strokes[0]).toMatchObject({ page: 'page-1', points: before })
+})
+
+test('⌘V pastes the clipboard at the pointer, else centred on the current page', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await act(() => {
+    store.addStroke({ id: 'a', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#d33a2c', width: 0.004, points: [0.1, 0.2, 0.5, 0.3, 0.4, 0.5], createdAt: 1, updatedAt: 1 })
+  })
+  copyItems(store.content.value.get('page-1')!, [{ kind: 'stroke', id: 'a' }])
+  const pasted = () => store.doc.value.strokes.filter((x) => x.id !== 'a')
+
+  await scrollTo(1220)
+  await keyDown('v', { metaKey: true })
+  expect(pasted()).toHaveLength(1)
+  expect(pasted()[0].page).toBe('page-2')
+  expect(pasted()[0].points[0]).toBeCloseTo(0.5 - 0.1)
+  expect(pasted()[0].points[1]).toBeCloseTo(297 / 210 / 2 - 0.1)
+
+  await scrollTo(0)
+  await act(() => {
+    page('page-1').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', pointerId: 1, clientX: 16 + 420, clientY: 16 + 210 }))
+  })
+  await keyDown('v', { ctrlKey: true })
+  expect(pasted()).toHaveLength(2)
+  expect(pasted()[1].page).toBe('page-1')
+  expect(pasted()[1].points[0]).toBeCloseTo(0.5)
+  expect(pasted()[1].points[1]).toBeCloseTo(0.25)
+
+  const field = document.createElement('textarea')
+  document.body.append(field)
+  await keyDown('v', { metaKey: true }, field)
+  expect(pasted()).toHaveLength(2)
+
+  // A press outside the notebook leaves ⌘V to the other pane.
+  await act(() => {
+    field.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+  })
+  await keyDown('v', { metaKey: true })
+  expect(pasted()).toHaveLength(2)
+  field.remove()
+  await act(() => {
+    page('page-1').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', clientX: 16 + 420, clientY: 16 + 210 }))
+  })
+  await keyDown('v', { metaKey: true })
+  expect(pasted()).toHaveLength(3)
+})
+
+test('Thumbnails opens the strip at 160 px and a thumbnail tap scrolls to its page', async () => {
+  const listeners = new Set<() => void>()
+  const media = { wide: true }
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    media: query,
+    get matches() {
+      return query === '(min-width: 700px)' ? media.wide : false
+    },
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  }))
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  const toggle = button('Thumbnails')
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  await click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  const strip = $('nav.mg-thumbs')
+  expect(strip.dataset.layout).toBe('column')
+  expect(strip.nextElementSibling).toBe(scroller())
+  expect(strip.querySelector('svg')!.getAttribute('width')).toBe('160')
+  expect($('button.mg-thumb[aria-current="page"]').getAttribute('aria-label')).toBe('Page 1')
+
+  await click($('button.mg-thumb[aria-label="Page 3"]'))
+  expect(scroller().scrollTop).toBe(2424 - 16)
+  expect($('button.mg-thumb[aria-current="page"]').getAttribute('aria-label')).toBe('Page 3')
+  expect(host.querySelector('nav.mg-thumbs')).not.toBeNull()
+
+  await act(() => {
+    media.wide = false
+    for (const fn of listeners) fn()
+  })
+  expect($('nav.mg-thumbs').dataset.layout).toBe('sheet')
+  await click($('button.mg-thumb[aria-label="Page 2"]'))
+  expect(scroller().scrollTop).toBe(1220 - 16)
+  expect(host.querySelector('nav.mg-thumbs')).toBeNull()
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+})
+
+test('a Lasso tap selects a text box or an image; under the Pen an image tap selects nothing; a double-tap on text does not zoom', async () => {
+  await mount()
+  await act(() => {
+    store.addText({ page: 'page-1', box: { x: 0.1, y: 0.1, w: 0.5 }, text: 'Note', size: 'm', color: '#1c1c1a' })
+    store.addImage({ page: 'page-1', src: 'data:photo', aspect: 0.5, box: { x: 0.1, y: 0.5, w: 0.5 } })
+  })
+  const text = $('.mg-nb-text')
+  const figure = $('.mg-nb-figure')
+  expect(figure.querySelector('.mg-nb-chip')).toBeNull()
+
+  await click(figure)
+  await act(() => setTool('lasso'))
+  expect(host.querySelector('.mg-lasso-frame')).toBeNull()
+
+  await penPath(page('page-1'), [[16 + 100, 16 + 90]])
+  expect(host.querySelector('.mg-lasso-frame')).not.toBeNull()
+  expect(text.hasAttribute('data-selected')).toBe(true)
+  expect(host.querySelectorAll('.mg-nb-text-handle')).toHaveLength(2)
+
+  await penPath(page('page-1'), [[16 + 200, 16 + 500]])
+  expect(text.hasAttribute('data-selected')).toBe(false)
+  const frame = $('.mg-lasso-frame')
+  expect(box(frame)).toEqual([84 - 8, 420 - 8, 420 + 16, 210 + 16])
+  await keyDown('Delete')
+  expect(store.content.value.get('page-1')!.images).toHaveLength(0)
+
+  await tapAt(text, 200, 120)
+  clock += 100
+  await tapAt(text, 200, 120)
+  expect(box(page('page-1'))[2]).toBe(840)
 })

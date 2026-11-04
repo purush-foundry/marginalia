@@ -9,6 +9,7 @@ export interface ObjectMenuProps {
   colors: readonly string[]
   onCut(): void
   onCopy(): void
+  onPaste?(): void
   onDuplicate(): void
   onDelete(): void
   onRecolor(color: string): void
@@ -29,6 +30,7 @@ export function ObjectMenu(props: ObjectMenuProps): JSX.Element {
       <div class="mg-object-menu-row">
         {item('Cut', props.onCut)}
         {item('Copy', props.onCopy)}
+        {props.onPaste && item('Paste', props.onPaste)}
         {item('Duplicate', props.onDuplicate)}
         {item('Delete', props.onDelete)}
         <button

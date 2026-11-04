@@ -12,6 +12,7 @@ import {
   eraserSettings,
   highlighterSettings,
   inkDisplayColor,
+  lassoSettings,
   moveColorSlot,
   moveWidthSlot,
   palettes,
@@ -22,10 +23,12 @@ import {
   setColor,
   setTool,
   setWidthMm,
+  textSize,
   tool,
   type EraserSettings,
   type PaletteTool,
   type PenStyle,
+  type TextSize,
   type Tool,
 } from './tools.ts'
 import './toolmenu.css'
@@ -43,7 +46,7 @@ const WHEEL_STEP_DEG = 3
 const DOT_MIN_PX = 4
 const DOT_MAX_PX = 24
 
-type SlotTool = 'pen' | 'highlighter'
+type WidthTool = 'pen' | 'highlighter'
 type SlotKind = 'color' | 'width'
 type Timer = ReturnType<typeof setTimeout> | null
 interface Size {
@@ -55,7 +58,7 @@ interface Box {
   top: number
 }
 interface Editor {
-  tool: SlotTool
+  tool: PaletteTool
   kind: SlotKind
   index: number
 }
@@ -97,6 +100,11 @@ const ERASER_STYLES: readonly { value: EraserSettings['style']; label: string }[
   { value: 'segment', label: 'Segment' },
 ]
 const ERASER_SIZES: readonly EraserSettings['sizeMm'][] = [2, 4, 8]
+const TEXT_SIZES: readonly { value: TextSize; label: string }[] = [
+  { value: 's', label: 'S' },
+  { value: 'm', label: 'M' },
+  { value: 'l', label: 'L' },
+]
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const stop = (e: Event) => e.stopPropagation()
@@ -318,7 +326,8 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
   }
 
   const active = tool.value
-  const slotTool: SlotTool | null = active === 'pen' || active === 'highlighter' ? active : null
+  const slotTool: PaletteTool | null = active === 'pen' || active === 'highlighter' || active === 'text' ? active : null
+  const widthTool: WidthTool | null = active === 'pen' || active === 'highlighter' ? active : null
   const editing = (kind: SlotKind) =>
     editor && editor.tool === slotTool && editor.kind === kind ? editor.index : null
   const onEdit = (kind: SlotKind) => (index: number | null) =>
@@ -393,11 +402,26 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
                 onPick={(style) => (penSettings.value = { ...penSettings.value, style })}
               />
             )}
-            {slotTool && (
-              <>
-                <ColorSlots t={slotTool} editing={editing('color')} onEdit={onEdit('color')} />
-                <WidthSlots t={slotTool} editing={editing('width')} onEdit={onEdit('width')} />
-              </>
+            {slotTool && <ColorSlots t={slotTool} editing={editing('color')} onEdit={onEdit('color')} />}
+            {widthTool && <WidthSlots t={widthTool} editing={editing('width')} onEdit={onEdit('width')} />}
+            {active === 'pen' && (
+              <Toggle
+                role="switch"
+                label="Draw and hold"
+                checked={penSettings.value.drawAndHold}
+                onToggle={(drawAndHold) => (penSettings.value = { ...penSettings.value, drawAndHold })}
+              />
+            )}
+            {active === 'text' && (
+              <Radios label="Text size" options={TEXT_SIZES} value={textSize.value} onPick={(size) => (textSize.value = size)} />
+            )}
+            {active === 'lasso' && (
+              <Toggle
+                role="switch"
+                label="Rectangular"
+                checked={lassoSettings.value.rect}
+                onToggle={(rect) => (lassoSettings.value = { ...lassoSettings.value, rect })}
+              />
             )}
             {active === 'highlighter' && (
               <Toggle
@@ -412,8 +436,8 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
           {slotTool && editor?.tool === slotTool && editor.kind === 'color' && (
             <ColorEditor t={slotTool} index={editor.index} style={editorPos} />
           )}
-          {slotTool && editor?.tool === slotTool && editor.kind === 'width' && (
-            <WidthEditor t={slotTool} index={editor.index} style={editorPos} />
+          {widthTool && editor?.tool === widthTool && editor.kind === 'width' && (
+            <WidthEditor t={widthTool} index={editor.index} style={editorPos} />
           )}
         </div>
       )}
@@ -492,13 +516,13 @@ function EraserOptions() {
   )
 }
 
-interface SlotProps {
-  t: SlotTool
+interface SlotProps<T extends PaletteTool> {
+  t: T
   editing: number | null
   onEdit: (index: number | null) => void
 }
 
-function ColorSlots({ t, editing, onEdit }: SlotProps) {
+function ColorSlots({ t, editing, onEdit }: SlotProps<PaletteTool>) {
   const p = palettes.value[t]
   const add = () => {
     const index = p.colors.length
@@ -525,7 +549,7 @@ function ColorSlots({ t, editing, onEdit }: SlotProps) {
   )
 }
 
-function WidthSlots({ t, editing, onEdit }: SlotProps) {
+function WidthSlots({ t, editing, onEdit }: SlotProps<WidthTool>) {
   const p = palettes.value[t]
   const { min, max } = WIDTH_RANGE_MM[t]
   const dot = (mm: number) => DOT_MIN_PX + ((DOT_MAX_PX - DOT_MIN_PX) * (mm - min)) / (max - min)
@@ -700,7 +724,7 @@ function drawWheel(canvas: HTMLCanvasElement | null) {
   }
 }
 
-function ColorEditor({ t, index, style }: { t: SlotTool; index: number; style: Record<string, string> }) {
+function ColorEditor({ t, index, style }: { t: PaletteTool; index: number; style: Record<string, string> }) {
   const color = palettes.value[t].colors[index]
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const picking = useRef<number | null>(null)
@@ -774,7 +798,7 @@ function ColorEditor({ t, index, style }: { t: SlotTool; index: number; style: R
   )
 }
 
-function WidthEditor({ t, index, style }: { t: SlotTool; index: number; style: Record<string, string> }) {
+function WidthEditor({ t, index, style }: { t: WidthTool; index: number; style: Record<string, string> }) {
   const mm = palettes.value[t].widthsMm[index]
   const { min, max, step } = WIDTH_RANGE_MM[t]
   return (
