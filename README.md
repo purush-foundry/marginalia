@@ -4,10 +4,12 @@ A light PDF paper reader for one person. It runs as a web app and an installable
 (Chrome), iPhone and iPad (Safari, home-screen app). Your papers live in one Google Drive folder;
 Marginalia mirrors that folder tree, caches PDFs on the device, and stores every highlight, ink
 stroke, note and Claude thread in a small JSON sidecar next to each PDF
-(`<paper>.marginalia.json`), so nothing is locked in.
+(`<paper>.marginalia.json`), and the notes sheet in a second file beside it
+(`<paper>.marginalia-notes.json`), so nothing is locked in.
 
 - Highlight text in four colours, or an area (equations, figures, tables).
 - Draw with the Apple Pencil, or with the mouse through the Draw latch.
+- Snip a figure or equation to the clipboard or onto a notes sheet that sits beside the paper.
 - Ask Claude about a passage or area; answers quote the paper and link back to the page.
 - Unread / reading / done badges, outline, highlight list, Copy as Markdown.
 - Works offline for cached papers; edits sync through Drive when you are back online.
@@ -59,7 +61,48 @@ permissions. This happens once per Google account.
 2. Drop PDFs into that folder from any device; they show up on the next sync (every minute while
    the app is open, on returning to it, or with the sync button).
 3. Select text to get the colour bar; tap a highlight to change, note, ask about or delete it.
-   Use the area button (or long-press on a figure on touch) to box an equation or figure.
+
+### Snip
+
+The **Snip** button is in the toolbar on every device. Tap it, then drag a box with whatever
+comes next (finger, mouse, or the Pencil in any tool); the lead of the toolbar says "Drag a box"
+while it is armed, and Esc or a second tap disarms it. Long-press on a figure on touch works too.
+Releasing the box shows the bar: a colour makes an area highlight, **Ask** sends the crop to
+Claude, **Copy image** puts a PNG on the clipboard (or downloads it), and **To notes** adds the
+crop to the notes sheet with a **p.N** chip that scrolls the paper back to that page.
+
+### Notes sheet
+
+Each paper has one notes sheet. The **Paper · Both · Notes** control in the toolbar picks what
+is on screen; **Both** puts the paper on the left and the sheet on the right with a divider you
+can drag (or move with the arrow keys), and is offered from 700 px wide, so an iPhone gets Paper
+and Notes only. The layout and the split are remembered per device.
+
+- **Typing:** tap the sheet and type; Enter starts a new paragraph, Backspace at the start joins
+  it to the one before, and the first paragraph is the title.
+- **Pencil:** the Pen draws on the sheet as on the page, the Eraser removes whole strokes, and
+  Select places the caret or picks an image. A finger never draws.
+- **Images:** paste, drop, **+ Image**, or **To notes** from a Snip. Tap an image to select it,
+  drag its corner to resize, and delete it from its bar or with Backspace.
+- **Background:** Blank, Grid, Dots or Lines from the menu at the top right of the sheet; every
+  device shows the same one.
+
+Undo and Redo act on the pane you touched last. **Copy as Markdown** ends with a Notes section
+that lists the text and `(image, p.N)` lines.
+
+### Tool puck
+
+On an iPad, once a Pencil has been used, or with Finger draws on, a round puck sits at the right edge of the pane you
+are working in. Tap it to flip the Pencil between Pen and Eraser; long-press it for the palette
+(tools, widths, colours); drag it up or down the edge to move it. It never changes what a finger
+does.
+
+### Home pictures
+
+Drop `marginalia-home-landscape.jpg` and `marginalia-home-portrait.jpg` (or `.png` / `.webp`) in
+the root papers folder to put your own pictures at the top of the library. One of them alone
+serves both orientations, and a plain `marginalia-home.jpg` is the fallback for either. They are
+shown in grayscale; without them the library shows its drawing.
 
 ### Install on iPhone / iPad
 
@@ -69,6 +112,9 @@ permissions. This happens once per Google account.
 3. **Share → Add to Home Screen**, then launch Marginalia from the home screen and connect Drive.
 
 iOS 18 or later is required.
+
+After updating to v2, delete Marginalia from the home screen and add it again once; iOS reads the
+status-bar setting only when the app is added.
 
 ### Claude
 
@@ -117,3 +163,5 @@ GitHub Pages serves at `https://purush-foundry.github.io/marginalia/`. Open apps
 - Three-column papers interleave their columns in text selection and in the text sent to Claude.
 - Pages with a `/Rotate` entry render unrotated.
 - iOS needs 18 or later.
+- Apple Pencil Pro squeeze and double-tap do not reach web apps; use the tool puck.
+- Ink on the notes sheet stays where it was drawn when text above it reflows.
