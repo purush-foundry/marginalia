@@ -27,6 +27,7 @@ export interface NotebookProps {
 const DOUBLE_TAP_MS = 300
 const DOUBLE_TAP_PX = 30
 const WHEEL_ZOOM_RATE = 0.01
+const WHEEL_COMMIT_MS = 120
 const TEXT_PT: Record<'s' | 'm' | 'l', number> = { s: 10, m: 13, l: 18 }
 const NO_CONTENT: PageContent = { strokes: [], texts: [], images: [] }
 const BAR_TOOLS: readonly { tool: Tool; label: string }[] = [
@@ -297,6 +298,8 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     const pagesEl = pagesRef.current
     if (!scroller || !pagesEl) return
     let pinch: { ids: [number, number]; d0: number; anchor: Point; scroll: Scroll; scale: number } | null = null
+    let wheel: { anchor: Point; scroll: Scroll; scale: number } | null = null
+    let wheelTimer: ReturnType<typeof setTimeout> | undefined
     let finger: { id: number; x: number; y: number; t: number; moved: boolean; endY: number | null } | null = null
     let lastTap: { x: number; y: number; t: number } | null = null
     let pulled = false
@@ -334,7 +337,18 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
       if (commit) zoomTo(zoomRef.current * p.scale, p.anchor, p.scroll)
     }
 
+    const endWheel = () => {
+      const w = wheel
+      if (!w) return
+      wheel = null
+      clearTimeout(wheelTimer)
+      pagesEl.style.transform = ''
+      pagesEl.style.transformOrigin = ''
+      zoomTo(zoomRef.current * w.scale, w.anchor, w.scroll)
+    }
+
     const onStart = (e: TouchEvent) => {
+      endWheel()
       const down = fingers(e.touches)
       if (penActivity.down || down.length !== 1) {
         finger = null
@@ -411,7 +425,18 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
-      zoomTo(zoomRef.current * Math.exp(-e.deltaY * WHEEL_ZOOM_RATE), anchorOf(e.clientX, e.clientY))
+      if (pinch) return
+      if (!wheel) {
+        const scroll = { left: scroller.scrollLeft, top: scroller.scrollTop }
+        const anchor = anchorOf(e.clientX, e.clientY)
+        wheel = { anchor, scroll, scale: 1 }
+        pagesEl.style.transformOrigin = `${scroll.left + anchor.x}px ${scroll.top + anchor.y}px`
+      }
+      const from = zoomRef.current
+      wheel.scale = clampZoom(from * wheel.scale * Math.exp(-e.deltaY * WHEEL_ZOOM_RATE)) / from
+      pagesEl.style.transform = `scale(${wheel.scale})`
+      clearTimeout(wheelTimer)
+      wheelTimer = setTimeout(endWheel, WHEEL_COMMIT_MS)
     }
 
     const active = { passive: false } as const
@@ -421,6 +446,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     scroller.addEventListener('touchcancel', onCancel)
     scroller.addEventListener('wheel', onWheel, active)
     return () => {
+      clearTimeout(wheelTimer)
       scroller.removeEventListener('touchstart', onStart)
       scroller.removeEventListener('touchmove', onMove)
       scroller.removeEventListener('touchend', onEnd)

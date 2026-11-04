@@ -76,6 +76,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   render(null, host)
   host.remove()
   vi.restoreAllMocks()
@@ -389,38 +390,75 @@ test('a finger double-tap toggles fit-width and 200 % at the tap', async () => {
   expect([s.scrollLeft, s.scrollTop]).toEqual([0, 0])
 })
 
-test('Ctrl-wheel zooms at the cursor; a plain wheel does not zoom', async () => {
-  await mount()
-  const s = scroller()
-  // happy-dom's WheelEvent is a UIEvent, so the mouse fields are defined on the event.
-  const wheel = ({ deltaY = -100, ...mouse }: { deltaY?: number; ctrlKey?: boolean; metaKey?: boolean }) => {
-    const e = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY })
-    for (const [k, v] of Object.entries({ clientX: 300, clientY: 400, ctrlKey: false, metaKey: false, ...mouse })) {
-      Object.defineProperty(e, k, { value: v })
-    }
-    s.dispatchEvent(e)
-    return e
+const wait = (ms: number) => act(async () => {
+  await vi.advanceTimersByTimeAsync(ms)
+})
+
+// A wheel event at (300, 400) on the scroller; happy-dom's WheelEvent is a UIEvent, so the mouse fields are defined on the event.
+function wheelAt(el: Element, { deltaY = -100, ...mouse }: { deltaY?: number; ctrlKey?: boolean; metaKey?: boolean }) {
+  const e = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY })
+  for (const [k, v] of Object.entries({ clientX: 300, clientY: 400, ctrlKey: false, metaKey: false, ...mouse })) {
+    Object.defineProperty(e, k, { value: v })
   }
+  el.dispatchEvent(e)
+  return e
+}
+
+test('Ctrl-wheel zooms at the cursor once the wheel stops; a plain wheel does not zoom', async () => {
+  await mount()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const s = scroller()
   let plain!: WheelEvent
   await act(() => {
-    plain = wheel({})
+    plain = wheelAt(s, {})
   })
   expect(plain.defaultPrevented).toBe(false)
   expect(box(page('page-1'))[2]).toBe(840)
 
   let zoom!: WheelEvent
   await act(() => {
-    zoom = wheel({ ctrlKey: true })
+    zoom = wheelAt(s, { ctrlKey: true })
   })
   expect(zoom.defaultPrevented).toBe(true)
+  await wait(120)
   expect(box(page('page-1'))[2]).toBeCloseTo(840 * Math.E)
   expect(s.scrollLeft).toBeCloseTo(16 + 284 * Math.E - 300)
   expect(s.scrollTop).toBeCloseTo(16 + 384 * Math.E - 400)
 
   await act(() => {
-    wheel({ metaKey: true, deltaY: 1000 })
+    wheelAt(s, { metaKey: true, deltaY: 1000 })
   })
+  await wait(120)
   expect(box(page('page-1'))[2]).toBe(840)
+})
+
+test('ten quick Ctrl-wheel events scale the pages live and commit one zoom with the cursor point still', async () => {
+  await mount()
+  const p1 = page('page-1')
+  await act(() => {
+    pen(p1, 'pointerdown', 116, 116)
+    pen(p1, 'pointermove', 216, 216)
+    pen(p1, 'pointerup', 216, 216)
+  })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const s = scroller()
+  const before = outlines.count
+  for (let i = 0; i < 10; i++) {
+    await act(() => {
+      wheelAt(s, { ctrlKey: true, deltaY: -10 })
+    })
+    await wait(16)
+  }
+  expect(box(page('page-1'))[2]).toBe(840)
+  expect(parseFloat($('.mg-nb-pages').style.transform.slice('scale('.length))).toBeCloseTo(Math.E)
+  expect(outlines.count - before).toBe(0)
+
+  await wait(120)
+  expect($('.mg-nb-pages').style.transform).toBe('')
+  expect(box(page('page-1'))[2]).toBeCloseTo(840 * Math.E)
+  expect(s.scrollLeft).toBeCloseTo(16 + 284 * Math.E - 300)
+  expect(s.scrollTop).toBeCloseTo(16 + 384 * Math.E - 400)
+  expect(outlines.count - before).toBe(1)
 })
 
 test('converted text and images show on their pages; the p.N chip jumps to the paper page', async () => {
