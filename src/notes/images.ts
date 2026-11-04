@@ -13,6 +13,7 @@ export interface Raster {
   height: number
   hasAlpha: boolean
   encode(longEdge: number, type: 'image/jpeg' | 'image/png', quality?: number): Promise<Blob>
+  close(): void
 }
 
 export interface PreparedImage {
@@ -63,6 +64,7 @@ export async function decodeImage(blob: Blob): Promise<Raster> {
         canvas.toBlob((out) => (out ? resolve(out) : reject(new Error('Image encoding failed'))), type, quality),
       )
     },
+    close: () => bitmap.close(),
   }
 }
 
@@ -78,21 +80,25 @@ function dataUrlOf(blob: Blob): Promise<string> {
 /** Downscales to a long edge of at most 1600 px and steps down until the encoding fits 1.5 MB. */
 export async function prepareImage(blob: Blob, decode: (blob: Blob) => Promise<Raster> = decodeImage): Promise<PreparedImage> {
   const raster = await decode(blob)
-  const type = raster.hasAlpha ? 'image/png' : 'image/jpeg'
-  const long = Math.max(raster.width, raster.height)
-  let edge = Math.min(IMAGE_LONG_EDGE_PX, long)
-  for (;;) {
-    const out = await raster.encode(edge, type, type === 'image/jpeg' ? JPEG_QUALITY : undefined)
-    if (out.size <= IMAGE_MAX_BYTES) {
-      return {
-        dataUrl: await dataUrlOf(out),
-        width: Math.round((raster.width * edge) / long),
-        height: Math.round((raster.height * edge) / long),
-        bytes: out.size,
-        mediaType: type,
+  try {
+    const type = raster.hasAlpha ? 'image/png' : 'image/jpeg'
+    const long = Math.max(raster.width, raster.height)
+    let edge = Math.min(IMAGE_LONG_EDGE_PX, long)
+    for (;;) {
+      const out = await raster.encode(edge, type, type === 'image/jpeg' ? JPEG_QUALITY : undefined)
+      if (out.size <= IMAGE_MAX_BYTES) {
+        return {
+          dataUrl: await dataUrlOf(out),
+          width: Math.round((raster.width * edge) / long),
+          height: Math.round((raster.height * edge) / long),
+          bytes: out.size,
+          mediaType: type,
+        }
       }
+      edge = Math.floor(edge * STEP_DOWN)
+      if (edge < MIN_LONG_EDGE_PX) throw new ImageTooLargeError('Image too large')
     }
-    edge = Math.floor(edge * STEP_DOWN)
-    if (edge < MIN_LONG_EDGE_PX) throw new ImageTooLargeError('Image too large')
+  } finally {
+    raster.close()
   }
 }

@@ -6,8 +6,9 @@ const MB = 1024 * 1024
 // A fake raster whose encoded size is given by size(longEdge, type).
 function fakeRaster(width: number, height: number, size: (edge: number, type: string) => number, hasAlpha = false) {
   const encode = vi.fn(async (edge: number, type: 'image/jpeg' | 'image/png') => new Blob([new Uint8Array(size(edge, type))], { type }))
-  const raster: Raster = { width, height, hasAlpha, encode }
-  return { decode: async () => raster, encode }
+  const close = vi.fn()
+  const raster: Raster = { width, height, hasAlpha, encode, close }
+  return { decode: async () => raster, encode, close }
 }
 
 const input = new Blob(['x'], { type: 'image/jpeg' })
@@ -40,6 +41,16 @@ test('gives up with ImageTooLargeError below 400 px', async () => {
   const { decode, encode } = fakeRaster(4032, 3024, () => 2 * MB)
   await expect(prepareImage(input, decode)).rejects.toBeInstanceOf(ImageTooLargeError)
   expect(encode.mock.calls.map((c) => c[0])).toEqual([1600, 1200, 900, 675, 506])
+})
+
+test('closes the decoded raster once after encoding, also when the image is too large', async () => {
+  const fits = fakeRaster(4032, 3024, (edge) => (edge >= 1600 ? 2 * MB : MB))
+  await prepareImage(input, fits.decode)
+  expect(fits.close).toHaveBeenCalledOnce()
+
+  const tooLarge = fakeRaster(4032, 3024, () => 2 * MB)
+  await expect(prepareImage(input, tooLarge.decode)).rejects.toBeInstanceOf(ImageTooLargeError)
+  expect(tooLarge.close).toHaveBeenCalledOnce()
 })
 
 test('never upscales a small image', async () => {
