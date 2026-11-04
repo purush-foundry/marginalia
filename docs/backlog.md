@@ -68,3 +68,82 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
   rejection; `connectDrive` out of `Settings.tsx`; `Reader.tsx` split.
 - `pdfjs/` support files (cmaps, standard fonts, wasm) are not precached for offline use.
 - `touch()` rewrites the whole PDF record on every cached open; store `openedAt` separately.
+
+## Parked at the v2 final re-review
+
+- The 44 px divider hit area covers 22 px of each pane for every pointer type: a Pencil stroke
+  or selection starting within 22 px of the seam drags the divider, and on a laptop with classic
+  scrollbars the paper's scrollbar sits under it. Keep 44 px only under `(pointer: coarse)` and
+  ignore `pointerType === 'pen'` on the divider.
+- The plan still describes the old narrow layout (Paper · Notes radios, `canLayoutBoth`), and the
+  README says the lead shows "Drag a box" without the below-700 px exception.
+- At 375 px (iPhone SE/mini) the Threads button sits 1 px into the toolbar scroll.
+- `isSidecarDoc` checks only `highlights`; an index slot that already points at a notes file is
+  not repaired (no client can create that state any more).
+
+## Deferred from the v2 reviews (2026-11-03)
+
+### Pencil and puck
+
+- The `getContext` spy in `InkLayer.test.tsx` is never restored; add `vi.restoreAllMocks()`.
+- `bindPenPalette` tracks `settings` through `saveSettings`; wrap it in `untracked`.
+- The predicted tail can flip `pressureVaries` for the live frame only.
+- A puck gesture whose up/cancel never arrives leaves the puck unresponsive (no stale reset);
+  the palette only fits hosts taller than about 272 px; no `contextmenu` guard; `puckY` from
+  storage is not sanitised (NaN → `NaNpx`).
+- The live canvas covers the whole page or sheet under a 4 Mpx cap, so the live stroke may be
+  softer than the committed one on large pages; size it to the visible area if the device
+  check shows it.
+
+### Snip
+
+- The download fallback revokes the object URL right after `click()`; WebKit may lose the
+  blob and the toast still says "Image saved". Revoke later.
+- An armed pen snip bypasses `penActivity`, so no palm window opens after it.
+- Snip can be armed in the Notes layout and a selection bar survives the layout switch.
+- The "Drag a box" hint is a `role=status` mounted with text (not announced); hidden below
+  700 px where the lead is Back alone.
+- Bar flex-wrap is an inline style; `onToNotes` missing from the bar's layout-effect deps.
+
+### Home
+
+- An orphan picture record can survive a superseded refresh; every refresh with an unchanged
+  version mints a new object URL; a cached picture is not retried after coming back online
+  while its id/version is unchanged; IndexedDB rejections escape the Hero effect.
+- The quotation cartouche may overflow a 240 px band on a sideways phone; the onboarding hero is
+  boxed, not edge to edge.
+
+### Notes sync
+
+- A newer-schema notes remote is re-downloaded every sync while the local entry stays queued.
+- A trashed home-picture slot winner is not handed to the other file until a full walk.
+- `sidecarRevision` is bumped per kind (a notes-only pull reloads badges); the isolation test
+  proves only the annotations-first direction; `exceedsSimpleUpload` copies the body to measure.
+- Every typing pause longer than 1.5 s uploads the whole notes file (can be several MB);
+  confirm the resumable upload's final response carries `version`.
+- A v1 tab left open on the laptop silently stops saving after the database upgrade.
+- A background notes pull does not reach an open sheet until it is reopened (saving merges, so
+  nothing is lost).
+- v2 ignores a bad annotations record but does not repair an index slot that already points at
+  a notes file (no client can create that state any more).
+
+### Notes sheet
+
+- Ink is stored in sheet units (scales with the sheet width) while text stays a fixed size, so
+  handwriting drifts from its words after a pane-width change. Decide after the device test.
+- A 300-stroke sheet re-outlines every stroke on each new line of text and each divider move.
+- "+ Image" loses the insertion point on desktop (button focus); the 1.5 MB cap is on the blob,
+  not the data URL (~2 MB base64); typing coalescing has no blur/pause boundary; stored vs
+  visible image width disagree above ~0.86 on narrow sheets; the Enter guard misses Android
+  keyboards (`beforeinput` `insertParagraph` is the robust path); keyboard accessibility (menu
+  arrows/Escape, image selection, handle); `scaleY` duplicates `InkLayer`'s `widthUnits`;
+  `decodeImage` is untested (no `createImageBitmap` in happy-dom).
+
+### Reader
+
+- "Loading notes…" sticks after a `loadNotes` rejection until the layout toggles.
+- Layout radiogroup lacks arrow keys; divider `aria-valuenow` is the stored ratio; no Home/End.
+- Panes under 640 px total leave the notes pane under 320 px.
+- `notesLayout`/`splitRatio` from storage are not sanitised.
+- `Reader.tsx` is ~850 lines; `Divider`, `useMedia`, `clampSplit` could move out.
+- `height: 100dvh` on the shell overrides the already-correct `inset: 0`.
