@@ -1,0 +1,145 @@
+/* Lasso overlay: the dashed loop, the selection frame with corner handles and the object menu above it. */
+.mg-lasso {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mg-lasso[data-finger-draws] {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mg-lasso-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mg-lasso-loop {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  stroke-linejoin: round;
+}
+
+.mg-lasso-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px dashed var(--accent);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+
+.mg-lasso-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  touch-action: none;
+}
+
+/* A larger invisible hit area around each handle. */
+.mg-lasso-handle::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+.mg-lasso-handle[data-corner='nw'] {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.mg-lasso-handle[data-corner='ne'] {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.mg-lasso-handle[data-corner='sw'] {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+.mg-lasso-handle[data-corner='se'] {
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+}
+
+.mg-lasso-menu {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, calc(-100% - 8px));
+  pointer-events: auto;
+}
+
+.mg-object-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  touch-action: manipulation;
+}
+
+.mg-object-menu-row {
+  display: flex;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.mg-object-menu-item {
+  height: var(--tap);
+  padding: 0 10px;
+  border-radius: calc(var(--radius) - 4px);
+  font-size: 14px;
+  color: inherit;
+  background: transparent;
+}
+
+.mg-object-menu-item:hover,
+.mg-object-menu-item[aria-expanded='true'] {
+  background: var(--surface-2);
+}
+
+.mg-object-menu-colors {
+  display: grid;
+  grid-template-columns: repeat(6, var(--tap));
+  justify-content: center;
+}
+
+.mg-object-menu-color {
+  width: var(--tap);
+  height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.mg-object-menu-color::before {
+  content: '';
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--dot);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
