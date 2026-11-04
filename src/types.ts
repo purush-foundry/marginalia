@@ -124,6 +124,10 @@ export interface DriveNode {
   appProperties?: Record<string, string>
 }
 
+export type HomeArtSlot = 'landscape' | 'portrait' | 'generic'
+
+export type HomeArtFiles = Partial<Record<HomeArtSlot, DriveNode>>
+
 export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 export const PDF_MIME = 'application/pdf'
 
@@ -135,6 +139,10 @@ export interface LibraryIndex {
   papers: Record<string, DriveNode>
   /** Sidecar node keyed by the PDF file id it belongs to. */
   sidecars: Record<string, DriveNode>
+  /** Notes file node keyed by the PDF file id it belongs to. */
+  notes?: Record<string, DriveNode>
+  /** Home pictures found in the root folder, by slot. */
+  homeArt?: HomeArtFiles
   syncedAt: number
   changesToken?: string
 }
@@ -163,4 +171,57 @@ export interface PageText {
   columns: Box[]
   /** Plain text in reading order with paragraph breaks. */
   text: string
+}
+
+// Notes
+
+export type NotesBackground = 'blank' | 'grid' | 'dots' | 'lines'
+
+/** Plain-text paragraph on the notes sheet. */
+export interface TextBlock extends Item {
+  kind: 'text'
+  order: string
+  text: string
+}
+
+/** Image on the notes sheet; `w` is its width as a fraction of the sheet width, `aspect` is height / width; `page` links a Snip to its page. */
+export interface ImageBlock extends Item {
+  kind: 'image'
+  order: string
+  src: string
+  w: number
+  aspect: number
+  page?: number
+}
+
+export type NoteBlock = TextBlock | ImageBlock
+
+/** Freehand stroke on the notes sheet; points are flat [x, y, pressure] with x and y divided by the sheet width; width is a fraction of the sheet width. */
+export interface NoteStroke extends Item {
+  kind: 'ink'
+  color: string
+  width: number
+  points: number[]
+}
+
+/** One notes file per PDF, stored next to it in Drive as `<name>.marginalia-notes.json`. */
+export interface NotesDoc {
+  schema: 1
+  kind: 'notes'
+  pdfId: string
+  pdfName: string
+  blocks: NoteBlock[]
+  strokes: NoteStroke[]
+  background: NotesBackground
+  backgroundUpdatedAt: number
+}
+
+export function emptyNotes(pdfId: string, pdfName: string, now: number): NotesDoc {
+  return { schema: 1, kind: 'notes', pdfId, pdfName, blocks: [], strokes: [], background: 'blank', backgroundUpdatedAt: now }
+}
+
+export function isNotesDoc(x: unknown): x is NotesDoc {
+  if (typeof x !== 'object' || x === null) return false
+  const doc = x as Partial<NotesDoc>
+  return doc.kind === 'notes' && doc.schema === 1 && Array.isArray(doc.blocks) && Array.isArray(doc.strokes)
 }

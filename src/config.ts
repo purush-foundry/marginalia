@@ -10,6 +10,11 @@ export const DRIVE_SCOPES = [
 
 export const SIDECAR_SUFFIX = '.marginalia.json'
 
+export const NOTES_SUFFIX = '.marginalia-notes.json'
+
+/** Home picture in the root folder; capture group 1 is the slot, absent for the generic picture. */
+export const HOME_ART_FILE = /^marginalia-home(?:-(landscape|portrait))?\.(png|jpe?g|webp)$/i
+
 export const DEFAULT_TEXT_MODEL = 'claude-haiku-5-5'
 export const DEFAULT_VISION_MODEL = 'claude-opus-5-5'
 

@@ -13,6 +13,9 @@ const MAX_RETRIES = 3
 const RETRY_BASE_MS = 1000
 const RATE_LIMIT_REASONS = new Set(['userRateLimitExceeded', 'rateLimitExceeded'])
 
+/** JSON bodies above this many UTF-8 bytes are uploaded through a resumable session. */
+export const SIMPLE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+
 export class DriveError extends Error {
   status: number
   reason?: string
@@ -133,15 +136,34 @@ export async function downloadJson<T>(id: string): Promise<T> {
   return getJson<T>(url(API, `/files/${encodeURIComponent(id)}`, { alt: 'media' }))
 }
 
-/** Creates a JSON file with metadata in one multipart upload. */
+function exceedsSimpleUpload(text: string): boolean {
+  return new TextEncoder().encode(text).byteLength > SIMPLE_UPLOAD_MAX_BYTES
+}
+
+// Opens a resumable upload session with the metadata, then PUTs the JSON text to the session URL.
+async function uploadResumable(method: 'POST' | 'PATCH', path: string, metadata: object, text: string): Promise<DriveNode> {
+  const session = await request(url(UPLOAD, path, { uploadType: 'resumable', fields: NODE_FIELDS }), {
+    method,
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/json' },
+    body: JSON.stringify(metadata),
+  })
+  const location = session.headers.get('Location')
+  if (!location) throw new DriveError(session.status, 'noUploadSession', 'resumable upload returned no session URL')
+  const raw = await getJson<RawNode>(location, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: text })
+  return toNode(raw)
+}
+
+/** Creates a JSON file with metadata in one multipart upload, or a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
 export async function createJsonFile(
   name: string,
   parentId: string,
   body: unknown,
   appProperties: Record<string, string>,
 ): Promise<DriveNode> {
-  const boundary = `marginalia-${crypto.randomUUID()}`
   const metadata = { name, parents: [parentId], mimeType: 'application/json', appProperties }
+  const text = JSON.stringify(body)
+  if (exceedsSimpleUpload(text)) return uploadResumable('POST', '/files', metadata, text)
+  const boundary = `marginalia-${crypto.randomUUID()}`
   const multipart = [
     `--${boundary}`,
     'Content-Type: application/json; charset=UTF-8',
@@ -150,7 +172,7 @@ export async function createJsonFile(
     `--${boundary}`,
     'Content-Type: application/json',
     '',
-    JSON.stringify(body),
+    text,
     `--${boundary}--`,
     '',
   ].join('\r\n')
@@ -162,23 +184,32 @@ export async function createJsonFile(
   return toNode(raw)
 }
 
-/** Replaces a JSON file's content. */
+/** Replaces a JSON file's content, through a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
 export async function updateJsonFile(id: string, body: unknown): Promise<DriveNode> {
-  const target = url(UPLOAD, `/files/${encodeURIComponent(id)}`, { uploadType: 'media', fields: NODE_FIELDS })
-  const raw = await getJson<RawNode>(target, {
+  const path = `/files/${encodeURIComponent(id)}`
+  const text = JSON.stringify(body)
+  if (exceedsSimpleUpload(text)) return uploadResumable('PATCH', path, {}, text)
+  const raw = await getJson<RawNode>(url(UPLOAD, path, { uploadType: 'media', fields: NODE_FIELDS }), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: text,
   })
   return toNode(raw)
 }
 
-/** An existing sidecar for the PDF: by appProperties.pdf, else by name in the parent folder. */
-export async function findSidecarFile(pdfId: string, name: string, parentId: string): Promise<DriveNode | null> {
-  const [tagged] = await listAll(`appProperties has { key='pdf' and value=${quote(pdfId)} } and trashed = false`)
-  if (tagged) return tagged
+/** An existing companion file of the given kind for the PDF: by its appProperties tag, else by name in the parent folder. */
+export async function findCompanionFile(pdfId: string, name: string, parentId: string, tag: '1' | 'notes'): Promise<DriveNode | null> {
+  const kind = tag === '1' ? '' : ` and appProperties has { key='marginalia' and value=${quote(tag)} }`
+  const tagged = await listAll(`appProperties has { key='pdf' and value=${quote(pdfId)} }${kind} and trashed = false`)
+  const match = tagged.find((node) => node.appProperties?.marginalia === tag)
+  if (match) return match
   const [named] = await listAll(`name = ${quote(name)} and ${quote(parentId)} in parents and trashed = false`)
   return named ?? null
+}
+
+/** An existing sidecar for the PDF: by appProperties.pdf, else by name in the parent folder. */
+export function findSidecarFile(pdfId: string, name: string, parentId: string): Promise<DriveNode | null> {
+  return findCompanionFile(pdfId, name, parentId, '1')
 }
 
 export async function getStartPageToken(): Promise<string> {

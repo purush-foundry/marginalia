@@ -1,4 +1,4 @@
-import type { Sidecar } from '../types'
+import type { NotesDoc, Sidecar } from '../types'
 
 interface Versioned {
   id: string
@@ -45,4 +45,25 @@ export function mergeSidecars(a: Sidecar, b: Sidecar): Sidecar {
     merged.colorLabels = { ...older.colorLabels, ...newer.colorLabels }
   }
   return merged
+}
+
+// Latest change time anywhere in the notes.
+function notesTouched(n: NotesDoc): number {
+  return Math.max(n.backgroundUpdatedAt, ...[...n.blocks, ...n.strokes].map((i) => i.updatedAt))
+}
+
+/** Blocks and strokes per id, newest updatedAt wins, tombstones win ties; background newest wins; pdfName from the more recently touched doc. */
+export function mergeNotes(a: NotesDoc, b: NotesDoc): NotesDoc {
+  const newer = notesTouched(b) > notesTouched(a) ? b : a
+  const background = b.backgroundUpdatedAt > a.backgroundUpdatedAt ? b : a
+  return {
+    schema: 1,
+    kind: 'notes',
+    pdfId: newer.pdfId,
+    pdfName: newer.pdfName,
+    blocks: mergeItems(a.blocks, b.blocks),
+    strokes: mergeItems(a.strokes, b.strokes),
+    background: background.background,
+    backgroundUpdatedAt: background.backgroundUpdatedAt,
+  }
 }

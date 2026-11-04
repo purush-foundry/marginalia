@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LIBRARY_SYNC_INTERVAL_MS, PDF_CACHE_LIMIT_BYTES, SIDECAR_SAVE_DEBOUNCE_MS } from '../config'
-import { FOLDER_MIME, PDF_MIME, emptySidecar, type AreaHighlight, type Sidecar } from '../types'
+import { FOLDER_MIME, PDF_MIME, emptyNotes, emptySidecar, type AreaHighlight, type ImageBlock, type NotesDoc, type Sidecar, type TextBlock } from '../types'
 import { FakeDrive, driveError, signIn } from './test-helpers'
 
 type Library = typeof import('./library')
@@ -21,6 +21,21 @@ function hl(id: string, updatedAt: number): AreaHighlight {
 
 function withHighlights(pdfId: string, ...ids: string[]): Sidecar {
   return { ...emptySidecar(pdfId, `${pdfId}.pdf`, 0), highlights: ids.map((id, i) => hl(id, i + 1)) }
+}
+
+interface StoredNotes {
+  sidecar: NotesDoc
+  remoteId?: string
+  remoteVersion?: string
+  dirty: boolean
+}
+
+function block(id: string, updatedAt: number): TextBlock {
+  return { kind: 'text', id, createdAt: updatedAt, updatedAt, order: `k${updatedAt}`, text: id }
+}
+
+function withBlocks(pdfId: string, ...ids: string[]): NotesDoc {
+  return { ...emptyNotes(pdfId, `${pdfId}.pdf`, 0), blocks: ids.map((id, i) => block(id, i + 1)) }
 }
 
 let drive: FakeDrive
@@ -58,6 +73,17 @@ function remoteSidecar(id: string, pdfId: string, parent: string, sidecar: Sidec
     parents: [parent],
     appProperties: appPdf ? { marginalia: '1', pdf: pdfId } : undefined,
     content: JSON.stringify(sidecar),
+  })
+}
+
+function remoteNotes(id: string, pdfId: string, parent: string, doc: NotesDoc, tagged = true) {
+  drive.add({
+    id,
+    name: `${pdfId}.marginalia-notes.json`,
+    mimeType: 'application/json',
+    parents: [parent],
+    appProperties: tagged ? { marginalia: 'notes', pdf: pdfId } : undefined,
+    content: JSON.stringify(doc),
   })
 }
 
@@ -501,6 +527,312 @@ describe('sidecars', () => {
     expect(stored).toMatchObject({ remoteVersion: '2', dirty: true })
     expect(stored!.sidecar).toEqual(merged)
     expect(await lib.loadSidecar('p1')).toEqual(merged)
+  })
+})
+
+describe('notes', () => {
+  const blockIds = (doc: NotesDoc) => doc.blocks.map((b) => b.id).sort()
+
+  test('notesNameFor swaps .pdf for .marginalia-notes.json', () => {
+    expect(lib.notesNameFor('Attention.pdf')).toBe('Attention.marginalia-notes.json')
+    expect(lib.notesNameFor('scan.PDF')).toBe('scan.marginalia-notes.json')
+  })
+
+  test('loadNotes returns empty notes for an unseen paper', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    expect(await lib.loadNotes('p1')).toEqual(emptyNotes('p1', 'p1.pdf', 0))
+  })
+
+  test('saveNotes debounces into IndexedDB and flushQueue creates the notes file, then updates it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    lib.saveNotes('p1', withBlocks('p1', 'a'))
+    lib.saveNotes('p1', withBlocks('p1', 'a', 'b'))
+    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(blockIds(await lib.loadNotes('p1'))).toEqual(['a', 'b'])
+    await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    const notesId = lib.library.value!.notes!.p1.id
+    expect(drive.files.get(notesId)).toMatchObject({
+      name: 'p1.marginalia-notes.json',
+      parents: ['root'],
+      appProperties: { marginalia: 'notes', pdf: 'p1' },
+    })
+    expect(blockIds(drive.json<NotesDoc>(notesId))).toEqual(['a', 'b'])
+    expect(lib.library.value!.sidecars).toEqual({})
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false, remoteVersion: '1' })
+    expect(await idb.idbKeys('queue')).toEqual([])
+
+    lib.saveNotes('p1', withBlocks('p1', 'a', 'b', 'c'))
+    await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    expect(drive.calls.filter((c) => c.method === 'PATCH').map((c) => c.url.pathname)).toEqual([`/upload/drive/v3/files/${notesId}`])
+    expect(blockIds(drive.json<NotesDoc>(notesId))).toEqual(['a', 'b', 'c'])
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
+    expect(await idb.idbKeys('queue')).toEqual([])
+  })
+
+  test('the full walk maps notes files to index.notes and never to index.sidecars', async () => {
+    paper('p1', 'root')
+    paper('p2', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1'))
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1'))
+    remoteNotes('n2', 'p2', 'root', withBlocks('p2'), false)
+
+    await lib.setRootFolder(ROOT)
+
+    const index = lib.library.value!
+    expect(Object.fromEntries(Object.entries(index.notes!).map(([pdfId, node]) => [pdfId, node.id]))).toEqual({ p1: 'n1', p2: 'n2' })
+    expect(Object.fromEntries(Object.entries(index.sidecars).map(([pdfId, node]) => [pdfId, node.id]))).toEqual({ p1: 's1' })
+  })
+
+  test('changes add new notes files to index.notes and drop trashed ones', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1'))
+    await lib.setRootFolder(ROOT)
+
+    paper('p2', 'root')
+    remoteNotes('n2', 'p2', 'root', withBlocks('p2'))
+    drive.update('n1', { trashed: true })
+    await lib.syncLibrary()
+
+    expect(Object.keys(lib.library.value!.notes!)).toEqual(['p2'])
+    expect(lib.library.value!.notes!.p2.id).toBe('n2')
+    expect(lib.library.value!.sidecars).toEqual({})
+  })
+
+  test('refreshNotes finds an unindexed notes file by tag without matching the sidecar', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'h'))
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'theirs'))
+
+    const merged = await lib.refreshNotes('p1')
+
+    expect(blockIds(merged!)).toEqual(['theirs'])
+    expect(lib.library.value!.notes!.p1.id).toBe('n1')
+    expect(lib.library.value!.sidecars.p1).toBeUndefined()
+  })
+
+  test('refreshSidecar finds an unindexed sidecar by tag without matching the notes file', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'b'))
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'theirs'))
+
+    const merged = await lib.refreshSidecar('p1')
+
+    expect(merged!.highlights.map((h) => h.id)).toEqual(['theirs'])
+    expect(lib.library.value!.sidecars.p1.id).toBe('s1')
+  })
+
+  test('flushQueue merges a notes file that moved remotely before uploading', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    await lib.setRootFolder(ROOT)
+    drive.update('n1', { content: JSON.stringify(withBlocks('p1', 'a', 'remote')) })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    lib.saveNotes('p1', { ...withBlocks('p1', 'a'), blocks: [block('a', 1), block('local', 5)] })
+    await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
+    await lib.flushQueue()
+
+    expect(blockIds(drive.json<NotesDoc>('n1'))).toEqual(['a', 'local', 'remote'])
+    const stored = await idb.idbGet<StoredNotes>('notes', 'p1')
+    expect(blockIds(stored!.sidecar)).toEqual(['a', 'local', 'remote'])
+    expect(stored).toMatchObject({ dirty: false, remoteVersion: '3' })
+  })
+
+  test('notes saved offline stay queued in IndexedDB and upload after sign-in', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    const auth = await import('./auth')
+    await auth.signOut()
+
+    lib.saveNotes('p1', withBlocks('p1', 'a'))
+    await lib.flushPendingWrites()
+
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: true })
+    expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
+    expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
+
+    await signIn()
+    await lib.syncLibrary()
+
+    expect(blockIds(drive.json<NotesDoc>(lib.library.value!.notes!.p1.id))).toEqual(['a'])
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false })
+  })
+
+  test('a sidecar edit never re-uploads the notes file', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    await lib.setRootFolder(ROOT)
+    lib.saveNotes('p1', withBlocks('p1', 'a', 'b'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+    const writes = () => drive.calls.filter((c) => c.method !== 'GET')
+    const before = writes().length
+
+    lib.saveSidecar('p1', withHighlights('p1', 'h'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    const after = writes().slice(before)
+    expect(after.map((c) => c.method)).toEqual(['POST'])
+    expect(after.some((c) => c.url.pathname.includes('n1'))).toBe(false)
+    expect(drive.json<Sidecar>(lib.library.value!.sidecars.p1.id).highlights.map((h) => h.id)).toEqual(['h'])
+  })
+
+  test('syncLibrary pulls a notes file another device changed', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    await lib.setRootFolder(ROOT)
+    expect(blockIds(await lib.loadNotes('p1'))).toEqual(['a'])
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: false })
+
+    drive.update('n1', { content: JSON.stringify({ ...withBlocks('p1', 'a', 'b'), background: 'grid', backgroundUpdatedAt: 4 }) })
+    await lib.syncLibrary()
+
+    const doc = await lib.loadNotes('p1')
+    expect(blockIds(doc)).toEqual(['a', 'b'])
+    expect(doc.background).toBe('grid')
+  })
+
+  test('a failed notes download does not stop sidecar pulls and is counted', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'h'))
+    drive.failWhen.push((call) => (call.url.pathname === '/drive/v3/files/n1' && call.url.searchParams.get('alt') === 'media' ? driveError(500, 'backendError') : undefined))
+
+    await lib.setRootFolder(ROOT)
+
+    expect((await lib.loadSidecar('p1')).highlights.map((h) => h.id)).toEqual(['h'])
+    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(lib.syncState.value.message).toContain('1 notes download(s) failed')
+  })
+
+  test('failures of both kinds are reported together', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    drive.failWhen.push((call) => (call.method === 'POST' ? driveError(500, 'backendError') : undefined))
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+    await idb.idbSet('notes', 'p1', { sidecar: withBlocks('p1', 'a'), dirty: true })
+    await idb.idbSet('queue', 'notes:p1', { queuedAt: 0 })
+
+    await lib.flushQueue()
+
+    expect(lib.syncState.value.message).toBe('1 annotation upload(s) failed · 1 notes upload(s) failed')
+    expect((await idb.idbKeys('queue')).sort()).toEqual(['notes:p1', 'p1'])
+  })
+
+  test('a v1 queue entry keyed by the bare PDF id still flushes as a sidecar', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+
+    await lib.flushQueue()
+
+    const created = drive.files.get(lib.library.value!.sidecars.p1.id)!
+    expect(created).toMatchObject({ name: 'p1.marginalia.json', appProperties: { marginalia: '1', pdf: 'p1' } })
+    expect(lib.library.value!.notes ?? {}).toEqual({})
+    expect(await idb.idbKeys('queue')).toEqual([])
+  })
+
+  test.each([
+    ['a sidecar body', '{"schema":1,"pdfId":"p1","highlights":[]}'],
+    ['invalid JSON', '{"kind":"no'],
+  ])('a remote notes file that is not a notes document (%s) is never merged and gets the local notes', async (_what, content) => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    const local = withBlocks('p1', 'mine')
+    await idb.idbSet('notes', 'p1', { sidecar: local, dirty: false })
+    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', pdf: 'p1' }, content })
+
+    expect(await lib.refreshNotes('p1')).toBeNull()
+    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ sidecar: local, dirty: true })
+    expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
+
+    await lib.flushQueue()
+
+    expect(drive.json<NotesDoc>('n1')).toEqual(local)
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(await lib.loadNotes('p1')).toEqual(local)
+  })
+
+  test('notes over the simple-upload limit go up through a resumable session', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    const image: ImageBlock = { kind: 'image', id: 'img', createdAt: 1, updatedAt: 1, order: 'V', src: `data:image/jpeg;base64,${'A'.repeat(6 * 1024 * 1024)}`, w: 1, aspect: 0.5 }
+    const doc = { ...withBlocks('p1'), blocks: [image] }
+    const isResumable = (c: { url: URL }) => c.url.searchParams.get('uploadType') === 'resumable'
+    const sessionPuts = () => drive.calls.filter((c) => c.method === 'PUT' && c.url.origin === 'https://upload.fake')
+
+    lib.saveNotes('p1', doc)
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method === 'POST').map(isResumable)).toEqual([true])
+    expect(sessionPuts()).toHaveLength(1)
+    expect(JSON.parse(sessionPuts()[0].body!)).toEqual(doc)
+    const notesId = lib.library.value!.notes!.p1.id
+    expect(drive.files.get(notesId)).toMatchObject({ name: 'p1.marginalia-notes.json', appProperties: { marginalia: 'notes', pdf: 'p1' } })
+    expect(drive.json<NotesDoc>(notesId)).toEqual(doc)
+    expect(await idb.idbKeys('queue')).toEqual([])
+
+    const edited = { ...doc, blocks: [image, block('caption', 2)] }
+    lib.saveNotes('p1', edited)
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method === 'PATCH').map(isResumable)).toEqual([true])
+    expect(sessionPuts()).toHaveLength(2)
+    expect(blockIds(drive.json<NotesDoc>(notesId))).toEqual(['caption', 'img'])
+    expect(await idb.idbKeys('queue')).toEqual([])
+  })
+})
+
+describe('home pictures', () => {
+  function picture(id: string, name: string, parent = 'root') {
+    drive.add({ id, name, mimeType: 'image/png', parents: [parent] })
+  }
+
+  test('records the landscape, portrait and generic home pictures in the root folder only, and clears a slot when trashed', async () => {
+    folder('f1', 'root')
+    picture('land', 'marginalia-home-landscape.jpg')
+    picture('land2', 'marginalia-home-landscape.png')
+    picture('port', 'marginalia-home-portrait.webp')
+    picture('gen', 'marginalia-home.png')
+    picture('square', 'marginalia-home-square.png')
+    picture('nested', 'marginalia-home-portrait.png', 'f1')
+
+    await lib.setRootFolder(ROOT)
+
+    const ids = () => Object.fromEntries(Object.entries(lib.library.value!.homeArt ?? {}).map(([slot, node]) => [slot, node!.id]))
+    expect(ids()).toEqual({ landscape: 'land', portrait: 'port', generic: 'gen' })
+    expect(lib.library.value!.papers).toEqual({})
+
+    drive.update('port', { trashed: true })
+    await lib.syncLibrary()
+    expect(ids()).toEqual({ landscape: 'land', generic: 'gen' })
+
+    drive.update('gen', { parents: ['f1'] })
+    await lib.syncLibrary()
+    expect(ids()).toEqual({ landscape: 'land' })
+
+    drive.remove('land')
+    drive.remove('land2')
+    await lib.syncLibrary()
+    expect(lib.library.value!.homeArt).toBeUndefined()
   })
 })
 

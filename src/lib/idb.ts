@@ -1,10 +1,10 @@
 // IndexedDB key-value helper over the app's object stores, with an in-memory map when IndexedDB is absent.
 
-export type StoreName = 'files' | 'sidecars' | 'settings' | 'meta' | 'queue'
+export type StoreName = 'files' | 'sidecars' | 'notes' | 'settings' | 'meta' | 'queue'
 
 const DB_NAME = 'marginalia'
-const DB_VERSION = 1
-const STORES: readonly StoreName[] = ['files', 'sidecars', 'settings', 'meta', 'queue']
+const DB_VERSION = 2
+const STORES: readonly StoreName[] = ['files', 'sidecars', 'notes', 'settings', 'meta', 'queue']
 
 let dbPromise: Promise<IDBDatabase> | null = null
 const memory = new Map<StoreName, Map<string, unknown>>(STORES.map((s) => [s, new Map()]))

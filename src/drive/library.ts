@@ -1,19 +1,32 @@
-// Mirror of the chosen Drive folder tree, the PDF blob cache, and sidecar load/save/sync.
+// Mirror of the chosen Drive folder tree, the PDF blob cache, and companion file (sidecar, notes) load/save/sync.
 import { signal } from '@preact/signals'
 import {
+  HOME_ART_FILE,
   LIBRARY_SYNC_INTERVAL_MS,
+  NOTES_SUFFIX,
   PDF_CACHE_LIMIT_BYTES,
   SIDECAR_SAVE_DEBOUNCE_MS,
   SIDECAR_SUFFIX,
 } from '../config'
 import { idbDel, idbGet, idbGetAll, idbKeys, idbSet } from '../lib/idb'
-import { FOLDER_MIME, PDF_MIME, emptySidecar, type DriveNode, type LibraryIndex, type Sidecar } from '../types'
+import {
+  FOLDER_MIME,
+  PDF_MIME,
+  emptyNotes,
+  emptySidecar,
+  isNotesDoc,
+  type DriveNode,
+  type HomeArtSlot,
+  type LibraryIndex,
+  type NotesDoc,
+  type Sidecar,
+} from '../types'
 import {
   DriveError,
   createJsonFile,
   downloadFile,
   downloadJson,
-  findSidecarFile,
+  findCompanionFile,
   getNode,
   getStartPageToken,
   listChanges,
@@ -21,7 +34,7 @@ import {
   updateJsonFile,
 } from './api'
 import { getAccessToken } from './auth'
-import { mergeSidecars } from './merge'
+import { mergeNotes, mergeSidecars } from './merge'
 
 interface CachedFile {
   version: string
@@ -38,11 +51,26 @@ interface LegacyCachedFile {
   openedAt: number
 }
 
-interface StoredSidecar {
-  sidecar: Sidecar
+/** A local companion record; the document lives under `sidecar` for both kinds. */
+interface StoredCompanion<T> {
+  sidecar: T
   remoteId?: string
   remoteVersion?: string
   dirty: boolean
+}
+
+/** One kind of per-PDF companion file and how it is named, stored, indexed, merged and validated. */
+interface Companion<T> {
+  kind: 'annotations' | 'notes'
+  store: 'sidecars' | 'notes'
+  tag: '1' | 'notes'
+  nameFor(pdfName: string): string
+  queueKey(pdfId: string): string
+  map(index: LibraryIndex): Record<string, DriveNode>
+  empty(pdfId: string, pdfName: string): T
+  merge(a: T, b: T): T
+  accepts(remote: unknown): remote is T
+  label: string
 }
 
 interface SyncState {
@@ -53,16 +81,63 @@ interface SyncState {
 
 export const library = signal<LibraryIndex | null>(null)
 export const syncState = signal<SyncState>({ status: 'idle' })
-/** Increments whenever a sync merges sidecars from Drive into local records. */
+/** Increments whenever a sync merges sidecars or notes from Drive into local records. */
 export const sidecarRevision = signal(0)
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+export function sidecarNameFor(pdfName: string): string {
+  return pdfName.replace(/\.pdf$/i, '') + SIDECAR_SUFFIX
+}
+
+export function notesNameFor(pdfName: string): string {
+  return pdfName.replace(/\.pdf$/i, '') + NOTES_SUFFIX
+}
+
+const NOTES_QUEUE_PREFIX = 'notes:'
+
+const ANNOTATIONS: Companion<Sidecar> = {
+  kind: 'annotations',
+  store: 'sidecars',
+  tag: '1',
+  nameFor: sidecarNameFor,
+  queueKey: (pdfId) => pdfId,
+  map: (index) => index.sidecars,
+  empty: (pdfId, pdfName) => emptySidecar(pdfId, pdfName, 0),
+  merge: mergeSidecars,
+  accepts: (_remote: unknown): _remote is Sidecar => true,
+  label: 'annotation',
+}
+
+const NOTES: Companion<NotesDoc> = {
+  kind: 'notes',
+  store: 'notes',
+  tag: 'notes',
+  nameFor: notesNameFor,
+  queueKey: (pdfId) => NOTES_QUEUE_PREFIX + pdfId,
+  map: (index) => index.notes ?? {},
+  empty: (pdfId, pdfName) => emptyNotes(pdfId, pdfName, 0),
+  merge: mergeNotes,
+  accepts: isNotesDoc,
+  label: 'notes',
+}
+
+const COMPANIONS: readonly Companion<unknown>[] = [ANNOTATIONS, NOTES]
+
+// The companion kind and PDF id a queue key stands for.
+function fromQueueKey(key: string): [Companion<unknown>, string] {
+  return key.startsWith(NOTES_QUEUE_PREFIX) ? [NOTES, key.slice(NOTES_QUEUE_PREFIX.length)] : [ANNOTATIONS, key]
+}
+
 interface PendingSave {
-  sidecar: Sidecar
+  companion: Companion<unknown>
+  pdfId: string
+  doc: unknown
   timer: ReturnType<typeof setTimeout>
   writing?: Promise<void>
 }
 
+/** Debounced edits keyed by the companion's queue key. */
 const pendingSaves = new Map<string, PendingSave>()
 let syncing: Promise<void> | null = null
 
@@ -84,7 +159,7 @@ const localLane = serial()
 const has = (record: Record<string, unknown>, id: string): boolean => Object.hasOwn(record, id)
 
 // True when the remote file or its version differs from the one last merged locally.
-function remoteMoved(stored: StoredSidecar | undefined, remote: DriveNode): boolean {
+function remoteMoved(stored: StoredCompanion<unknown> | undefined, remote: DriveNode): boolean {
   return stored?.remoteId !== remote.id || stored.remoteVersion !== remote.version
 }
 
@@ -93,42 +168,69 @@ async function commit(index: LibraryIndex): Promise<void> {
   await idbSet('meta', 'library', index)
 }
 
-export function sidecarNameFor(pdfName: string): string {
-  return pdfName.replace(/\.pdf$/i, '') + SIDECAR_SUFFIX
+// The companion kind of a file: by its marginalia tag, else by its name suffix.
+function companionOf(node: DriveNode): Companion<unknown> | undefined {
+  const tag = node.appProperties?.marginalia
+  return COMPANIONS.find((c) => c.tag === tag) ?? COMPANIONS.find((c) => node.name.endsWith(c.nameFor('')))
 }
 
-function isSidecarNode(node: DriveNode): boolean {
-  return node.name.endsWith(SIDECAR_SUFFIX) || node.appProperties?.marginalia === '1'
-}
-
-// Maps a sidecar to its PDF by appProperties.pdf, else by expected name in a shared parent.
-function attachSidecar(index: LibraryIndex, node: DriveNode): void {
+// Maps a companion file to its PDF by appProperties.pdf, else by expected name in a shared parent.
+function attachCompanion(index: LibraryIndex, node: DriveNode): void {
+  const c = companionOf(node)
+  if (!c) return
   const tagged = node.appProperties?.pdf
   const pdfId =
     tagged && has(index.papers, tagged)
       ? tagged
       : Object.values(index.papers).find(
-          (p) => sidecarNameFor(p.name) === node.name && p.parents.some((id) => node.parents.includes(id)),
+          (p) => c.nameFor(p.name) === node.name && p.parents.some((id) => node.parents.includes(id)),
         )?.id
-  if (pdfId) index.sidecars[pdfId] = node
+  if (pdfId) (index[c.store] ??= {})[pdfId] = node
 }
 
-// Breadth-first walk from the given folders, adding folders, PDFs and sidecars to the index.
+// The home picture slot of a file directly in the root folder, if its name is one.
+function homeArtSlot(index: LibraryIndex, node: DriveNode): HomeArtSlot | undefined {
+  if (!node.parents.includes(index.rootId)) return undefined
+  const match = HOME_ART_FILE.exec(node.name)
+  if (!match) return undefined
+  return (match[1]?.toLowerCase() as HomeArtSlot | undefined) ?? 'generic'
+}
+
+// Records a home picture under its slot; of two files for one slot the lowest name by code units wins.
+function attachHomeArt(index: LibraryIndex, node: DriveNode): void {
+  const slot = homeArtSlot(index, node)
+  if (!slot) return
+  const art = (index.homeArt ??= {})
+  const seen = art[slot]
+  if (!seen || seen.id === node.id || node.name < seen.name) art[slot] = node
+}
+
+// Clears any home picture slot held by the file.
+function detachHomeArt(index: LibraryIndex, id: string): void {
+  const art = index.homeArt ?? {}
+  for (const slot of Object.keys(art) as HomeArtSlot[]) if (art[slot]?.id === id) delete art[slot]
+}
+
+// Files a node as a folder, companion (collected to attach after the walk), paper or home picture.
+function classify(index: LibraryIndex, node: DriveNode, companions: DriveNode[], newFolders: string[]): void {
+  if (node.mimeType === FOLDER_MIME) {
+    if (!has(index.folders, node.id)) newFolders.push(node.id)
+    index.folders[node.id] = node
+  } else if (companionOf(node)) companions.push(node)
+  else if (node.mimeType === PDF_MIME) index.papers[node.id] = node
+  else attachHomeArt(index, node)
+}
+
+// Breadth-first walk from the given folders, adding folders, PDFs, companion files and home pictures to the index.
 async function walkInto(index: LibraryIndex, start: string[]): Promise<void> {
-  const sidecars: DriveNode[] = []
+  const companions: DriveNode[] = []
   let frontier = start
   while (frontier.length) {
     const children = await listChildren(frontier)
     frontier = []
-    for (const node of children) {
-      if (node.mimeType === FOLDER_MIME) {
-        if (!has(index.folders, node.id)) frontier.push(node.id)
-        index.folders[node.id] = node
-      } else if (isSidecarNode(node)) sidecars.push(node)
-      else if (node.mimeType === PDF_MIME) index.papers[node.id] = node
-    }
+    for (const node of children) classify(index, node, companions, frontier)
   }
-  for (const node of sidecars) attachSidecar(index, node)
+  for (const node of companions) attachCompanion(index, node)
 }
 
 async function fullWalk(index: LibraryIndex): Promise<LibraryIndex> {
@@ -140,6 +242,7 @@ async function fullWalk(index: LibraryIndex): Promise<LibraryIndex> {
     folders: { [root.id]: root },
     papers: {},
     sidecars: {},
+    notes: {},
     syncedAt: 0,
     changesToken,
   }
@@ -151,12 +254,14 @@ async function fullWalk(index: LibraryIndex): Promise<LibraryIndex> {
 function removeNode(index: LibraryIndex, id: string): void {
   if (id !== index.rootId) delete index.folders[id]
   delete index.papers[id]
-  for (const [pdfId, node] of Object.entries(index.sidecars)) {
-    if (node.id === id) delete index.sidecars[pdfId]
+  for (const c of COMPANIONS) {
+    const nodes = c.map(index)
+    for (const [pdfId, node] of Object.entries(nodes)) if (node.id === id) delete nodes[pdfId]
   }
+  detachHomeArt(index, id)
 }
 
-// Drops folders and papers no longer reachable from a known folder, and sidecars of missing papers.
+// Drops folders and papers no longer reachable from a known folder, companions of missing papers, and an empty homeArt.
 function prune(index: LibraryIndex): void {
   const attached = (node: DriveNode) => node.parents.some((p) => has(index.folders, p))
   for (let changed = true; changed; ) {
@@ -169,7 +274,11 @@ function prune(index: LibraryIndex): void {
     }
   }
   for (const [id, node] of Object.entries(index.papers)) if (!attached(node)) delete index.papers[id]
-  for (const pdfId of Object.keys(index.sidecars)) if (!has(index.papers, pdfId)) delete index.sidecars[pdfId]
+  for (const c of COMPANIONS) {
+    const nodes = c.map(index)
+    for (const pdfId of Object.keys(nodes)) if (!has(index.papers, pdfId)) delete nodes[pdfId]
+  }
+  if (index.homeArt && !Object.keys(index.homeArt).length) delete index.homeArt
 }
 
 async function applyChanges(index: LibraryIndex, startToken: string): Promise<LibraryIndex> {
@@ -178,9 +287,11 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
     folders: { ...index.folders },
     papers: { ...index.papers },
     sidecars: { ...index.sidecars },
+    notes: { ...index.notes },
+    homeArt: { ...index.homeArt },
   }
   const newFolders: string[] = []
-  const sidecars: DriveNode[] = []
+  const companions: DriveNode[] = []
   let pageToken = startToken
   for (;;) {
     const page = await listChanges(pageToken)
@@ -195,11 +306,10 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
         next.rootName = node.name
       } else if (!node.parents.some((p) => has(next.folders, p))) {
         removeNode(next, node.id)
-      } else if (node.mimeType === FOLDER_MIME) {
-        if (!has(next.folders, node.id)) newFolders.push(node.id)
-        next.folders[node.id] = node
-      } else if (isSidecarNode(node)) sidecars.push(node)
-      else if (node.mimeType === PDF_MIME) next.papers[node.id] = node
+      } else {
+        detachHomeArt(next, node.id)
+        classify(next, node, companions, newFolders)
+      }
     }
     if (!page.nextPageToken) {
       next.changesToken = page.newStartPageToken ?? pageToken
@@ -208,7 +318,7 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
     pageToken = page.nextPageToken
   }
   if (newFolders.length) await walkInto(next, newFolders)
-  for (const node of sidecars) attachSidecar(next, node)
+  for (const node of companions) attachCompanion(next, node)
   prune(next)
   next.syncedAt = Date.now()
   return next
@@ -249,6 +359,7 @@ export async function setRootFolder(node: DriveNode): Promise<void> {
     folders: { [node.id]: node },
     papers: {},
     sidecars: {},
+    notes: {},
     syncedAt: 0,
   })
   await syncLibrary()
@@ -402,21 +513,36 @@ export async function getPdfBlob(pdfId: string, onProgress?: (frac: number) => v
   return blob
 }
 
-/** The latest local sidecar (including an unsaved debounced edit), or an empty one. */
-export async function loadSidecar(pdfId: string): Promise<Sidecar> {
-  const pending = pendingSaves.get(pdfId)
-  if (pending) return pending.sidecar
-  const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-  return stored?.sidecar ?? emptySidecar(pdfId, library.peek()?.papers[pdfId]?.name ?? '', 0)
+// An empty document of the kind, named after the paper when the index knows it.
+function emptyFor<T>(c: Companion<T>, pdfId: string): T {
+  return c.empty(pdfId, library.peek()?.papers[pdfId]?.name ?? '')
 }
 
-async function persist(pdfId: string, sidecar: Sidecar): Promise<void> {
+// The latest local document of the kind: the pending edit, else the stored record, else an empty one.
+async function load<T>(c: Companion<T>, pdfId: string): Promise<T> {
+  const pending = pendingSaves.get(c.queueKey(pdfId))
+  if (pending) return pending.doc as T
+  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+  return stored?.sidecar ?? emptyFor(c, pdfId)
+}
+
+/** The latest local sidecar (including an unsaved debounced edit), or an empty one. */
+export function loadSidecar(pdfId: string): Promise<Sidecar> {
+  return load(ANNOTATIONS, pdfId)
+}
+
+/** The latest local notes (including an unsaved debounced edit), or empty notes. */
+export function loadNotes(pdfId: string): Promise<NotesDoc> {
+  return load(NOTES, pdfId)
+}
+
+async function persist<T>(c: Companion<T>, pdfId: string, doc: T): Promise<void> {
   await localLane(async () => {
-    const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
-    const merged = stored ? mergeSidecars(sidecar, stored.sidecar) : sidecar
-    const record: StoredSidecar = { ...stored, sidecar: merged, dirty: true }
-    await idbSet('sidecars', pdfId, record)
-    await idbSet('queue', pdfId, { queuedAt: Date.now() })
+    const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    const merged = stored ? c.merge(doc, stored.sidecar) : doc
+    const record: StoredCompanion<T> = { ...stored, sidecar: merged, dirty: true }
+    await idbSet(c.store, pdfId, record)
+    await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
   })
   if (getAccessToken()) {
     flushQueue().catch((err: unknown) => {
@@ -426,38 +552,53 @@ async function persist(pdfId: string, sidecar: Sidecar): Promise<void> {
 }
 
 // Persists a debounced edit now and forgets it once stored; on failure keeps it and retries after the debounce.
-function writePending(pdfId: string, entry: PendingSave): Promise<void> {
+function writePending(entry: PendingSave): Promise<void> {
+  const { companion: c, pdfId } = entry
+  const key = c.queueKey(pdfId)
   clearTimeout(entry.timer)
-  entry.writing ??= persist(pdfId, entry.sidecar).then(
+  entry.writing ??= persist(c, pdfId, entry.doc).then(
     () => {
-      if (pendingSaves.get(pdfId) === entry) pendingSaves.delete(pdfId)
+      if (pendingSaves.get(key) === entry) pendingSaves.delete(key)
     },
     (err: unknown) => {
       entry.writing = undefined
-      if (pendingSaves.get(pdfId) === entry) {
-        entry.timer = setTimeout(() => void writePending(pdfId, entry), SIDECAR_SAVE_DEBOUNCE_MS)
+      if (pendingSaves.get(key) === entry) {
+        entry.timer = setTimeout(() => void writePending(entry), SIDECAR_SAVE_DEBOUNCE_MS)
       }
       const message = err instanceof Error ? err.message : String(err)
-      syncState.value = { status: 'error', message: `Could not save annotations on this device: ${message}`, at: Date.now() }
+      syncState.value = { status: 'error', message: `Could not save ${c.kind} on this device: ${message}`, at: Date.now() }
     },
   )
   return entry.writing
 }
 
-/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS: merges into the local copy, marks it dirty and queues an upload. */
-export function saveSidecar(pdfId: string, sidecar: Sidecar): void {
-  const previous = pendingSaves.get(pdfId)
+// Replaces the kind's pending edit for the paper and restarts its debounce.
+function save<T>(c: Companion<T>, pdfId: string, doc: T): void {
+  const key = c.queueKey(pdfId)
+  const previous = pendingSaves.get(key)
   if (previous) clearTimeout(previous.timer)
   const entry: PendingSave = {
-    sidecar,
-    timer: setTimeout(() => void writePending(pdfId, entry), SIDECAR_SAVE_DEBOUNCE_MS),
+    companion: c,
+    pdfId,
+    doc,
+    timer: setTimeout(() => void writePending(entry), SIDECAR_SAVE_DEBOUNCE_MS),
   }
-  pendingSaves.set(pdfId, entry)
+  pendingSaves.set(key, entry)
 }
 
-/** Writes every debounced sidecar edit to IndexedDB and the upload queue immediately. */
+/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS: merges into the local copy, marks it dirty and queues an upload. */
+export function saveSidecar(pdfId: string, sidecar: Sidecar): void {
+  save(ANNOTATIONS, pdfId, sidecar)
+}
+
+/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS with its own pending entry and queue key: merges into the local notes, marks them dirty and queues an upload. */
+export function saveNotes(pdfId: string, doc: NotesDoc): void {
+  save(NOTES, pdfId, doc)
+}
+
+/** Writes every debounced sidecar and notes edit to IndexedDB and the upload queue immediately. */
 export async function flushPendingWrites(): Promise<void> {
-  await Promise.all([...pendingSaves].map(([pdfId, entry]) => writePending(pdfId, entry)))
+  await Promise.all([...pendingSaves.values()].map((entry) => writePending(entry)))
 }
 
 // The folder in the tree that holds the paper.
@@ -465,88 +606,145 @@ function parentOf(index: LibraryIndex, paper: DriveNode): string | undefined {
   return paper.parents.find((id) => has(index.folders, id)) ?? paper.parents[0]
 }
 
-// The paper's sidecar node from the index, else found in Drive and recorded in the index.
-async function locateSidecar(pdfId: string): Promise<DriveNode | undefined> {
+// The index with `node` recorded as the paper's companion file of the kind.
+function withCompanion(index: LibraryIndex, c: Companion<unknown>, pdfId: string, node: DriveNode): LibraryIndex {
+  return { ...index, [c.store]: { ...c.map(index), [pdfId]: node } }
+}
+
+// The paper's companion node of the kind from the index, else found in Drive and recorded in the index.
+async function locate<T>(c: Companion<T>, pdfId: string): Promise<DriveNode | undefined> {
   const index = library.peek()
-  const known = index?.sidecars[pdfId]
+  const known = index ? c.map(index)[pdfId] : undefined
   const paper = index?.papers[pdfId]
   const parent = index && paper && parentOf(index, paper)
   if (known || !paper || !parent) return known
-  const found = await findSidecarFile(pdfId, sidecarNameFor(paper.name), parent)
+  const found = await findCompanionFile(pdfId, c.nameFor(paper.name), parent, c.tag)
   const current = library.peek()
   if (!found || !current || !has(current.papers, pdfId)) return found ?? undefined
-  await commit({ ...current, sidecars: { ...current.sidecars, [pdfId]: found } })
+  await commit(withCompanion(current, c, pdfId, found))
   return found
 }
 
-// Downloads the sidecar at `remoteNode`, merges it into the local record and returns the merged sidecar.
-async function mergeRemote(pdfId: string, remoteNode: DriveNode): Promise<Sidecar> {
-  const remote = await downloadJson<Sidecar>(remoteNode.id)
+// Downloads a companion file; null when the kind does not accept its content.
+async function download<T>(c: Companion<T>, id: string): Promise<T | null> {
+  let remote: unknown
+  try {
+    remote = await downloadJson<unknown>(id)
+  } catch (err) {
+    // Unparseable content is unaccepted for a kind that validates; a kind that accepts anything keeps the error.
+    if (err instanceof SyntaxError && !c.accepts(undefined)) return null
+    throw err
+  }
+  return c.accepts(remote) ? remote : null
+}
+
+// Merges the remote file into the local record and returns the result; an unaccepted remote leaves the local document dirty and queued, and returns null.
+async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveNode): Promise<T | null> {
+  const remote = await download(c, remoteNode.id)
   return localLane(async () => {
-    const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
-    const sidecar = latest ? mergeSidecars(latest.sidecar, remote) : remote
-    const record: StoredSidecar = { sidecar, remoteId: remoteNode.id, remoteVersion: remoteNode.version, dirty: latest?.dirty ?? false }
-    await idbSet('sidecars', pdfId, record)
-    return sidecar
+    const latest = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    const seen = { remoteId: remoteNode.id, remoteVersion: remoteNode.version }
+    if (remote === null) {
+      const record: StoredCompanion<T> = { sidecar: latest?.sidecar ?? emptyFor(c, pdfId), ...seen, dirty: true }
+      await idbSet(c.store, pdfId, record)
+      await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
+      return null
+    }
+    const doc = latest ? c.merge(latest.sidecar, remote) : remote
+    const record: StoredCompanion<T> = { sidecar: doc, ...seen, dirty: latest?.dirty ?? false }
+    await idbSet(c.store, pdfId, record)
+    return doc
   })
 }
 
-/** If the remote sidecar's version differs from the one last merged: download, merge, store and return it; else null. */
-export async function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
+// If the remote file's version differs from the one last merged: download, merge, store and return it; else null.
+async function refresh<T>(c: Companion<T>, pdfId: string): Promise<T | null> {
   if (!getAccessToken()) return null
-  const known = await locateSidecar(pdfId)
+  const known = await locate(c, pdfId)
   if (!known) return null
   const remoteNode = await getNode(known.id)
-  const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
+  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
   if (!remoteMoved(stored, remoteNode)) return null
-  const merged = await mergeRemote(pdfId, remoteNode)
-  const pending = pendingSaves.get(pdfId)
-  return pending ? mergeSidecars(merged, pending.sidecar) : merged
+  const merged = await mergeRemote(c, pdfId, remoteNode)
+  const pending = pendingSaves.get(c.queueKey(pdfId))
+  return merged !== null && pending ? c.merge(merged, pending.doc as T) : merged
 }
 
-// Merges every indexed sidecar whose Drive version differs from the local record, so badges reflect other devices.
-async function pullSidecars(): Promise<void> {
-  const index = library.peek()
-  if (!index) return
+/** If the remote sidecar's version differs from the one last merged: download, merge, store and return it; else null. */
+export function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
+  return refresh(ANNOTATIONS, pdfId)
+}
+
+/** If the remote notes file's version differs from the one last merged: download, merge, store and return the notes; else null, also when the remote is not a notes document. */
+export function refreshNotes(pdfId: string): Promise<NotesDoc | null> {
+  return refresh(NOTES, pdfId)
+}
+
+// One message for the per-kind failure counts, joined with ' · '.
+function failureMessage(failed: Map<Companion<unknown>, number>, action: 'download' | 'upload'): string {
+  return COMPANIONS.filter((c) => failed.has(c))
+    .map((c) => `${failed.get(c)} ${c.label} ${action}(s) failed`)
+    .join(' · ')
+}
+
+// Merges every indexed companion of the kind whose Drive version differs from the local record and returns the failure count; rethrows an offline failure.
+async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
   let pulled = 0
   let failed = 0
   try {
-    for (const [pdfId, node] of Object.entries(index.sidecars)) {
+    for (const [pdfId, node] of Object.entries(c.map(index))) {
       try {
-        if (!remoteMoved(await idbGet<StoredSidecar>('sidecars', pdfId), node)) continue
-        await mergeRemote(pdfId, node)
-        pulled++
+        if (!remoteMoved(await idbGet<StoredCompanion<T>>(c.store, pdfId), node)) continue
+        if ((await mergeRemote(c, pdfId, node)) !== null) pulled++
       } catch (err) {
-        if (failureState(err).status === 'offline') {
-          syncState.value = { ...failureState(err), at: Date.now() }
-          return
-        }
+        if (failureState(err).status === 'offline') throw err
         failed++
       }
     }
-    if (failed) syncState.value = { status: 'error', message: `${failed} annotation download(s) failed`, at: Date.now() }
   } finally {
     if (pulled) sidecarRevision.value++
   }
+  return failed
 }
 
-// Uploads one queued sidecar, merging first if the remote moved, and records the new remote version.
-async function flushOne(pdfId: string): Promise<void> {
-  const stored = await idbGet<StoredSidecar>('sidecars', pdfId)
+// Pulls every changed sidecar and notes file, so badges and notes reflect other devices.
+async function pullSidecars(): Promise<void> {
+  const index = library.peek()
+  if (!index) return
+  const failed = new Map<Companion<unknown>, number>()
+  for (const c of COMPANIONS) {
+    try {
+      const count = await pull(c, index)
+      if (count) failed.set(c, count)
+    } catch (err) {
+      syncState.value = { ...failureState(err), at: Date.now() }
+      return
+    }
+  }
+  if (failed.size) syncState.value = { status: 'error', message: failureMessage(failed, 'download'), at: Date.now() }
+}
+
+// Uploads one queued companion file, merging first if the remote moved, and records the new remote version.
+async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
+  const key = c.queueKey(pdfId)
+  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
   const index = library.peek()
   const paper = index?.papers[pdfId]
   if (!stored || (index && index.syncedAt > 0 && !paper)) {
-    await idbDel('queue', pdfId)
+    await idbDel('queue', key)
     return
   }
   const parent = index && paper && parentOf(index, paper)
-  const known = await locateSidecar(pdfId)
+  const known = await locate(c, pdfId)
   let body = stored.sidecar
   let node: DriveNode | undefined
   if (known) {
     try {
       const remote = await getNode(known.id)
-      if (remoteMoved(stored, remote)) body = mergeSidecars(body, await downloadJson<Sidecar>(known.id))
+      if (remoteMoved(stored, remote)) {
+        const theirs = await download(c, known.id)
+        if (theirs !== null) body = c.merge(body, theirs)
+      }
       node = await updateJsonFile(known.id, body)
     } catch (err) {
       if (!(err instanceof DriveError) || err.status !== 404) throw err
@@ -554,41 +752,42 @@ async function flushOne(pdfId: string): Promise<void> {
   }
   if (!node) {
     if (!paper || !parent) return
-    node = await createJsonFile(sidecarNameFor(paper.name), parent, body, { marginalia: '1', pdf: pdfId })
+    node = await createJsonFile(c.nameFor(paper.name), parent, body, { marginalia: c.tag, pdf: pdfId })
   }
   const current = library.peek()
-  if (current) await commit({ ...current, sidecars: { ...current.sidecars, [pdfId]: node } })
+  if (current) await commit(withCompanion(current, c, pdfId, node))
   const uploaded = node
   await localLane(async () => {
-    const latest = await idbGet<StoredSidecar>('sidecars', pdfId)
+    const latest = await idbGet<StoredCompanion<T>>(c.store, pdfId)
     if (latest && JSON.stringify(latest.sidecar) !== JSON.stringify(stored.sidecar)) {
-      const record: StoredSidecar = { sidecar: mergeSidecars(latest.sidecar, body), remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: true }
-      await idbSet('sidecars', pdfId, record)
+      const record: StoredCompanion<T> = { sidecar: c.merge(latest.sidecar, body), remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: true }
+      await idbSet(c.store, pdfId, record)
     } else {
-      const record: StoredSidecar = { sidecar: body, remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: false }
-      await idbSet('sidecars', pdfId, record)
-      await idbDel('queue', pdfId)
+      const record: StoredCompanion<T> = { sidecar: body, remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: false }
+      await idbSet(c.store, pdfId, record)
+      await idbDel('queue', key)
     }
   })
 }
 
-/** Uploads every queued sidecar; failures stay queued and are reported in syncState. */
+/** Uploads every queued sidecar and notes file; failures stay queued and are reported in syncState. */
 export function flushQueue(): Promise<void> {
   return driveLane(async () => {
     if (!getAccessToken()) return
-    let failed = 0
-    for (const pdfId of await idbKeys('queue')) {
+    const failed = new Map<Companion<unknown>, number>()
+    for (const key of await idbKeys('queue')) {
+      const [c, pdfId] = fromQueueKey(key)
       try {
-        await flushOne(pdfId)
+        await flushOne(c, pdfId)
       } catch (err) {
         if (failureState(err).status === 'offline') {
           syncState.value = { ...failureState(err), at: Date.now() }
           return
         }
-        failed++
+        failed.set(c, (failed.get(c) ?? 0) + 1)
         if (err instanceof DriveError && err.status === 401) break
       }
     }
-    if (failed) syncState.value = { status: 'error', message: `${failed} annotation upload(s) failed`, at: Date.now() }
+    if (failed.size) syncState.value = { status: 'error', message: failureMessage(failed, 'upload'), at: Date.now() }
   })
 }

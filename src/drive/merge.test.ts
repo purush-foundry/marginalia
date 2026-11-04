@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { emptySidecar, type AreaHighlight, type Sidecar } from '../types'
-import { mergeSidecars } from './merge'
+import { emptyNotes, emptySidecar, type AreaHighlight, type NoteStroke, type NotesDoc, type Sidecar, type TextBlock } from '../types'
+import { mergeNotes, mergeSidecars } from './merge'
 
 function hl(id: string, updatedAt: number, extra: Partial<AreaHighlight> = {}): AreaHighlight {
   return {
@@ -81,5 +81,55 @@ describe('mergeSidecars', () => {
 
   test('no labels on either side leaves colorLabels absent', () => {
     expect(mergeSidecars(sidecar({}), sidecar({})).colorLabels).toBeUndefined()
+  })
+})
+
+function text(id: string, updatedAt: number, extra: Partial<TextBlock> = {}): TextBlock {
+  return { kind: 'text', id, createdAt: 1, updatedAt, order: 'V', text: id, ...extra }
+}
+
+function stroke(id: string, updatedAt: number, extra: Partial<NoteStroke> = {}): NoteStroke {
+  return { kind: 'ink', id, createdAt: 1, updatedAt, color: '#000', width: 0.01, points: [0, 0, 0.5], ...extra }
+}
+
+function notes(patch: Partial<NotesDoc>): NotesDoc {
+  return { ...emptyNotes('pdf1', 'paper.pdf', 0), ...patch }
+}
+
+describe('mergeNotes', () => {
+  test('mergeNotes keeps the newest block and stroke per id and honours tombstones', () => {
+    const a = notes({ blocks: [text('x', 10, { text: 'old' }), text('gone', 5)], strokes: [stroke('s', 3)] })
+    const b = notes({ blocks: [text('x', 20, { text: 'new' }), text('gone', 5, { deleted: true })], strokes: [stroke('s', 4, { deleted: true })] })
+
+    for (const merged of [mergeNotes(a, b), mergeNotes(b, a)]) {
+      const byId = Object.fromEntries(merged.blocks.map((block) => [block.id, block]))
+      expect((byId.x as TextBlock).text).toBe('new')
+      expect(byId.gone.deleted).toBe(true)
+      expect(merged.strokes).toHaveLength(1)
+      expect(merged.strokes[0].deleted).toBe(true)
+    }
+  })
+
+  test('mergeNotes keeps blocks two devices inserted concurrently, even with the same order key', () => {
+    const a = notes({ blocks: [text('mine', 7, { order: 'k' })] })
+    const b = notes({ blocks: [text('theirs', 8, { order: 'k' })] })
+
+    expect(mergeNotes(a, b).blocks.map((block) => block.id).sort()).toEqual(['mine', 'theirs'])
+  })
+
+  test('mergeNotes takes the newer background', () => {
+    const a = notes({ background: 'grid', backgroundUpdatedAt: 5 })
+    const b = notes({ background: 'dots', backgroundUpdatedAt: 9 })
+
+    expect(mergeNotes(a, b)).toMatchObject({ background: 'dots', backgroundUpdatedAt: 9 })
+    expect(mergeNotes(b, a)).toMatchObject({ background: 'dots', backgroundUpdatedAt: 9 })
+  })
+
+  test('mergeNotes takes pdfName from the more recently touched doc', () => {
+    const a = notes({ pdfName: 'old.pdf', blocks: [text('x', 3)] })
+    const b = notes({ pdfName: 'renamed.pdf', blocks: [text('y', 6)] })
+
+    expect(mergeNotes(a, b).pdfName).toBe('renamed.pdf')
+    expect(mergeNotes(b, a).pdfName).toBe('renamed.pdf')
   })
 })

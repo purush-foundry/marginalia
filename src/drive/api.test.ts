@@ -148,6 +148,18 @@ describe('request shapes', () => {
     expect(node?.id).toBe('byName')
   })
 
+  test('findCompanionFile adds the marginalia tag to the tagged query', async () => {
+    const calls = mockFetch(() => json({ files: [rawFile('n', { appProperties: { marginalia: 'notes', pdf: 'pdf1' } })] }))
+
+    const node = await api.findCompanionFile('pdf1', 'x.marginalia-notes.json', 'folder', 'notes')
+
+    expect(calls).toHaveLength(1)
+    const q = calls[0].url.searchParams.get('q')!
+    expect(q).toContain("key='pdf' and value='pdf1'")
+    expect(q).toContain("key='marginalia' and value='notes'")
+    expect(node?.id).toBe('n')
+  })
+
   test('getStartPageToken and listChanges', async () => {
     const calls = mockFetch(({ url }) => {
       if (url.pathname.endsWith('/startPageToken')) return json({ startPageToken: 'tok1' })

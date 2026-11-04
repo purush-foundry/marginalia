@@ -64,7 +64,7 @@ interface FakeFile {
   trashed: boolean
 }
 
-/** In-memory Drive v3 behind a mocked fetch: files.list by parents, get, media, multipart create, media update, changes. */
+/** In-memory Drive v3 behind a mocked fetch: files.list by parents and tags, get, media, multipart create, media update, resumable sessions, changes. */
 export class FakeDrive {
   files = new Map<string, FakeFile>()
   changeLog: string[] = []
@@ -72,6 +72,7 @@ export class FakeDrive {
   /** Failure hooks: the first one returning a Response answers the call instead of the fake. */
   failWhen: Array<(call: Call) => Response | undefined> = []
   private nextId = 1
+  private sessions = new Map<string, { id?: string; meta?: Omit<FakeFile, 'id'> }>()
 
   constructor() {
     this.calls = mockFetch((call) => this.handle(call))
@@ -122,12 +123,14 @@ export class FakeDrive {
       const q = params.get('q')!
       const parents = [...q.matchAll(/'([^']+)' in parents/g)].map((m) => m[1])
       const tag = q.match(/appProperties has \{ key='pdf' and value='([^']+)' \}/)?.[1]
+      const kind = q.match(/appProperties has \{ key='marginalia' and value='([^']+)' \}/)?.[1]
       const name = q.match(/name = '([^']+)'/)?.[1]
       const files = [...this.files.values()].filter(
         (f) =>
           !f.trashed &&
           (!parents.length || f.parents.some((p) => parents.includes(p))) &&
           (!tag || f.appProperties?.pdf === tag) &&
+          (!kind || f.appProperties?.marginalia === kind) &&
           (!name || f.name === name),
       )
       return json({ files: files.map((f) => this.raw(f)) })
@@ -140,6 +143,25 @@ export class FakeDrive {
         return f ? { fileId: id, removed: false, file: { ...this.raw(f), trashed: f.trashed } } : { fileId: id, removed: true }
       })
       return json({ changes, newStartPageToken: String(this.changeLog.length) })
+    }
+    if (url.origin === 'https://upload.fake' && method === 'PUT') {
+      const session = this.sessions.get(path)
+      if (!session) return driveError(404, 'notFound')
+      this.sessions.delete(path)
+      if (session.id) {
+        this.update(session.id, { content: call.body! })
+        return json(this.raw(this.files.get(session.id)!))
+      }
+      const id = `created-${this.nextId++}`
+      this.add({ id, ...session.meta!, content: call.body! })
+      return json(this.raw(this.files.get(id)!))
+    }
+    if (path.startsWith('/upload/drive/v3/files') && params.get('uploadType') === 'resumable') {
+      const id = path.match(/^\/upload\/drive\/v3\/files\/([^/]+)$/)?.[1]
+      if (id && !this.files.has(decodeURIComponent(id))) return driveError(404, 'notFound')
+      const session = `/session/${this.nextId++}`
+      this.sessions.set(session, id ? { id: decodeURIComponent(id) } : { meta: JSON.parse(call.body!) as Omit<FakeFile, 'id'> })
+      return new Response(null, { status: 200, headers: { Location: `https://upload.fake${session}` } })
     }
     if (path === '/upload/drive/v3/files' && method === 'POST') {
       const boundary = call.headers['content-type'].split('boundary=')[1]
