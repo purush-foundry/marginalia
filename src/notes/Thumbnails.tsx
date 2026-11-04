@@ -87,6 +87,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
   const pages = store.pages.value
   const contents = store.content.value
   const navRef = useRef<HTMLElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const swallowClick = useRef(false)
@@ -99,6 +100,20 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     timer.current = null
   }
   useEffect(() => clearTimer, [])
+
+  // Holds the list still under a long-press so a drag reorders instead of scrolling.
+  const holdList = (on: boolean) => {
+    if (listRef.current) listRef.current.style.touchAction = on ? 'none' : ''
+  }
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const onTouchMove = (e: TouchEvent) => {
+      if (gesture.current?.long) e.preventDefault()
+    }
+    nav.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => nav.removeEventListener('touchmove', onTouchMove)
+  }, [])
 
   useEffect(() => {
     if (menu === null) return
@@ -149,6 +164,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     timer.current = setTimeout(() => {
       timer.current = null
       g.long = true
+      holdList(true)
       setMenu(id)
     }, THUMB_LONG_PRESS_MS)
   }
@@ -177,6 +193,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     gesture.current = null
     clearTimer()
     if (!g.long) return
+    holdList(false)
     swallowClick.current = true
     setDrag(null)
     if (!g.dragging) return
@@ -192,6 +209,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     if (gesture.current && e.pointerId !== gesture.current.pointerId) return
     gesture.current = null
     clearTimer()
+    holdList(false)
     lastDrag.current = ''
     setDrag(null)
   }
@@ -211,7 +229,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
           <Icon name="close" />
         </button>
       )}
-      <div class="mg-thumbs-list">
+      <div ref={listRef} class="mg-thumbs-list">
         {pages.map((p, i) => (
           <div class="mg-thumb-cell" key={p.id}>
             <button

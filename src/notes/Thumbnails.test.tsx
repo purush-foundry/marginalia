@@ -132,6 +132,34 @@ test('long-press-drag reorders pages', async () => {
   expect(onJump).not.toHaveBeenCalled()
 })
 
+test('during a long-press drag the list neither scrolls nor pans; after release it does again', async () => {
+  await mount(3)
+  const list = $('.mg-thumbs-list')
+  const touchMove = () => {
+    const e = new TouchEvent('touchmove', { bubbles: true, cancelable: true })
+    thumb('page-1').dispatchEvent(e)
+    return e
+  }
+  ptr('pointerdown', thumb('page-1'), 10)
+  expect(touchMove().defaultPrevented).toBe(false)
+  await hold()
+  expect(list.style.touchAction).toBe('none')
+  expect(touchMove().defaultPrevented).toBe(true)
+  await act(() => { ptr('pointermove', thumb('page-1'), 150) })
+  expect(touchMove().defaultPrevented).toBe(true)
+  await act(() => { ptr('pointerup', thumb('page-1'), 150) })
+  expect(ids()).toEqual(['page-2', 'page-1', 'page-3'])
+  expect(list.style.touchAction).toBe('')
+  expect(touchMove().defaultPrevented).toBe(false)
+
+  ptr('pointerdown', thumb('page-2'), 10)
+  await hold()
+  expect(list.style.touchAction).toBe('none')
+  await act(() => { ptr('pointercancel', thumb('page-2'), 10) })
+  expect(list.style.touchAction).toBe('')
+  expect(touchMove().defaultPrevented).toBe(false)
+})
+
 test('moving before the long-press fires cancels it', async () => {
   await mount()
   await act(() => { ptr('pointerdown', thumb('page-1'), 0) })
