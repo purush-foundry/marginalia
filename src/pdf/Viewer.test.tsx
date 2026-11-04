@@ -4,6 +4,7 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InkLayer } from '../ink/InkLayer.tsx'
 import { setTool } from '../ink/tools.ts'
+import { LassoLayer } from '../notes/Lasso.tsx'
 import type { Highlight, InkStroke } from '../types.ts'
 import type { PdfDoc } from './document.ts'
 import { Viewer, type ViewerHandle, type ViewerProps } from './Viewer.tsx'
@@ -247,6 +248,45 @@ describe('Viewer', () => {
         expect.objectContaining({ kind: 'area', boxes: [{ x: 0.1, y: 0.1, w: 0.4, h: 0.4 }] }),
       ),
     )
+  })
+
+  it('a lasso press off the text collapses a text selection and reports no selection', async () => {
+    setTool('lasso')
+    const rect = Element.prototype.getBoundingClientRect
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return this.classList.contains('textLayer') ? new DOMRect(0, 0, 600, 800) : rect.call(this)
+    }
+    restore.push(() => (Element.prototype.getBoundingClientRect = rect))
+    const rects = Range.prototype.getClientRects
+    Range.prototype.getClientRects = () => [new DOMRect(60, 80, 100, 16)] as unknown as DOMRectList
+    restore.push(() => (Range.prototype.getClientRects = rects))
+    const props = mount({
+      pageOverlay: (_page, w, h) => (
+        <LassoLayer
+          items={[]}
+          cssW={w}
+          aspect={h / w}
+          rect={false}
+          objects={false}
+          selection={[]}
+          skip={(t) => t.closest('.textLayer span') !== null}
+          onSelect={() => {}}
+          onMove={() => {}}
+          onScale={() => {}}
+          menu={{ colors: [], onCut() {}, onCopy() {}, onDuplicate() {}, onDelete() {}, onRecolor() {} }}
+        />
+      ),
+    })
+    const range = document.createRange()
+    range.selectNodeContents(textSpan())
+    document.getSelection()!.addRange(range)
+    await vi.waitFor(() => expect(props.onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'text', text: 'text' })))
+
+    const inner = root.querySelector('.mg-page[data-page="1"] .mg-page-inner')!
+    act(() => pointer('pointerdown', inner, { pointerType: 'mouse', pointerId: 1, clientX: 400, clientY: 600, buttons: 1 }))
+    act(() => pointer('pointerup', inner, { pointerType: 'mouse', pointerId: 1, clientX: 400, clientY: 600, buttons: 0 }))
+    expect(document.getSelection()!.rangeCount).toBe(0)
+    await vi.waitFor(() => expect(props.onSelection).toHaveBeenLastCalledWith(null))
   })
 
   it('flushes a pending reading position on unmount', () => {

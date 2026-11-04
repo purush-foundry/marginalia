@@ -770,26 +770,35 @@ test('a lasso move across a page boundary re-parents the selection to the page u
   expect(store.doc.value.strokes[0]).toMatchObject({ page: 'page-1', points: before })
 })
 
-test('⌘V pastes the clipboard at the pointer, else centred on the current page', async () => {
+test('a paste without files pastes the clip at the pointer, else centred on the current page, kept on the page', async () => {
   await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
   await act(() => {
     store.addStroke({ id: 'a', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#d33a2c', width: 0.004, points: [0.1, 0.2, 0.5, 0.3, 0.4, 0.5], createdAt: 1, updatedAt: 1 })
   })
   copyItems(store.content.value.get('page-1')!, [{ kind: 'stroke', id: 'a' }])
   const pasted = () => store.doc.value.strokes.filter((x) => x.id !== 'a')
+  const systemPaste = async (target: EventTarget = scroller()) => {
+    const e = fileEvent('paste', 'clipboardData', [])
+    await act(() => {
+      target.dispatchEvent(e)
+    })
+    return e
+  }
+  const hover = (x: number, y: number) =>
+    act(() => {
+      page('page-1').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', pointerId: 1, clientX: x, clientY: y }))
+    })
 
   await scrollTo(1220)
-  await keyDown('v', { metaKey: true })
+  expect((await systemPaste()).defaultPrevented).toBe(true)
   expect(pasted()).toHaveLength(1)
   expect(pasted()[0].page).toBe('page-2')
   expect(pasted()[0].points[0]).toBeCloseTo(0.5 - 0.1)
   expect(pasted()[0].points[1]).toBeCloseTo(297 / 210 / 2 - 0.1)
 
   await scrollTo(0)
-  await act(() => {
-    page('page-1').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', pointerId: 1, clientX: 16 + 420, clientY: 16 + 210 }))
-  })
-  await keyDown('v', { ctrlKey: true })
+  await hover(16 + 420, 16 + 210)
+  await systemPaste(document.body)
   expect(pasted()).toHaveLength(2)
   expect(pasted()[1].page).toBe('page-1')
   expect(pasted()[1].points[0]).toBeCloseTo(0.5)
@@ -797,21 +806,69 @@ test('⌘V pastes the clipboard at the pointer, else centred on the current page
 
   const field = document.createElement('textarea')
   document.body.append(field)
-  await keyDown('v', { metaKey: true }, field)
+  expect((await systemPaste(field)).defaultPrevented).toBe(false)
   expect(pasted()).toHaveLength(2)
 
-  // A press outside the notebook leaves ⌘V to the other pane.
+  // A press outside the notebook leaves pastes to the other pane.
   await act(() => {
     field.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
   })
-  await keyDown('v', { metaKey: true })
+  await systemPaste(document.body)
   expect(pasted()).toHaveLength(2)
   field.remove()
   await act(() => {
     page('page-1').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', clientX: 16 + 420, clientY: 16 + 210 }))
   })
-  await keyDown('v', { metaKey: true })
+  await systemPaste()
   expect(pasted()).toHaveLength(3)
+
+  // Near the bottom-right corner the clip's box stays on the page.
+  await hover(16 + 835, 16 + 1185)
+  await systemPaste()
+  expect(pasted()[3].points[0]).toBeCloseTo(1 - 0.2)
+  expect(pasted()[3].points[1]).toBeCloseTo(297 / 210 - 0.2)
+})
+
+test('under Lasso a click on a page then a paste with an image file adds the image, not the clip', async () => {
+  await mount()
+  await act(() => {
+    store.addStroke({ id: 'a', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#d33a2c', width: 0.004, points: [0.1, 0.2, 0.5, 0.3, 0.4, 0.5], createdAt: 1, updatedAt: 1 })
+    setTool('lasso')
+  })
+  copyItems(store.content.value.get('page-1')!, [{ kind: 'stroke', id: 'a' }])
+  const init = { bubbles: true, cancelable: true, pointerType: 'mouse', pointerId: 1, button: 0, clientX: 16 + 600, clientY: 16 + 900 }
+  await act(() => {
+    page('page-1').dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: 1 }))
+    page('page-1').dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }))
+  })
+  // The browser sends a paste to the focused element.
+  const e = fileEvent('paste', 'clipboardData', [new File(['x'], 'shot.png', { type: 'image/png' })])
+  await act(() => {
+    ;(document.activeElement ?? document.body).dispatchEvent(e)
+  })
+  await flush()
+  expect(e.defaultPrevented).toBe(true)
+  expect(store.doc.value.images.map((m) => m.page)).toEqual(['page-1'])
+  expect(store.doc.value.strokes).toHaveLength(1)
+})
+
+test('a lasso press on a notebook page collapses a text selection and focuses the notebook', async () => {
+  await mount()
+  await act(() => setTool('lasso'))
+  const outside = document.createElement('p')
+  outside.textContent = 'paper words'
+  document.body.append(outside)
+  const range = document.createRange()
+  range.selectNodeContents(outside)
+  document.getSelection()!.addRange(range)
+  const init = { bubbles: true, cancelable: true, pointerType: 'mouse', pointerId: 1, button: 0, clientX: 16 + 400, clientY: 16 + 400 }
+  await act(() => {
+    page('page-1').dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: 1 }))
+    page('page-1').dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }))
+  })
+  expect(document.getSelection()!.rangeCount).toBe(0)
+  expect(document.activeElement).toBe(scroller())
+  outside.remove()
 })
 
 // A finger tap at the client point, inside act.

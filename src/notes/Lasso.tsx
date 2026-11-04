@@ -1,5 +1,6 @@
 import type { JSX } from 'preact'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
+import { INK_VIEWPORT_ATTR } from '../ink/InkLayer.tsx'
 import { itemsBounds, rectLoop, selectInLoop, type ItemRef, type LassoItem } from '../ink/lasso.ts'
 import { fingerDraws, penActivity, tool } from '../ink/tools.ts'
 import { now } from '../lib/ids.ts'
@@ -209,6 +210,14 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
       e.preventDefault()
       e.stopPropagation()
     }
+    // Does what the cancelled mousedown would have: collapses the text selection and moves focus to the pane.
+    const takeFocus = () => {
+      const sel = document.getSelection()
+      if (sel && sel.rangeCount > 0) sel.removeAllRanges()
+      const pane = root.closest<HTMLElement>(`[${INK_VIEWPORT_ATTR}]`)
+      if (pane && pane.tabIndex >= 0) pane.focus({ preventScroll: true })
+      else if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    }
     const capture = (e: PointerEvent) => {
       try {
         parent.setPointerCapture(e.pointerId)
@@ -281,6 +290,7 @@ export function LassoLayer(props: LassoLayerProps): JSX.Element {
       }
       swallow(e)
       capture(e)
+      takeFocus()
     }
 
     const onPointerMove = (e: PointerEvent) => {

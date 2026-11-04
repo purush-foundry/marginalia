@@ -621,13 +621,6 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     }
   }
 
-  const onPaste = (e: ClipboardEvent) => {
-    const files = imageFiles(e.clipboardData?.files)
-    if (files.length === 0) return
-    e.preventDefault()
-    void addImages(files)
-  }
-
   const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
 
   const onDrop = (e: DragEvent) => {
@@ -690,10 +683,21 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     const target = clip && pasteTarget(clip)
     if (target) pasteAt(target.page, target.at)
   }
-  const pasteRef = useRef(paste)
-  pasteRef.current = paste
+  // A system paste adds its image files, else, outside text fields, the in-app clip.
+  const onPaste = (e: ClipboardEvent) => {
+    const files = imageFiles(e.clipboardData?.files)
+    if (files.length > 0) {
+      e.preventDefault()
+      void addImages(files)
+    } else if (clipboard.peek() && !inTextField(e.target)) {
+      e.preventDefault()
+      paste()
+    }
+  }
+  const onPasteRef = useRef(onPaste)
+  onPasteRef.current = onPaste
 
-  // ⌘/Ctrl-V outside text fields pastes the in-app clipboard; a press outside the notebook hands it and the selection to the other pane.
+  // Pastes go to the notebook while the last press was in it; a press outside hands pastes and the selection to the other pane.
   useEffect(() => {
     let inside = true
     const onDown = (e: PointerEvent) => {
@@ -701,16 +705,14 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
       inside = !!target && !!rootRef.current?.contains(target)
       if (!inside && !target?.closest('.mg-toolmenu')) setSelection(null)
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (!inside || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v' || !clipboard.peek() || inTextField(e.target)) return
-      e.preventDefault()
-      pasteRef.current()
+    const onDocPaste = (e: ClipboardEvent) => {
+      if (inside) onPasteRef.current(e)
     }
     document.addEventListener('pointerdown', onDown, true)
-    document.addEventListener('keydown', onKey)
+    document.addEventListener('paste', onDocPaste)
     return () => {
       document.removeEventListener('pointerdown', onDown, true)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('paste', onDocPaste)
     }
   }, [])
 
@@ -812,7 +814,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
   const sheetPage = pages.find((p) => p.id === sheetFor)
 
   return (
-    <div ref={rootRef} class="mg-notebook" onPaste={onPaste} onDragOver={(e) => carriesFiles(e) && e.preventDefault()} onDrop={onDrop}>
+    <div ref={rootRef} class="mg-notebook" onDragOver={(e) => carriesFiles(e) && e.preventDefault()} onDrop={onDrop}>
       <div class="mg-nb-bar">
         <ToolRow />
         <button type="button" class="btn mg-nb-tool" onClick={() => inputRef.current?.click()}>
