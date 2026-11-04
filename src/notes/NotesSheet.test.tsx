@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { toast } from '../app/ui.ts'
-import { fingerDraws, mouseDraws, nightInk, penTool } from '../ink/tools.ts'
+import { fingerDraws, mouseDraws, nightInk, penTool, tool } from '../ink/tools.ts'
 import { emptyNotes, type NotesDoc, type TextBlock } from '../types.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
 import { NotesSheet, type NotesSheetHandle } from './NotesSheet.tsx'
@@ -21,6 +21,7 @@ const restores: (() => void)[] = []
 
 beforeEach(() => {
   penTool.value = 'pen'
+  tool.value = 'lasso'
   mouseDraws.value = false
   fingerDraws.value = false
   nightInk.value = false
@@ -312,6 +313,7 @@ test('the background menu stores the choice in the notes doc', async () => {
 })
 
 test('a pen stroke over the sheet is stored in sheet units', async () => {
+  tool.value = 'pen'
   await mount()
   const sheet = $('.mg-notes-sheet')
   await act(() => {
