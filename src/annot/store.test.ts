@@ -118,6 +118,36 @@ describe('annotation store', () => {
     expect(store.inks.value).toHaveLength(1)
   })
 
+  it('replaceStroke tombstones the original and adds the pieces in one undo step', () => {
+    const { store, persist } = make()
+    store.addStroke(stroke('s1'))
+    persist.mockClear()
+    store.replaceStroke('s1', [stroke('p1'), stroke('p2')])
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(store.inks.value.map((s) => s.id)).toEqual(['p1', 'p2'])
+    expect(store.sidecar.value.inks.find((s) => s.id === 's1')?.deleted).toBe(true)
+    store.undo()
+    expect(store.inks.value.map((s) => s.id)).toEqual(['s1'])
+    expect(store.sidecar.value.inks.filter((s) => s.deleted).map((s) => s.id)).toEqual(['p1', 'p2'])
+    store.redo()
+    expect(store.inks.value.map((s) => s.id)).toEqual(['p1', 'p2'])
+    store.undo()
+    store.undo()
+    expect(store.inks.value).toHaveLength(0)
+    expect(store.canUndo.value).toBe(false)
+  })
+
+  it('replaceStroke ignores a stroke that is missing or already erased', () => {
+    const { store } = make()
+    store.replaceStroke('nope', [stroke('p1')])
+    store.addStroke(stroke('s1'))
+    store.removeStroke('s1')
+    store.replaceStroke('s1', [stroke('p2')])
+    expect(store.inks.value).toHaveLength(0)
+    store.undo()
+    expect(store.inks.value.map((s) => s.id)).toEqual(['s1'])
+  })
+
   it('saving a thread persists without an undo step; removing one is undoable', () => {
     const { store, persist } = make()
     store.upsertThread(thread('a', 1))

@@ -17,6 +17,8 @@ export interface AnnotationStore {
   removeHighlight(id: string): void
   addStroke(s: InkStroke): void
   removeStroke(id: string): void
+  /** Tombstones a stroke and adds the pieces, as one undo step. */
+  replaceStroke(id: string, pieces: InkStroke[]): void
   upsertThread(t: Thread): void
   removeThread(id: string): void
   setReading(patch: Partial<ReadingState>): void
@@ -38,11 +40,18 @@ export type NewHighlight = Highlight extends infer H
 type Collection = 'highlights' | 'inks' | 'threads'
 type AnyItem = Highlight | InkStroke | Thread
 
-interface HistoryEntry {
+interface Change {
   collection: Collection
   id: string
   before: AnyItem | undefined
   after: AnyItem
+}
+
+type HistoryEntry = Change[]
+
+interface Put {
+  collection: Collection
+  item: AnyItem
 }
 
 const MAX_HISTORY = 100
@@ -96,11 +105,15 @@ export function createAnnotationStore(
     return (state.value[collection] as AnyItem[]).find((i) => i.id === id)
   }
 
-  function put(collection: Collection, item: AnyItem): void {
-    const list = state.value[collection] as AnyItem[]
-    const exists = list.some((i) => i.id === item.id)
-    const nextList = exists ? list.map((i) => (i.id === item.id ? item : i)) : [...list, item]
-    commit({ ...state.value, [collection]: nextList })
+  // Writes the items into their collections and persists once.
+  function put(items: Put[]): void {
+    let next = state.value
+    for (const { collection, item } of items) {
+      const list = next[collection] as AnyItem[]
+      const nextList = list.some((i) => i.id === item.id) ? list.map((i) => (i.id === item.id ? item : i)) : [...list, item]
+      next = { ...next, [collection]: nextList }
+    }
+    commit(next)
   }
 
   function record(entry: HistoryEntry): void {
@@ -108,27 +121,38 @@ export function createAnnotationStore(
     redoStack.value = []
   }
 
-  function change(collection: Collection, item: AnyItem): void {
-    const before = find(collection, item.id)
-    const after = { ...item, updatedAt: now() } as AnyItem
-    put(collection, after)
-    record({ collection, id: item.id, before, after })
+  // Applies new versions of items as one undo step.
+  function change(items: Put[]): void {
+    const t = now()
+    const entry: HistoryEntry = items.map(({ collection, item }) => ({
+      collection,
+      id: item.id,
+      before: find(collection, item.id),
+      after: { ...item, updatedAt: t } as AnyItem,
+    }))
+    put(entry.map((c) => ({ collection: c.collection, item: c.after })))
+    record(entry)
   }
 
   function tombstone(collection: Collection, id: string): void {
     const before = find(collection, id)
     if (!before || before.deleted) return
-    change(collection, { ...before, deleted: true })
+    change([{ collection, item: { ...before, deleted: true } }])
   }
 
   function undo(): void {
     const entry = undoStack.value[undoStack.value.length - 1]
     if (!entry) return
     undoStack.value = undoStack.value.slice(0, -1)
-    const restored = entry.before
-      ? { ...entry.before, ...(entry.after.deleted ? { deleted: false } : {}) }
-      : { ...entry.after, deleted: true }
-    put(entry.collection, { ...restored, updatedAt: now() } as AnyItem)
+    const t = now()
+    put(
+      [...entry].reverse().map((c) => {
+        const restored = c.before
+          ? { ...c.before, ...(c.after.deleted ? { deleted: false } : {}) }
+          : { ...c.after, deleted: true }
+        return { collection: c.collection, item: { ...restored, updatedAt: t } as AnyItem }
+      }),
+    )
     redoStack.value = [...redoStack.value, entry]
   }
 
@@ -136,7 +160,8 @@ export function createAnnotationStore(
     const entry = redoStack.value[redoStack.value.length - 1]
     if (!entry) return
     redoStack.value = redoStack.value.slice(0, -1)
-    put(entry.collection, { ...entry.after, updatedAt: now() } as AnyItem)
+    const t = now()
+    put(entry.map((c) => ({ collection: c.collection, item: { ...c.after, updatedAt: t } as AnyItem })))
     undoStack.value = [...undoStack.value, entry]
   }
 
@@ -158,18 +183,26 @@ export function createAnnotationStore(
     addHighlight(h) {
       const t = now()
       const item = { ...h, id: newId(), createdAt: t, updatedAt: t } as Highlight
-      put('highlights', item)
-      record({ collection: 'highlights', id: item.id, before: undefined, after: item })
+      put([{ collection: 'highlights', item }])
+      record([{ collection: 'highlights', id: item.id, before: undefined, after: item }])
       return item
     },
     updateHighlight(id, patch) {
       const before = find('highlights', id)
-      if (before) change('highlights', { ...before, ...patch } as Highlight)
+      if (before) change([{ collection: 'highlights', item: { ...before, ...patch } as Highlight }])
     },
     removeHighlight: (id) => tombstone('highlights', id),
-    addStroke: (s) => change('inks', s),
+    addStroke: (s) => change([{ collection: 'inks', item: s }]),
     removeStroke: (id) => tombstone('inks', id),
-    upsertThread: (t) => put('threads', { ...t, updatedAt: now() }),
+    replaceStroke(id, pieces) {
+      const original = find('inks', id)
+      if (!original || original.deleted) return
+      change([
+        { collection: 'inks', item: { ...original, deleted: true } },
+        ...pieces.map((item) => ({ collection: 'inks' as const, item })),
+      ])
+    },
+    upsertThread: (t) => put([{ collection: 'threads', item: { ...t, updatedAt: now() } }]),
     removeThread: (id) => tombstone('threads', id),
     setReading(patch) {
       commit({ ...state.value, reading: { ...state.value.reading, ...patch, updatedAt: now() } })
