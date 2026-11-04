@@ -130,8 +130,10 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 - A lone selected text box takes its own presses, so dragging it moves it within its page only;
   lasso it together with something else to carry it to another page.
 - On a paper page a lasso cannot start inside a highlight's box; the press goes to the highlight.
-- ⌘V prefers the in-app clipboard once something has been copied in the notebook, so an image
-  copied from another app afterwards pastes only through **Image** or drop.
+- ⌘V pastes an image on the system clipboard ahead of the in-app clip, even one copied before
+  the ink; marking the system clipboard on an in-app copy would let the newer one win.
+- Dragging a lasso selection moves the dashed frame; the items follow at lift. A pages-level
+  overlay that carries the items, with edge autoscroll, would preview a cross-page drag.
 - A selection dropped on a page of a different width keeps its page-width coordinates, so it
   lands shifted by the width ratio.
 - The keyboard on a Text-tool tap opens from a focus in the render after the tap; check on iOS

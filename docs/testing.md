@@ -146,7 +146,9 @@ v3 Phase B added:
 - `src/ink/lasso.test.ts` — a stroke is selected at 60 % of its samples inside the loop and not at
   50 %; objects by box centre; rectangle loops with reversed corners; selection bounds.
 - `src/notes/Lasso.test.tsx` — the dashed loop, the frame and the object menu above it (below it
-  near the page top); Recolor swatches; move with a preview and one commit, and a jittered tap
+  near the page top, overlapping a selection that spans the page); the menu wraps on a 358 px page
+  and stays inside the page near the right edge and with Recolor open; with a clip, a tap on empty
+  space offers Paste there and a tap elsewhere or a press off the page dismisses it; Recolor swatches; move with a preview and one commit, and a jittered tap
   that does not move; corner scaling; rectangle mode; Esc and taps outside; ⌘C, ⌘X, Delete and
   Backspace, left alone in text fields and over a native text selection; ink only with text spans
   passed through; a finger taps but only draws the loop with Draw with finger, palm rejection and
@@ -162,18 +164,22 @@ v3 Phase B added:
 - `src/notes/ImageObject.test.tsx` — corner handles scale about the opposite corner with the aspect
   kept and a minimum width; drag moves; a tap selects and a pen press on an unselected image is not
   swallowed; the p.N chip.
-- `src/ink/shapes.test.ts` — ellipse, rectangle, triangle (with overshoot), line and arrow fits; a
-  scribble and short strokes fit nothing; `adjustShape` rotates and scales about the anchor.
+- `src/ink/shapes.test.ts` — ellipse, rectangle, triangle (with overshoot), line and arrow fits,
+  the straight shapes sampled every 2 units so a snapped rectangle and arrow render within 1 px of
+  their edges; a scribble and short strokes fit nothing; `adjustShape` rotates and scales about the anchor.
   `src/ink/InkLayer.test.tsx` — a 500 ms hold snaps the live stroke, moving while held turns and
   scales it, a move restarts the timer, Draw and hold off keeps freehand, the highlighter snaps too.
 - `src/notes/Thumbnails.test.tsx` — paper colour, ink and object boxes; a tap jumps; a long-press
-  menu duplicates and deletes; long-press-drag reorders before or after a page; the sheet's close
-  button.
+  menu duplicates and deletes; long-press-drag reorders before or after a page, with the list's
+  touchmoves cancelled only while the long-press lasts; the sheet's close button.
 - `src/notes/Notebook.test.tsx` — the bar order; the Text tool drops a 60 % box at the tap, edits
   it and stays on Text, a tap while editing only finishes the edit, an empty box is removed; a lasso
   move across a page boundary re-parents the selection to the page under the pointer, and undo puts
-  it back; ⌘V pastes at the pointer, else centred on the current page, never in a text field or after
-  a press in the other pane; Thumbnails opens a column beside the pages, a thumbnail tap scrolls to
+  it back, and undoing it drops the selection; a paste event pastes the clip at the pointer, else
+  centred on the current page, kept on the page, never in a text field or after a press in the other
+  pane; after a lasso click a pasted image file is added ahead of the clip; a lasso press collapses
+  a text selection and focuses the notebook; with a clip a tap on an empty page offers Paste there;
+  a Text-tool tap on empty paper cancels the pointerdown default; Thumbnails opens a column beside the pages, a thumbnail tap scrolls to
   its page, and the phone sheet closes after the tap; a Lasso tap selects a text box (with its side
   handles) or an image, the Pen does not select images, and a double-tap on text does not zoom;
   under Lasso a selected text box drags on its own and a double-tap edits it; a wrapped text box's
@@ -184,6 +190,8 @@ v3 Phase B added:
   it into the notebook clipboard and deletes it with undo, while presses on text, links and inside a
   highlight's box (an area highlight, or a gap in a text highlight) pass through to the highlight
   tap; T picks Text, the notes pane's tool menu offers it, and Esc while typing keeps it.
+- `src/pdf/Viewer.test.tsx` — a lasso press off the text collapses a text selection and the bar's
+  selection is reported gone.
 
 ## Checked in headless Chrome (not on a device)
 
@@ -312,3 +320,12 @@ Not yet run; do these before calling v1 done.
 - [ ] Pencil hover dot on an M2 iPad Pro or with a Pencil Pro; note whether Safari sends hover.
 - [ ] Lasso on a PDF page: a Pencil drag on the text still selects text, a drag in the margin
       selects ink.
+- [ ] The object menu shows whole on the phone, and near every page edge (left, right, top,
+      bottom) in Both on the iPad, with Recolor open too.
+- [ ] Paste onto an empty page on the iPad: copy with the Lasso, tap empty space on another page,
+      tap **Paste**.
+- [ ] On the laptop under Lasso: take a screenshot to the clipboard, click a notebook page, ⌘V
+      adds it as an image.
+- [ ] On the laptop: select PDF text, then click in the PDF margin; the selection and its bar go.
+- [ ] Thumbnails: long-press-drag on the iPad reorders without scrolling the strip.
+- [ ] A rectangle drawn with draw-and-hold has straight edges and sharp corners.

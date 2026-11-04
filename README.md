@@ -93,10 +93,13 @@ The layout and the split are remembered per device. The notebook loads the first
   menu); it takes every stroke mostly inside the loop and every text box or image whose centre is
   inside, and a tap on a text box or image selects just that one. The selection gets a dashed frame
   and a menu: **Cut · Copy · Duplicate · Delete · Recolor · Front · Back**, plus **Paste** once
-  something is copied. Drag inside the frame to move it, onto another page too; drag a corner to
-  scale it. ⌘C, ⌘X and Delete work on the laptop, and ⌘V pastes where the pointer last was on a
-  page, or in the middle of the page you are looking at. Esc, a tap outside or another tool clears
-  the selection. Copy and paste stay inside the app.
+  something is copied; the menu wraps on a narrow page and stays inside the page. Drag inside the
+  frame to move it, onto another page too; drag a corner to scale it. With something copied and
+  nothing selected, a tap on empty space offers **Paste** there. ⌘C, ⌘X and Delete work on the
+  laptop, and ⌘V pastes an image from the system clipboard if it holds one, else the copied items
+  where the pointer last was on a page, or in the middle of the page you are looking at; a paste
+  always stays on the page. Esc, a tap outside or another tool clears the selection. Copy and paste
+  stay inside the app.
 - **Text boxes:** pick **Text** and tap a page to drop a box 60 % of the page wide and type; the
   tool stays on Text so the next tap makes another box, and a box you leave empty disappears. Sizes
   **S · M · L** (10 / 13 / 18 pt) and the colour come from the tool menu. Double-tap a box to edit
@@ -210,4 +213,6 @@ GitHub Pages serves at `https://purush-foundry.github.io/marginalia/`. Open apps
 - iOS needs 18 or later.
 - Apple Pencil Pro squeeze and double-tap do not reach web apps; use the tool menu.
 - Copy and paste in the notebook use an in-app clipboard; nothing goes to or comes from the
-  system clipboard except pasted images.
+  system clipboard except pasted images. An image on the system clipboard, even an older one,
+  wins over copied ink on ⌘V; the menu's **Paste** pastes the ink.
+- Dragging a lasso selection moves the dashed frame; the items follow at lift.
