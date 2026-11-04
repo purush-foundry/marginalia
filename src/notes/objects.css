@@ -1,0 +1,155 @@
+/* Notebook page objects: text boxes and images with their selection handles. */
+.mg-nb-text {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Gives an empty box, or a trailing newline, a line for the caret. */
+.mg-nb-text::after {
+  content: '\200b';
+}
+
+.mg-nb-text[contenteditable] {
+  cursor: text;
+  box-shadow: 0 0 0 1px var(--accent);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.mg-nb-text[data-selected] {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+  cursor: move;
+  touch-action: none;
+}
+
+.mg-nb-text-frame {
+  position: absolute;
+  pointer-events: none;
+}
+
+.mg-nb-text-handle {
+  position: absolute;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mg-nb-text-handle[data-side='left'] {
+  left: -14px;
+}
+
+.mg-nb-text-handle[data-side='right'] {
+  right: -14px;
+}
+
+.mg-nb-text-handle::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.mg-nb-figure {
+  position: absolute;
+}
+
+.mg-nb-figure[data-selected] {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+  cursor: move;
+  touch-action: none;
+}
+
+.mg-nb-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.mg-nb-image-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mg-nb-image-handle[data-corner='nw'] {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.mg-nb-image-handle[data-corner='ne'] {
+  top: 0;
+  left: 100%;
+  cursor: nesw-resize;
+}
+
+.mg-nb-image-handle[data-corner='sw'] {
+  top: 100%;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.mg-nb-image-handle[data-corner='se'] {
+  top: 100%;
+  left: 100%;
+  cursor: nwse-resize;
+}
+
+.mg-nb-image-handle::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.mg-nb-figure > .mg-nb-chip {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  pointer-events: auto;
+}
+
+.mg-nb-figure > .mg-nb-chip > span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
