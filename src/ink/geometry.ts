@@ -179,6 +179,20 @@ export function inkOutlinePath(
   return strokeOutlinePath(px, width * cssW, pressureVaries(points), pen)
 }
 
+// Smoothed centreline of a stroke with normalised points, as an M…L… SVG path in CSS px.
+export function highlighterPath(points: number[], cssW: number, cssH: number): string {
+  const px = points.slice()
+  for (let i = 0; i + 1 < px.length; i += 3) {
+    px[i] *= cssW
+    px[i + 1] *= cssH
+  }
+  const line = smoothStrokePoints(px)
+  if (line.length === 0) return ''
+  const at = (p: number[]) => `${fmt(p[0])},${fmt(p[1])}`
+  const rest = line.length > 1 ? line.slice(1) : line
+  return `M${at(line[0])} L${rest.map(at).join(' L')}`
+}
+
 function segmentDistanceSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax
   const dy = by - ay

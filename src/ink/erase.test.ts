@@ -45,3 +45,11 @@ test('a cut that would leave a one-sample piece drops it', () => {
     [1.5, 0, 0.5, 2, 0, 0.5],
   ])
 })
+
+test('the same circle misses the pieces it left', () => {
+  for (const [cx, r] of [[5, 1.5], [5.3, 1.37], [0.2, 2.9]]) {
+    for (const piece of splitStrokeAt(line, cx, 0, r)!) expect(splitStrokeAt(piece, cx, 0, r)).toBeNull()
+  }
+})
+
+test('a circle grazing a sample at its edge misses', () => expect(splitStrokeAt(line, 5, 1, 1)).toBeNull())

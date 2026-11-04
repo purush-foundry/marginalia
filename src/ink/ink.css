@@ -1,10 +1,9 @@
-/* Ink overlay: passes input through unless the mouse latch or finger drawing is on. */
+/* Ink overlay: passes input through unless the mouse or a finger draws with an ink tool. */
 .ink-layer {
   position: absolute;
   top: 0;
   left: 0;
   pointer-events: none;
-  touch-action: pan-x pan-y;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -24,17 +23,37 @@
   overflow: visible;
 }
 
-.ink-layer[data-mouse-draws]:not([data-tool='select']),
-.ink-layer[data-finger-draws]:not([data-tool='select']) {
+.ink-layer[data-mouse-draws],
+.ink-layer[data-finger-draws]:is([data-tool='pen'], [data-tool='highlighter'], [data-tool='eraser']) {
   pointer-events: auto;
 }
 
-.ink-layer[data-mouse-draws]:not([data-tool='select']) {
+.ink-layer[data-mouse-draws] {
   cursor: crosshair;
 }
 
 .ink-layer[data-finger-draws] {
   touch-action: none;
+}
+
+.mg-multiply {
+  mix-blend-mode: multiply;
+}
+
+/* Eraser circle and pen hover dot, centred on the pointer. */
+.ink-eraser-cursor,
+.ink-hover-dot {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.ink-eraser-cursor {
+  border: 1px solid rgba(110, 110, 110, 0.9);
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
 
 /* Pen strip: one line in the toolbar, three rows in the tool puck popover. */

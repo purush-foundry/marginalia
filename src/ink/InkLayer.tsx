@@ -1,9 +1,36 @@
+import type { JSX } from 'preact'
 import { useEffect, useMemo, useRef } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
-import { inkOutlinePath, pressureVaries, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { splitStrokeAt } from './erase.ts'
+import {
+  highlighterPath,
+  inkOutlinePath,
+  pressureVaries,
+  simplifyPoints,
+  strokeHitsPoint,
+  strokeOutlinePath,
+} from './geometry.ts'
 import { createLiveOutline, type LiveOutline } from './liveOutline.ts'
-import { fingerDraws, inkDisplayColor, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
+import {
+  A4_WIDTH_MM,
+  activeColor,
+  activeWidthMm,
+  eraserSettings,
+  fingerDraws,
+  highlighterSettings,
+  inkDisplayColor,
+  isInkTool,
+  mmToFraction,
+  nightInk,
+  penActivity,
+  penSettings,
+  previousTool,
+  setTool,
+  tool,
+  type EraserSettings,
+  type PenStyle,
+} from './tools.ts'
 import './ink.css'
 
 export interface InkLayerProps {
@@ -13,22 +40,39 @@ export interface InkLayerProps {
   strokes: InkStroke[]
   onAddStroke(stroke: InkStroke): void
   onEraseStroke(id: string): void
+  /** Replaces a stroke by its pieces; absent, the segment eraser removes whole strokes. */
+  onReplaceStroke?(id: string, pieces: InkStroke[]): void
+  /** Page width in millimetres; default A4_WIDTH_MM. */
+  pageWidthMm?: number
+  /** Dark paper: Black shows pale and the highlighter goes below the ink; default nightInk. */
+  paperDark?: boolean
+  /** False leaves committed strokes to StrokeSvg; default true. */
+  showStrokes?: boolean
 }
 
 /** Attribute on the scroller whose rect bounds the live canvas. */
 export const INK_VIEWPORT_ATTR = 'data-ink-viewport'
 
 const PALM_WINDOW_MS = 500
-const ERASER_MIN_PX = 12
 const SIMPLIFY_PX = 0.5
+const HIGHLIGHTER_ALPHA = 0.4
 const TAP_MAX_MS = 250
 const TAP_SLOP_PX = 12
 const DOUBLE_TAP_GAP_MS = 300
 
+// One eraser contact: strokes it removed or split, pieces it made, and isotropic points per stroke id.
+interface EraseContact {
+  settings: EraserSettings
+  gone: Set<string>
+  made: Map<string, InkStroke>
+  iso: Map<string, number[]>
+}
+
 interface LiveStroke {
   pointerId: number
   pointerType: string
-  tool: 'pen' | 'eraser'
+  tool: 'pen' | 'highlighter' | 'eraser'
+  pen: PenStyle
   color: string
   width: number
   points: number[]
@@ -37,7 +81,7 @@ interface LiveStroke {
   top: number
   w: number
   h: number
-  erased: Set<string>
+  erase: EraseContact
   ctx: CanvasRenderingContext2D | null
   outline: LiveOutline
   chunks: Path2D[]
@@ -83,18 +127,80 @@ function widthUnits(points: number[], aspect: number): number[] {
   return out
 }
 
-function StrokePath({ stroke, cssW, cssH }: { stroke: InkStroke; cssW: number; cssH: number }) {
+// First and last samples only.
+function ends(points: number[]): number[] {
+  return points.length <= 6 ? points.slice() : [...points.slice(0, 3), ...points.slice(-3)]
+}
+
+const paperIsDark = (p: InkLayerProps) => p.paperDark ?? nightInk.peek()
+const pageMm = (p: InkLayerProps) => p.pageWidthMm ?? A4_WIDTH_MM
+
+function finePointer(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(pointer: fine)').matches
+}
+
+interface PathProps {
+  stroke: InkStroke
+  cssW: number
+  cssH: number
+  dark: boolean
+}
+
+function PenPath({ stroke, cssW, cssH, dark }: PathProps) {
+  const pen = stroke.pen ?? 'fountain'
   const d = useMemo(
-    () => inkOutlinePath(stroke.points, stroke.width, cssW, cssH),
-    [stroke.points, stroke.width, cssW, cssH],
+    () => inkOutlinePath(stroke.points, stroke.width, cssW, cssH, pen),
+    [stroke.points, stroke.width, cssW, cssH, pen],
   )
-  return <path d={d} fill={inkDisplayColor(stroke.color)} />
+  return <path d={d} fill={inkDisplayColor(stroke.color, dark)} />
+}
+
+function HighlighterPath({ stroke, cssW, cssH, dark }: PathProps) {
+  const d = useMemo(() => highlighterPath(stroke.points, cssW, cssH), [stroke.points, cssW, cssH])
+  return (
+    <path
+      d={d}
+      fill="none"
+      stroke={inkDisplayColor(stroke.color, dark)}
+      stroke-width={stroke.width * cssW}
+      stroke-linecap="square"
+      stroke-linejoin="round"
+      stroke-opacity={HIGHLIGHTER_ALPHA}
+    />
+  )
+}
+
+/** Committed strokes: svg.ink-pen and svg.ink-hl (highlighter above with multiply on light paper, below without it on dark paper). */
+export function StrokeSvg(props: { strokes: InkStroke[]; cssW: number; cssH: number; paperDark: boolean }): JSX.Element {
+  const { strokes, cssW, cssH, paperDark } = props
+  const box = { width: cssW, height: cssH, viewBox: `0 0 ${cssW} ${cssH}`, 'aria-hidden': true } as const
+  const pen = (
+    <svg key="pen" class="ink-pen" {...box}>
+      {strokes.map((s) =>
+        s.deleted || s.tool === 'highlighter' ? null : (
+          <PenPath key={s.id} stroke={s} cssW={cssW} cssH={cssH} dark={paperDark} />
+        ),
+      )}
+    </svg>
+  )
+  const hl = (
+    <svg key="hl" class={paperDark ? 'ink-hl' : 'ink-hl mg-multiply'} {...box}>
+      {strokes.map((s) =>
+        s.deleted || s.tool !== 'highlighter' ? null : (
+          <HighlighterPath key={s.id} stroke={s} cssW={cssW} cssH={cssH} dark={paperDark} />
+        ),
+      )}
+    </svg>
+  )
+  return paperDark ? <>{hl}{pen}</> : <>{pen}{hl}</>
 }
 
 export function InkLayer(props: InkLayerProps) {
   const { cssW, cssH, strokes } = props
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const cursorRef = useRef<HTMLDivElement>(null)
+  const dotRef = useRef<HTMLDivElement>(null)
   const propsRef = useRef(props)
   propsRef.current = props
 
@@ -107,8 +213,10 @@ export function InkLayer(props: InkLayerProps) {
     let frameId = 0
     let tapStart = 0
     let tapValid = false
+    let tapFingers = 0
     let tapOrigin = new Map<number, [number, number]>()
     let lastTapEnd = -Infinity
+    let lastTapFingers = 0
 
     const clearCanvas = () => {
       const canvas = canvasRef.current
@@ -141,18 +249,41 @@ export function InkLayer(props: InkLayerProps) {
       return ctx
     }
 
-    // Fills the live stroke's frozen chunks and its tail, predicted samples included, on the live canvas.
+    // Samples a highlighter stroke stores: simplified, or only its ends for a straight line.
+    const highlighterSamples = (s: LiveStroke): number[] => {
+      const stored = simplifyPoints(s.points, SIMPLIFY_PX / propsRef.current.cssW)
+      return highlighterSettings.peek().straight ? ends(stored) : stored
+    }
+
+    // Strokes the whole live highlighter as one path, so its translucent ink never overlaps itself.
+    const highlighterFrame = (s: LiveStroke, ctx: CanvasRenderingContext2D) => {
+      const { cssW, cssH } = propsRef.current
+      const stored = highlighterSamples(s)
+      const points = highlighterSettings.peek().straight ? stored : stored.concat(s.predicted)
+      ctx.globalAlpha = HIGHLIGHTER_ALPHA
+      ctx.strokeStyle = inkDisplayColor(s.color, paperIsDark(propsRef.current))
+      ctx.lineWidth = s.width * cssW
+      ctx.lineCap = 'square'
+      ctx.lineJoin = 'round'
+      ctx.stroke(new Path2D(highlighterPath(points, cssW, cssH)))
+    }
+
+    // Draws the live stroke on the live canvas: the highlighter as one path, the pen as frozen chunks plus the tail.
     const frame = () => {
       frameId = 0
       const s = live
       if (!s?.ctx) return
       const { cssW, cssH } = propsRef.current
+      s.ctx.clearRect(0, 0, cssW, cssH)
+      if (s.tool === 'highlighter') {
+        highlighterFrame(s, s.ctx)
+        return
+      }
       const stored = simplifyPoints(s.points, SIMPLIFY_PX / cssW)
       s.real = pressureVaries(stored)
       const { frozen, tail } = s.outline.update(cssPx(stored, cssW, cssH), cssPx(s.predicted, cssW, cssH))
       for (let i = s.chunks.length; i < frozen.length; i++) s.chunks.push(new Path2D(frozen[i]))
-      s.ctx.clearRect(0, 0, cssW, cssH)
-      s.ctx.fillStyle = inkDisplayColor(s.color)
+      s.ctx.fillStyle = inkDisplayColor(s.color, paperIsDark(propsRef.current))
       for (const chunk of s.chunks) s.ctx.fill(chunk)
       s.ctx.fill(new Path2D(tail))
     }
@@ -166,6 +297,42 @@ export function InkLayer(props: InkLayerProps) {
       frameId = 0
       live = null
       clearCanvas()
+      if (cursorRef.current) cursorRef.current.hidden = true
+    }
+
+    // Centres an overlay element on a pointer, in layer CSS px.
+    const placeAt = (el: HTMLElement, e: PointerEvent, diameter: number) => {
+      const { cssW, cssH } = propsRef.current
+      const rect = root.getBoundingClientRect()
+      const x = ((e.clientX - rect.left) * cssW) / (rect.width || cssW)
+      const y = ((e.clientY - rect.top) * cssH) / (rect.height || cssH)
+      Object.assign(el.style, { left: `${x}px`, top: `${y}px`, width: `${diameter}px`, height: `${diameter}px` })
+      el.hidden = false
+    }
+
+    const moveEraserCursor = (s: LiveStroke, e: PointerEvent) => {
+      const cursor = cursorRef.current
+      if (!cursor || s.tool !== 'eraser') return
+      const p = propsRef.current
+      placeAt(cursor, e, (s.erase.settings.sizeMm * p.cssW) / pageMm(p))
+    }
+
+    const hideDot = () => {
+      if (dotRef.current) dotRef.current.hidden = true
+    }
+
+    // Shows a dot of the active colour and width under a hovering pen while the pen or highlighter is selected.
+    const hoverDot = (e: PointerEvent) => {
+      const dot = dotRef.current
+      const t = tool.peek()
+      if (!dot) return
+      if (t !== 'pen' && t !== 'highlighter') {
+        hideDot()
+        return
+      }
+      const p = propsRef.current
+      dot.style.background = inkDisplayColor(activeColor(t), paperIsDark(p))
+      placeAt(dot, e, mmToFraction(activeWidthMm(t), pageMm(p)) * p.cssW)
     }
 
     const swallow = (e: Event) => {
@@ -176,29 +343,64 @@ export function InkLayer(props: InkLayerProps) {
     const penActive = (t: number) => penActivity.down || t - penActivity.lastUp < PALM_WINDOW_MS
 
     const draws = (e: PointerEvent): boolean => {
-      if (penTool.value === 'select') return false
+      if (!isInkTool(tool.peek())) return false
       if (e.pointerType === 'pen') return true
-      if (e.pointerType === 'mouse') return mouseDraws.value && e.button === 0
-      if (e.pointerType === 'touch') return fingerDraws.value
+      if (e.pointerType === 'mouse') return e.button === 0
+      if (e.pointerType === 'touch') return fingerDraws.peek()
       return false
     }
 
+    // Live strokes this contact may still erase: the page's, with the ones it split swapped for their pieces.
+    const erasable = (c: EraseContact): InkStroke[] => {
+      const fresh = propsRef.current.strokes.filter((st) => !st.deleted && !c.gone.has(st.id) && !c.made.has(st.id))
+      return [...fresh, ...c.made.values()]
+    }
+
+    const removed = (c: EraseContact, id: string) => {
+      c.gone.add(id)
+      c.made.delete(id)
+    }
+
+    // Erases what the eraser circle at normalised (x, y) touches: whole strokes, or the part inside it for the segment style.
     const eraseAt = (s: LiveStroke, x: number, y: number) => {
-      const { cssW, cssH, strokes, onEraseStroke } = propsRef.current
-      const aspect = cssH / cssW
-      const radius = Math.max(penWidth.value * 3, ERASER_MIN_PX / cssW)
-      for (const stroke of strokes) {
-        if (stroke.deleted || s.erased.has(stroke.id)) continue
-        if (strokeHitsPoint(widthUnits(stroke.points, aspect), x, y * aspect, radius)) {
-          s.erased.add(stroke.id)
-          onEraseStroke(stroke.id)
+      const c = s.erase
+      const p = propsRef.current
+      const aspect = p.cssH / p.cssW
+      const { style, sizeMm, erasePen, eraseHighlighter } = c.settings
+      const reach = mmToFraction(sizeMm / 2, pageMm(p))
+      const split = style === 'segment' ? p.onReplaceStroke : undefined
+      for (const stroke of erasable(c)) {
+        if (!(stroke.tool === 'highlighter' ? eraseHighlighter : erasePen)) continue
+        const radius = reach + stroke.width / 2
+        let iso = c.iso.get(stroke.id)
+        if (!iso) {
+          iso = widthUnits(stroke.points, aspect)
+          c.iso.set(stroke.id, iso)
         }
+        if (!split) {
+          if (!strokeHitsPoint(iso, x, y * aspect, radius)) continue
+          removed(c, stroke.id)
+          p.onEraseStroke(stroke.id)
+          continue
+        }
+        const kept = splitStrokeAt(iso, x, y * aspect, radius)
+        if (!kept) continue
+        const t = now()
+        const pieces = kept.map((points) => {
+          const back = widthUnits(points, 1 / aspect)
+          const piece: InkStroke = { ...stroke, id: newId(), points: back, createdAt: t, updatedAt: t }
+          c.iso.set(piece.id, points)
+          c.made.set(piece.id, piece)
+          return piece
+        })
+        removed(c, stroke.id)
+        split(stroke.id, pieces)
       }
     }
 
-    // Pen pressure, or the previous stored sample's when the pen reports 0; 0.5 for other pointers.
+    // Pen pressure, or the previous stored sample's when the pen reports 0; 0.5 for the highlighter and other pointers.
     const pressureOf = (s: LiveStroke, e: PointerEvent): number => {
-      if (s.pointerType !== 'pen') return 0.5
+      if (s.pointerType !== 'pen' || s.tool === 'highlighter') return 0.5
       if (e.pressure > 0) return e.pressure
       return s.points.length > 0 ? s.points[s.points.length - 1] : 0.5
     }
@@ -247,6 +449,7 @@ export function InkLayer(props: InkLayerProps) {
       if (e.pointerType === 'pen') {
         penActivity.down = true
         penActivity.downOn = parent
+        hideDot()
       }
       if (e.pointerType === 'touch' && penActive(now())) {
         swallowed.add(e.pointerId)
@@ -267,37 +470,43 @@ export function InkLayer(props: InkLayerProps) {
       } catch {
         // Ignores pointers that can no longer be captured.
       }
-      const tool = penTool.value === 'eraser' ? 'eraser' : 'pen'
-      const { cssW, cssH } = propsRef.current
+      const kind = tool.peek() as LiveStroke['tool']
+      const p = propsRef.current
+      const { cssW, cssH } = p
       const rect = root.getBoundingClientRect()
-      const width = penWidth.value
-      const color = penColor.value
+      const ink = kind === 'eraser' ? null : kind
       const s: LiveStroke = {
         pointerId: e.pointerId,
         pointerType: e.pointerType,
-        tool,
-        color,
-        width,
+        tool: kind,
+        pen: penSettings.peek().style,
+        color: ink ? activeColor(ink) : '',
+        width: ink ? mmToFraction(activeWidthMm(ink), pageMm(p)) : 0,
         points: [],
         predicted: [],
         left: rect.left,
         top: rect.top,
         w: rect.width || cssW,
         h: rect.height || cssH,
-        erased: new Set(),
-        ctx: tool === 'pen' ? openCanvas() : null,
+        erase: { settings: eraserSettings.peek(), gone: new Set(), made: new Map(), iso: new Map() },
+        ctx: ink ? openCanvas() : null,
         outline: createLiveOutline((pts, ends, length) =>
-          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, 'fountain', ends, length),
+          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, s.pen, ends, length),
         ),
         chunks: [],
         real: false,
       }
+      canvasRef.current?.classList.toggle('mg-multiply', kind === 'highlighter' && !paperIsDark(p))
       live = s
+      moveEraserCursor(s, e)
       addSample(s, e)
     }
 
     const onPointerMove = (e: PointerEvent) => {
-      if (e.pointerType === 'pen' && e.buttons === 0 && penActivity.down) penLifted(e)
+      if (e.pointerType === 'pen' && e.buttons === 0) {
+        if (penActivity.down) penLifted(e)
+        if (!live) hoverDot(e)
+      }
       if (isSwallowed(e, false)) {
         swallow(e)
         return
@@ -308,6 +517,7 @@ export function InkLayer(props: InkLayerProps) {
       const predicted = typeof e.getPredictedEvents === 'function' ? e.getPredictedEvents() : []
       s.predicted = predicted.flatMap((p) => sampleOf(s, p))
       for (const sample of samplesOf(e)) addSample(s, sample)
+      moveEraserCursor(s, e)
     }
 
     const onPointerUp = (e: PointerEvent) => {
@@ -319,9 +529,15 @@ export function InkLayer(props: InkLayerProps) {
       if (!live || !isLive(e)) return
       swallow(e)
       const s = live
-      discard()
-      if (s.tool !== 'pen' || s.points.length === 0) return
+      if (s.tool === 'eraser') {
+        discard()
+        if (s.erase.settings.autoDeselect) setTool(previousTool.peek())
+        return
+      }
       const { page, cssW, onAddStroke } = propsRef.current
+      const points = s.tool === 'highlighter' ? highlighterSamples(s) : simplifyPoints(s.points, SIMPLIFY_PX / cssW)
+      discard()
+      if (points.length === 0) return
       const t = now()
       onAddStroke({
         kind: 'ink',
@@ -329,8 +545,9 @@ export function InkLayer(props: InkLayerProps) {
         page,
         color: s.color,
         width: s.width,
-        tool: 'pen',
-        points: simplifyPoints(s.points, SIMPLIFY_PX / cssW),
+        tool: s.tool,
+        ...(s.tool === 'pen' ? { pen: s.pen } : {}),
+        points,
         createdAt: t,
         updatedAt: t,
       })
@@ -348,15 +565,16 @@ export function InkLayer(props: InkLayerProps) {
     }
 
     const guardStylus = (e: TouchEvent) => {
-      if (penTool.value !== 'select' && isStylus(e.changedTouches)) e.preventDefault()
+      if (isInkTool(tool.peek()) && isStylus(e.changedTouches)) e.preventDefault()
     }
 
     const onTouchStart = (e: TouchEvent) => {
       guardStylus(e)
       const down = fingers(e.touches)
-      if (down.length === 2 && down.length === e.touches.length && !penActive(now())) {
+      if ((down.length === 2 || down.length === 3) && down.length === e.touches.length && !penActive(now())) {
         tapStart = now()
         tapValid = true
+        tapFingers = down.length
         tapOrigin = new Map(down.map((t) => [t.identifier, [t.clientX, t.clientY]]))
       } else {
         tapValid = false
@@ -377,11 +595,12 @@ export function InkLayer(props: InkLayerProps) {
       tapValid = false
       const t = now()
       if (t - tapStart > TAP_MAX_MS) return
-      if (tapStart - lastTapEnd <= DOUBLE_TAP_GAP_MS) {
+      if (tapFingers === lastTapFingers && tapStart - lastTapEnd <= DOUBLE_TAP_GAP_MS) {
         lastTapEnd = -Infinity
-        document.dispatchEvent(new CustomEvent('marginalia:undo'))
+        document.dispatchEvent(new CustomEvent(tapFingers === 3 ? 'marginalia:redo' : 'marginalia:undo'))
       } else {
         lastTapEnd = t
+        lastTapFingers = tapFingers
       }
     }
 
@@ -399,6 +618,7 @@ export function InkLayer(props: InkLayerProps) {
     parent.addEventListener('touchmove', onTouchMove, activeCapture)
     parent.addEventListener('touchend', onTouchEnd, capture)
     parent.addEventListener('touchcancel', onTouchCancel, capture)
+    parent.addEventListener('pointerleave', hideDot)
     return () => {
       if (penActivity.down && penActivity.downOn === parent) {
         penActivity.down = false
@@ -414,22 +634,25 @@ export function InkLayer(props: InkLayerProps) {
       parent.removeEventListener('touchmove', onTouchMove, capture)
       parent.removeEventListener('touchend', onTouchEnd, capture)
       parent.removeEventListener('touchcancel', onTouchCancel, capture)
+      parent.removeEventListener('pointerleave', hideDot)
     }
   }, [])
 
+  const current = tool.value
+  const dark = props.paperDark ?? nightInk.value
   return (
     <div
       ref={rootRef}
       class="ink-layer"
-      data-tool={penTool.value}
-      data-mouse-draws={mouseDraws.value ? '' : undefined}
+      data-tool={current}
+      data-mouse-draws={isInkTool(current) && finePointer() ? '' : undefined}
       data-finger-draws={fingerDraws.value ? '' : undefined}
       style={{ width: `${cssW}px`, height: `${cssH}px` }}
     >
-      <svg width={cssW} height={cssH} viewBox={`0 0 ${cssW} ${cssH}`} aria-hidden="true">
-        {strokes.map((s) => (s.deleted ? null : <StrokePath key={s.id} stroke={s} cssW={cssW} cssH={cssH} />))}
-      </svg>
+      {props.showStrokes !== false && <StrokeSvg strokes={strokes} cssW={cssW} cssH={cssH} paperDark={dark} />}
       <canvas ref={canvasRef} width={0} height={0} />
+      <div ref={cursorRef} class="ink-eraser-cursor" hidden />
+      <div ref={dotRef} class="ink-hover-dot" hidden />
     </div>
   )
 }

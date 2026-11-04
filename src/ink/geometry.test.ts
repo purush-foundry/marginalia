@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from 'vitest'
 import {
+  highlighterPath,
   inkOutlinePath,
   type PenStyle,
   polylineLength,
@@ -229,4 +230,15 @@ describe('pen styles', () => {
     const d = strokeOutlinePath(flatLine(0.5), 6, true, 'fountain', { start: false, end: false })
     expect(heightAt(d, 2)).toBeGreaterThanOrEqual(0.9 * heightAt(d, 100))
   })
+})
+
+test('highlighterPath draws the smoothed centreline in CSS px', () => {
+  const d = highlighterPath([0.1, 0.1, 0.5, 0.3, 0.2, 0.5, 0.5, 0.1, 0.5], 200, 400)
+  expect(d).toMatch(/^M20,40 L/)
+  expect(d).not.toContain('Q')
+  expect(d.endsWith('100,40')).toBe(true)
+})
+
+test('highlighterPath of one sample is a zero-length line so a tap leaves a square', () => {
+  expect(highlighterPath([0.5, 0.5, 0.5], 200, 400)).toBe('M100,200 L100,200')
 })
