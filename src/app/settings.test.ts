@@ -73,3 +73,66 @@ describe('settings', () => {
     expect(tools.penWidth.value).toBe(0.004)
   })
 })
+
+describe('tool settings', () => {
+  test('tool palettes and settings round-trip per device', async () => {
+    const idb = await import('../lib/idb')
+    const pen = {
+      colors: ['#000000'],
+      widthsMm: [0.3, 0.4, 0.6],
+      colorIndex: 0,
+      widthIndex: 2,
+    }
+    await idb.idbSet('settings', 'app', { palettes: { pen } })
+    await mod.loadSettings()
+    const tools = await import('../ink/tools')
+    const stop = mod.bindToolSettings()
+    expect(tools.palettes.value.pen).toEqual(pen)
+    tools.setColor('pen', 0, '#123456')
+    await vi.waitFor(async () =>
+      expect(
+        (await idb.idbGet<{ palettes: { pen: { colors: string[] } } }>('settings', 'app'))!.palettes.pen.colors[0],
+      ).toBe('#123456'),
+    )
+    stop()
+  })
+
+  test('malformed stored tool settings fall back field by field', async () => {
+    const hl = {
+      colors: ['#aabbcc'],
+      widthsMm: [2, 4, 6],
+      colorIndex: 0,
+      widthIndex: 1,
+    }
+    const clean = mod.sanitizeToolSettings({
+      palettes: { pen: { colors: ['nope'] }, highlighter: hl },
+      eraserSettings: { sizeMm: 5 },
+      toolDock: { edge: 'middle', at: NaN },
+    } as never)
+    const tools = await import('../ink/tools')
+    expect(clean.palettes.pen).toEqual(tools.DEFAULT_PALETTES.pen)
+    expect(clean.palettes.highlighter).toEqual(hl)
+    expect(clean.eraserSettings.sizeMm).toBe(2)
+    expect(clean.toolDock).toEqual({ edge: 'right', at: 0.6 })
+    expect(mod.sanitizeToolSettings({ toolDock: { edge: 'left', at: 4 } }).toolDock).toEqual({ edge: 'left', at: 1 })
+  })
+})
+
+describe('bindToolSettings first run', () => {
+  test('binding cleans the signals; the first change stores clean values', async () => {
+    const idb = await import('../lib/idb')
+    await idb.idbSet('settings', 'app', { palettes: { pen: { colors: ['nope'] } }, eraserSettings: { sizeMm: 5 } })
+    await mod.loadSettings()
+    const tools = await import('../ink/tools')
+    const stop = mod.bindToolSettings()
+    expect(tools.palettes.value.pen).toEqual(tools.DEFAULT_PALETTES.pen)
+    expect(tools.eraserSettings.value.sizeMm).toBe(2)
+    tools.textSize.value = 'l'
+    await vi.waitFor(async () => {
+      const stored = (await idb.idbGet<{ palettes: { pen: unknown }; eraserSettings: { sizeMm: number } }>('settings', 'app'))!
+      expect(stored.palettes.pen).toEqual(tools.DEFAULT_PALETTES.pen)
+      expect(stored.eraserSettings.sizeMm).toBe(2)
+    })
+    stop()
+  })
+})

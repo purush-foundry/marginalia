@@ -40,6 +40,8 @@ export interface AreaHighlight extends Item {
 
 export type Highlight = TextHighlight | AreaHighlight
 
+export type PenStyle = 'ball' | 'fountain' | 'brush'
+
 /** Freehand stroke; points are flat [x, y, pressure, ...] normalised to the page. */
 export interface InkStroke extends Item {
   kind: 'ink'
@@ -47,7 +49,10 @@ export interface InkStroke extends Item {
   color: string
   /** Stroke width as a fraction of page width. */
   width: number
-  tool: 'pen' | 'marker'
+  /** Absent means pen. */
+  tool?: 'pen' | 'highlighter'
+  /** Absent means fountain. */
+  pen?: PenStyle
   points: number[]
 }
 

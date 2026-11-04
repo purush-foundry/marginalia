@@ -5,13 +5,14 @@ import { loadLibrary } from '../drive/library'
 import { App } from './App'
 import { registerServiceWorker, requestPersistence } from './pwa'
 import { startRouter } from './route'
-import { bindPenPalette, loadSettings, settings } from './settings'
+import { bindPenPalette, bindToolSettings, loadSettings, settings } from './settings'
 import { authReady, online } from './ui'
 
 export async function boot(el: HTMLElement): Promise<void> {
   consumeRedirectToken()
   const [s] = await Promise.all([loadSettings(), loadLibrary()])
   bindPenPalette()
+  bindToolSettings()
   startRouter()
   render(<App />, el)
   if (import.meta.env.PROD) registerServiceWorker().catch(console.error)
