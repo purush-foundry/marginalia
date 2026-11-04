@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { emptyNotebook, type ImageObject, type NotePage, type NotesDocV2, type TextObject } from '../notes/model'
-import { notebookToMarkdown, notesToMarkdown, sidecarToMarkdown } from './markdown'
-import { emptyNotes, emptySidecar, type NoteBlock } from '../types'
+import { notebookToMarkdown, sidecarToMarkdown } from './markdown'
+import { emptySidecar } from '../types'
 
 const b = { x: 0.1, y: 0.1, w: 0.2, h: 0.02 }
 
@@ -68,36 +68,6 @@ describe('sidecarToMarkdown', () => {
     const s = sample()
     s.threads[0].anchor.text = 'one\ntwo'
     expect(sidecarToMarkdown(s, { title: 'T' })).toContain('> one\n> two')
-  })
-})
-
-describe('notesToMarkdown', () => {
-  const text = (id: string, order: string, t: string, deleted?: boolean): NoteBlock => ({
-    id, kind: 'text', order, text: t, createdAt: 1, updatedAt: 1, ...(deleted ? { deleted } : {}),
-  })
-  const image = (id: string, order: string, page?: number): NoteBlock => ({
-    id, kind: 'image', order, src: 'data:image/jpeg;base64,AAAA', w: 0.8, aspect: 0.5, createdAt: 1, updatedAt: 1, ...(page ? { page } : {}),
-  })
-
-  it('notesToMarkdown lists text blocks in order and images as (image, p.N)', () => {
-    const doc = emptyNotes('p', 'paper.pdf', 1)
-    doc.blocks = [
-      text('1', 'c', 'Second'),
-      image('2', 'b', 3),
-      text('3', 'a', 'First line'),
-      text('4', 'd', ''),
-      text('5', 'e', 'gone', true),
-      image('6', 'f'),
-    ]
-    expect(notesToMarkdown(doc)).toBe('## Notes\n\nFirst line\n\n(image, p.3)\n\nSecond\n\n(image)\n')
-  })
-
-  it('notesToMarkdown is empty when there is nothing to export', () => {
-    const doc = emptyNotes('p', 'paper.pdf', 1)
-    expect(notesToMarkdown(doc)).toBe('')
-    doc.blocks = [text('1', 'a', ''), text('2', 'b', '  '), image('3', 'c', 2)]
-    doc.blocks[2].deleted = true
-    expect(notesToMarkdown(doc)).toBe('')
   })
 })
 

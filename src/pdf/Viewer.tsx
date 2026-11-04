@@ -344,6 +344,7 @@ export function Viewer(props: ViewerProps) {
     <div
       ref={scrollerRef}
       class={`mg-scroller${props.nightMode ? ' mg-night' : ''}${armed ? ' mg-armed' : ''}`}
+      data-ink-viewport=""
     >
       {hasPages && (
         <div

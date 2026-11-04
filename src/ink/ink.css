@@ -55,25 +55,3 @@
   background: rgba(255, 255, 255, 0.35);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
-
-/* Pen strip: one line in the toolbar, three rows in the tool puck popover. */
-.mg-penstrip-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.mg-penstrip.mg-penstrip-stack {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 4px;
-  border: 0;
-}
-
-.mg-penstrip-dot {
-  width: var(--dot);
-  height: var(--dot);
-  border-radius: 50%;
-  background: currentColor;
-}

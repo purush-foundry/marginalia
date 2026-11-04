@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { Icon } from '../app/icons.tsx'
 import { showToast } from '../app/ui.ts'
-import { InkLayer } from '../ink/InkLayer.tsx'
-import { fingerDraws, MM_PER_PT, penActivity } from '../ink/tools.ts'
+import { InkLayer, StrokeSvg } from '../ink/InkLayer.tsx'
+import { fingerDraws, MM_PER_PT, penActivity, setTool, tool, type Tool } from '../ink/tools.ts'
 import { now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
-import type { NotePage, PageContent } from './model.ts'
-import type { NotebookStore } from './notebookStore.ts'
+import { pageLayers, type ImageObject, type NotebookStroke, type NotePage, type PageContent } from './model.ts'
+import type { NewStroke, NotebookStore } from './notebookStore.ts'
 import { PaperBackground } from './paper.tsx'
 import { TemplateSheet } from './TemplateSheet.tsx'
 import { clampZoom, NOTEBOOK_GAP_PX, pageCssWidth, PULL_ADD_PX, zoomScroll } from './viewport.ts'
@@ -28,6 +29,12 @@ const DOUBLE_TAP_PX = 30
 const WHEEL_ZOOM_RATE = 0.01
 const TEXT_PT: Record<'s' | 'm' | 'l', number> = { s: 10, m: 13, l: 18 }
 const NO_CONTENT: PageContent = { strokes: [], texts: [], images: [] }
+const BAR_TOOLS: readonly { tool: Tool; label: string }[] = [
+  { tool: 'lasso', label: 'Lasso' },
+  { tool: 'pen', label: 'Pen' },
+  { tool: 'highlighter', label: 'Highlighter' },
+  { tool: 'eraser', label: 'Eraser' },
+]
 
 interface PageBox {
   page: NotePage
@@ -81,7 +88,29 @@ function scaleY(points: number[], k: number): number[] {
   return out
 }
 
+const inkViews = new WeakMap<NotebookStroke, { k: number; ink: InkStroke }>()
+
+// The ink-layer view of a notebook stroke (y in page-height units), reused while the stroke and the page shape are unchanged.
+function inkOf(s: NotebookStroke, k: number): InkStroke {
+  const hit = inkViews.get(s)
+  if (hit && hit.k === k) return hit.ink
+  const { z: _z, page: _page, ...rest } = s
+  const ink: InkStroke = { ...rest, kind: 'ink', page: 0, points: scaleY(s.points, k) }
+  inkViews.set(s, { k, ink })
+  return ink
+}
+
+// The notebook stroke for an ink-layer stroke on `page`, y back in page-width units.
+function toNotebook({ kind: _kind, page: _page, ...s }: InkStroke, page: string, toPage: number): NewStroke {
+  return { ...s, page, tool: s.tool ?? 'pen', pen: s.pen ?? 'fountain', points: scaleY(s.points, toPage) }
+}
+
 const px = (v: number) => `${v}px`
+
+// An image's box on a page `w` CSS px wide.
+function figureBox(m: ImageObject, w: number) {
+  return { left: px(m.box.x * w), top: px(m.box.y * w), width: px(m.box.w * w), height: px(m.box.w * m.aspect * w) }
+}
 
 function imageFiles(list: ArrayLike<File> | null | undefined): File[] {
   return Array.from(list ?? []).filter((f) => f.type.startsWith('image/'))
@@ -103,49 +132,94 @@ interface PageViewProps {
   onJumpToPage(page: number): void
 }
 
-/** One sheet of paper with its images, text and ink; objects are positioned in page-width units. */
+/** One sheet of paper with its z-ordered ink, images and text under one input ink layer; p.N chips sit above the page. */
 function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
   const { page, index, left, top, w, h } = box
   const toPage = page.size.h / page.size.w
-  const inks = useMemo<InkStroke[]>(
-    () => content.strokes.map((s) => ({ ...s, kind: 'ink' as const, page: index + 1, points: scaleY(s.points, 1 / toPage) })),
-    [content.strokes, index, toPage],
-  )
+  const [live, setLive] = useState<Map<string, InkStroke[]> | null>(null)
+  const inks = useMemo(() => content.strokes.map((s) => inkOf(s, 1 / toPage)), [content.strokes, toPage])
+  const layers = useMemo(() => pageLayers(content), [content])
+  const dark = page.color === 'dark'
   const ptPx = w / (page.size.w / MM_PER_PT)
+  const pos = { left: px(left), top: px(top), width: px(w), height: px(h) }
+  const figures = content.images.filter((m) => m.pdfPage !== undefined)
   return (
-    <div class="mg-nb-page" data-page={page.id} data-color={page.color} style={{ left: px(left), top: px(top), width: px(w), height: px(h) }}>
-      <PaperBackground template={page.template} color={page.color} cssW={w} widthMm={page.size.w} />
-      {content.images.map((m) => (
-        <div key={m.id} class="mg-nb-figure" style={{ left: px(m.box.x * w), top: px(m.box.y * w), width: px(m.box.w * w), height: px(m.box.w * m.aspect * w) }}>
-          <img class="mg-nb-image" src={m.src} alt="" draggable={false} />
-          {m.pdfPage !== undefined && (
-            <button type="button" class="mg-nb-chip" aria-label={`Go to page ${m.pdfPage}`} onClick={() => onJumpToPage(m.pdfPage!)}>
-              <span>p.{m.pdfPage}</span>
-            </button>
-          )}
-        </div>
-      ))}
-      {content.texts.map((t) => (
-        <div
-          key={t.id}
-          class="mg-nb-text"
-          style={{ left: px(t.box.x * w), top: px(t.box.y * w), width: px(t.box.w * w), fontSize: px(TEXT_PT[t.size] * ptPx), color: t.color }}
-        >
-          {t.text}
-        </div>
-      ))}
-      {w > 0 && (
-        <InkLayer
-          page={index + 1}
-          cssW={w}
-          cssH={h}
-          strokes={inks}
-          onAddStroke={({ kind: _kind, page: _page, ...s }) =>
-            store.addStroke({ ...s, page: page.id, tool: s.tool ?? 'pen', pen: s.pen ?? 'fountain', points: scaleY(s.points, toPage) })
+    <>
+      <div class="mg-nb-page" data-page={page.id} data-color={page.color} style={pos}>
+        <PaperBackground template={page.template} color={page.color} cssW={w} widthMm={page.size.w} />
+        {layers.map((layer) => {
+          if (layer.kind === 'image') {
+            const m = layer.item
+            return (
+              <div key={m.id} class="mg-nb-figure" style={figureBox(m, w)}>
+                <img class="mg-nb-image" src={m.src} alt="" draggable={false} />
+              </div>
+            )
           }
-          onEraseStroke={store.removeStroke}
-        />
+          if (layer.kind === 'text') {
+            const t = layer.item
+            return (
+              <div
+                key={t.id}
+                class="mg-nb-text"
+                style={{ left: px(t.box.x * w), top: px(t.box.y * w), width: px(t.box.w * w), fontSize: px(TEXT_PT[t.size] * ptPx), color: t.color }}
+              >
+                {t.text}
+              </div>
+            )
+          }
+          const strokes = layer.strokes.flatMap((s) => live?.get(s.id) ?? [inkOf(s, 1 / toPage)])
+          return <StrokeSvg key={`ink-${layer.strokes[0].id}`} strokes={strokes} cssW={w} cssH={h} paperDark={dark} />
+        })}
+        {w > 0 && (
+          <InkLayer
+            page={index + 1}
+            cssW={w}
+            cssH={h}
+            strokes={inks}
+            pageWidthMm={page.size.w}
+            paperDark={dark}
+            showStrokes={false}
+            onAddStroke={(s) => store.addStroke(toNotebook(s, page.id, toPage))}
+            onEraseStroke={store.removeStroke}
+            onReplaceStroke={(id, pieces) => store.replaceStroke(id, pieces.map((s) => toNotebook(s, page.id, toPage)))}
+            onLivePieces={setLive}
+          />
+        )}
+      </div>
+      {figures.length > 0 && (
+        <div class="mg-nb-chips" data-page={page.id} style={pos}>
+          {figures.map((m) => (
+            <div key={m.id} class="mg-nb-chip-slot" style={figureBox(m, w)}>
+              <button type="button" class="mg-nb-chip" aria-label={`Go to page ${m.pdfPage}`} onClick={() => onJumpToPage(m.pdfPage!)}>
+                <span>p.{m.pdfPage}</span>
+              </button>
+            </div>
+          ))}
+        </div>
       )}
+    </>
+  )
+}
+
+/** Lasso · Pen · Highlighter · Eraser buttons for the active tool. */
+function ToolRow() {
+  const current = tool.value
+  return (
+    <div class="mg-nb-tools" role="group" aria-label="Tools">
+      {BAR_TOOLS.map((b) => (
+        <button
+          key={b.tool}
+          type="button"
+          class="btn mg-nb-pick"
+          aria-label={b.label}
+          title={b.label}
+          aria-pressed={current === b.tool}
+          onClick={() => setTool(b.tool)}
+        >
+          <Icon name={b.tool} />
+        </button>
+      ))}
     </div>
   )
 }
@@ -426,6 +500,7 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
   return (
     <div class="mg-notebook" onPaste={onPaste} onDragOver={(e) => carriesFiles(e) && e.preventDefault()} onDrop={onDrop}>
       <div class="mg-nb-bar">
+        <ToolRow />
         <div class="mg-nb-menu-anchor" ref={menuRef}>
           <button type="button" class="btn mg-nb-tool" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
             Add Page

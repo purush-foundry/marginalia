@@ -21,6 +21,13 @@ const keyField = () => root.querySelector<HTMLInputElement>('#mg-api-key')!
 const button = (text: string) => [...root.querySelectorAll('button')].find((b) => b.textContent === text)!
 
 describe('Settings', () => {
+  test('the finger switch is labelled "Draw with finger"', () => {
+    act(() => render(<Settings />, root))
+    const labels = [...root.querySelectorAll('label')].map((l) => l.textContent ?? '')
+    expect(labels.some((t) => t.startsWith('Draw with finger'))).toBe(true)
+    expect(labels.some((t) => t.startsWith('Finger draws'))).toBe(false)
+  })
+
   test('links the privacy page from the footer', () => {
     act(() => render(<Settings />, root))
     const link = [...root.querySelectorAll('a')].find((a) => a.textContent === 'Privacy')!

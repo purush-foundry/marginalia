@@ -48,6 +48,8 @@ export interface InkLayerProps {
   paperDark?: boolean
   /** False leaves committed strokes to StrokeSvg; default true. */
   showStrokes?: boolean
+  /** During a segment-eraser contact, the working pieces of each stroke it split, keyed by that stroke's id; null when the contact ends. */
+  onLivePieces?(pieces: Map<string, InkStroke[]> | null): void
 }
 
 /** Attribute on the scroller whose rect bounds the live canvas. */
@@ -321,16 +323,20 @@ export function InkLayer(props: InkLayerProps) {
       if (!disposed) setDrawn((n) => n + 1)
     }
 
+    // Working pieces of each page stroke the contact split, keyed by that stroke's id.
+    const piecesBySource = (c: EraseContact): Map<string, InkStroke[]> =>
+      new Map([...c.split].map((id) => [id, [...c.made.values()].filter((piece) => c.origin.get(piece.id) === id)]))
+
     // Hands each page stroke the segment eraser split during the contact to the store: its final pieces, or an erase.
     const finishErase = (c: EraseContact) => {
       if (pending.current !== c) return
-      const { onReplaceStroke, onEraseStroke } = propsRef.current
-      for (const id of c.split) {
-        const pieces = [...c.made.values()].filter((piece) => c.origin.get(piece.id) === id)
+      const { onReplaceStroke, onEraseStroke, onLivePieces } = propsRef.current
+      for (const [id, pieces] of piecesBySource(c)) {
         if (pieces.length && onReplaceStroke) onReplaceStroke(id, pieces)
         else onEraseStroke(id)
       }
       pending.current = null
+      onLivePieces?.(null)
       redraw()
     }
 
@@ -459,6 +465,7 @@ export function InkLayer(props: InkLayerProps) {
       }
       if (didSplit) {
         pending.current = c
+        p.onLivePieces?.(piecesBySource(c))
         redraw()
       }
     }

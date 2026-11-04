@@ -2,12 +2,12 @@ import { describe, expect, it, test } from 'vitest'
 import {
   highlighterPath,
   inkOutlinePath,
-  type PenStyle,
   polylineLength,
   simplifyPoints,
   strokeHitsPoint,
   strokeOutlinePath,
 } from './geometry.ts'
+import type { PenStyle } from '../types.ts'
 import { slowCurveSamples, turning } from './testStrokes.ts'
 
 function pathNumbers(d: string): number[] {

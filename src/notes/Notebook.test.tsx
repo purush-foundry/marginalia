@@ -2,12 +2,25 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { toast } from '../app/ui.ts'
-import { fingerDraws, mouseDraws, penActivity, penTool } from '../ink/tools.ts'
+import { eraserSettings, fingerDraws, penActivity, previousTool, setTool, tool, DEFAULT_ERASER_SETTINGS } from '../ink/tools.ts'
 import { orderBetween } from '../lib/order.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
 import { emptyNotebook, PAGE_SIZES, type NotesDocV2, type PageSize } from './model.ts'
 import { Notebook, type NotebookHandle } from './Notebook.tsx'
 import { createNotebookStore, type NotebookStore } from './notebookStore.ts'
+
+const outlines = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('../ink/geometry.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../ink/geometry.ts')>()
+  return {
+    ...real,
+    inkOutlinePath: (...args: Parameters<typeof real.inkOutlinePath>) => {
+      outlines.count++
+      return real.inkOutlinePath(...args)
+    },
+  }
+})
 
 vi.mock('./images.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./images.ts')>()),
@@ -33,8 +46,9 @@ function notebook(sizes: PageSize[] = [PAGE_SIZES.a4]): NotesDocV2 {
 }
 
 beforeEach(() => {
-  penTool.value = 'pen'
-  mouseDraws.value = false
+  tool.value = 'pen'
+  previousTool.value = 'pen'
+  eraserSettings.value = DEFAULT_ERASER_SETTINGS
   fingerDraws.value = false
   penActivity.down = false
   penActivity.downOn = null
@@ -78,6 +92,7 @@ const flush = () => act(async () => {})
 const $ = (sel: string) => host.querySelector<HTMLElement>(sel)!
 const scroller = () => $('.mg-nb-scroller')
 const page = (id: string) => $(`.mg-nb-page[data-page="${id}"]`)
+const chips = (id: string) => $(`.mg-nb-chips[data-page="${id}"]`)
 const box = (el: HTMLElement) => ['left', 'top', 'width', 'height'].map((k) => parseFloat(el.style.getPropertyValue(k)))
 const ids = () => store.pages.value.map((p) => p.id)
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.trim() === name)!
@@ -239,9 +254,9 @@ test('a pen stroke on page 2 is stored on page 2 in page-width units', async () 
   expect(s).not.toHaveProperty('kind')
   expect(s.points).toHaveLength(6)
   ;[40 / 840, 84 / 840, 0.5, 440 / 840, 504 / 840, 0.5].forEach((v, i) => expect(s.points[i]).toBeCloseTo(v))
-  expect(page('page-2').querySelectorAll('.ink-layer path')).toHaveLength(1)
+  expect(page('page-2').querySelectorAll('svg.ink-pen path')).toHaveLength(1)
 
-  penTool.value = 'eraser'
+  setTool('eraser')
   await act(() => {
     pen(page('page-2'), 'pointerdown', 16 + 240, 1220 + 294)
     pen(page('page-2'), 'pointerup', 16 + 240, 1220 + 294)
@@ -425,8 +440,8 @@ test('converted text and images show on their pages; the p.N chip jumps to the p
   const imgs = page('page-2').querySelectorAll<HTMLImageElement>('img.mg-nb-image')
   expect(Array.from(imgs).map((i) => i.getAttribute('src'))).toEqual(['data:snip', 'data:photo'])
   expect(box(imgs[0].parentElement!)).toEqual([84, 84, 420, 210])
-  expect(page('page-2').querySelectorAll('button.mg-nb-chip')).toHaveLength(1)
-  const chip = page('page-2').querySelector<HTMLElement>('button.mg-nb-chip')!
+  expect(chips('page-2').querySelectorAll('button.mg-nb-chip')).toHaveLength(1)
+  const chip = chips('page-2').querySelector<HTMLElement>('button.mg-nb-chip')!
   expect(chip.textContent).toBe('p.3')
   await click(chip)
   expect(jump).toHaveBeenCalledWith(3)
@@ -505,4 +520,107 @@ test('a notebook with no pages renders empty and Add Page adds one', async () =>
   await click(button('After'))
   expect(host.querySelectorAll('.mg-nb-page')).toHaveLength(1)
   expect(handle!.currentPage()).toBe(ids()[0])
+})
+
+test('a pen tap on a p.N chip jumps without drawing', async () => {
+  await mount()
+  await act(() => {
+    store.addImage({ page: 'page-1', src: 'data:snip', aspect: 0.5, pdfPage: 3, box: { x: 0.1, y: 0.1, w: 0.5 } })
+  })
+  const chip = chips('page-1').querySelector<HTMLElement>('button.mg-nb-chip')!
+  await act(() => {
+    pen(chip, 'pointerdown', 100, 300)
+    pen(chip, 'pointerup', 100, 300)
+    chip.click()
+  })
+  expect(jump).toHaveBeenCalledWith(3)
+  expect(store.doc.value.strokes).toHaveLength(0)
+})
+
+test('a stroke drawn after an image renders above it, an earlier one below', async () => {
+  const doc = notebook()
+  const stroke = (id: string, color: string, z: string) => ({
+    id, page: 'page-1', tool: 'pen' as const, pen: 'fountain' as const, color, width: 0.004,
+    points: [0.1, 0.1, 0.5, 0.4, 0.2, 0.5], z, createdAt: 1, updatedAt: 1,
+  })
+  doc.strokes = [stroke('s2', '#2f6fed', 'c'), stroke('s1', '#d33a2c', 'a')]
+  doc.images = [{ id: 'i1', page: 'page-1', box: { x: 0.1, y: 0.1, w: 0.5 }, src: 'data:snip', aspect: 0.5, z: 'b', createdAt: 1, updatedAt: 1 }]
+  await mount(doc)
+  const order = Array.from(page('page-1').querySelectorAll('svg.ink-pen, img.mg-nb-image, .ink-layer')).map((el) =>
+    el.matches('svg') ? el.querySelector('path')!.getAttribute('fill') : el.className,
+  )
+  expect(order).toEqual(['#d33a2c', 'mg-nb-image', '#2f6fed', 'ink-layer'])
+  expect(page('page-1').querySelector('.ink-layer svg')).toBeNull()
+})
+
+test('the tool row picks Lasso, Pen, Highlighter and Eraser', async () => {
+  await mount()
+  const row = Array.from(host.querySelectorAll<HTMLButtonElement>('.mg-nb-bar button[aria-pressed]'))
+  expect(row.map((b) => b.getAttribute('aria-label'))).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser'])
+  const bar = Array.from(host.querySelectorAll('.mg-nb-bar button')).map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())
+  expect(bar.slice(0, 5)).toEqual(['Lasso', 'Pen', 'Highlighter', 'Eraser', 'Add Page'])
+  for (const [label, t] of [['Lasso', 'lasso'], ['Highlighter', 'highlighter'], ['Eraser', 'eraser'], ['Pen', 'pen']] as const) {
+    await click(row.find((b) => b.getAttribute('aria-label') === label)!)
+    expect(tool.value).toBe(t)
+    expect(row.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.getAttribute('aria-label'))).toEqual([label])
+  }
+})
+
+test('ink on a notebook page uses the page width in mm and dark paper puts the highlighter below the ink', async () => {
+  await mount(notebook([PAGE_SIZES.standard]))
+  await act(() => store.setPageStyle('page-1', { color: 'dark' }, false))
+  const p1 = page('page-1')
+  await act(() => {
+    pen(p1, 'pointerdown', 116, 116)
+    pen(p1, 'pointermove', 216, 216)
+    pen(p1, 'pointerup', 216, 216)
+  })
+  expect(store.doc.value.strokes[0].width).toBeCloseTo(0.35 / 160.5)
+  setTool('highlighter')
+  await act(() => {
+    pen(p1, 'pointerdown', 116, 316)
+    pen(p1, 'pointermove', 216, 316)
+    pen(p1, 'pointerup', 216, 316)
+  })
+  expect(Array.from(page('page-1').querySelectorAll('svg.ink-pen, svg.ink-hl')).map((el) => el.getAttribute('class'))).toEqual(['ink-hl', 'ink-pen'])
+})
+
+test('the segment eraser shows the split pieces during the drag', async () => {
+  eraserSettings.value = { ...DEFAULT_ERASER_SETTINGS, style: 'segment' }
+  await mount()
+  const p1 = page('page-1')
+  await act(() => {
+    pen(p1, 'pointerdown', 16 + 100, 16 + 400)
+    pen(p1, 'pointermove', 16 + 700, 16 + 400)
+    pen(p1, 'pointerup', 16 + 700, 16 + 400)
+  })
+  expect(p1.querySelectorAll('svg.ink-pen path')).toHaveLength(1)
+  setTool('eraser')
+  await act(() => {
+    pen(p1, 'pointerdown', 16 + 400, 16 + 300)
+    pen(p1, 'pointermove', 16 + 400, 16 + 500)
+  })
+  expect(p1.querySelectorAll('svg.ink-pen path')).toHaveLength(2)
+  expect(store.doc.value.strokes.filter((s) => !s.deleted)).toHaveLength(1)
+  await act(() => {
+    pen(p1, 'pointerup', 16 + 400, 16 + 500)
+  })
+  expect(store.doc.value.strokes.filter((s) => !s.deleted)).toHaveLength(2)
+  expect(p1.querySelectorAll('svg.ink-pen path')).toHaveLength(2)
+})
+
+test('a stroke on one page does not re-outline the ink of another', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await act(() => {
+    pen(page('page-1'), 'pointerdown', 116, 116)
+    pen(page('page-1'), 'pointermove', 216, 216)
+    pen(page('page-1'), 'pointerup', 216, 216)
+  })
+  const before = outlines.count
+  await act(() => {
+    pen(page('page-2'), 'pointerdown', 116, 1320)
+    pen(page('page-2'), 'pointermove', 216, 1420)
+    pen(page('page-2'), 'pointerup', 216, 1420)
+  })
+  expect(outlines.count - before).toBe(1)
 })

@@ -1,7 +1,5 @@
-// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes (a Notes toggle below 700 px), Draw latch, undo/redo of the active pane, night, sidebar, threads, export.
+// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes (a Notes toggle below 700 px), undo/redo of the active pane, night, sidebar, threads, export.
 import type { ReadonlySignal, Signal } from '@preact/signals'
-import { mouseDraws, penTool } from '../ink/tools'
-import { PenStrip } from '../ink/PenStrip'
 import { Icon, type IconName } from './icons'
 import type { NotesLayout } from './settings'
 
@@ -17,9 +15,6 @@ export interface ToolbarProps {
   title: string
   history: UndoTarget
   areaArmed: Signal<boolean>
-  /** Pen or touch device: the puck carries the pen tools, so the toolbar shows no pen strip. */
-  touchUi: boolean
-  finePointer: boolean
   layout: NotesLayout
   /** At least 700 px wide: the title, and Paper · Both · Notes; narrower gets Back alone and a Notes toggle. */
   wide: boolean
@@ -58,12 +53,6 @@ const LAYOUTS: readonly { value: NotesLayout; label: string }[] = [
 
 export function Toolbar(props: ToolbarProps) {
   const { history } = props
-  const latched = mouseDraws.value
-  const toggleLatch = () => {
-    const next = !mouseDraws.value
-    mouseDraws.value = next
-    if (next && penTool.value === 'select') penTool.value = 'pen'
-  }
   return (
     <header class={`mg-toolbar${props.wide ? '' : ' mg-toolbar-narrow'}`}>
       <div class="mg-toolbar-lead">
@@ -107,12 +96,6 @@ export function Toolbar(props: ToolbarProps) {
             pressed={props.layout === 'notes'}
             onClick={() => props.onLayout(props.layout === 'notes' ? 'paper' : 'notes')}
           />
-        )}
-        {!props.touchUi && props.finePointer && (
-          <>
-            <ToolButton icon="draw" label="Draw" pressed={latched} onClick={toggleLatch} />
-            {latched && <PenStrip withSelect={false} />}
-          </>
         )}
         <ToolButton icon="undo" label="Undo" disabled={!history.canUndo.value} onClick={() => history.undo()} />
         <ToolButton icon="redo" label="Redo" disabled={!history.canRedo.value} onClick={() => history.redo()} />

@@ -6,20 +6,14 @@ import {
   DEFAULT_HIGHLIGHTER_SETTINGS,
   DEFAULT_LASSO_SETTINGS,
   DEFAULT_PALETTES,
-  DEFAULT_PEN_COLOR,
   DEFAULT_PEN_SETTINGS,
-  DEFAULT_PEN_WIDTH,
   MAX_COLOR_SLOTS,
-  PEN_COLORS,
-  PEN_WIDTHS,
   WIDTH_RANGE_MM,
   eraserSettings,
   highlighterSettings,
   lassoSettings,
   palettes,
-  penColor,
   penSettings,
-  penWidth,
   textSize,
   type EraserSettings,
   type HighlighterSettings,
@@ -38,13 +32,7 @@ export type DockEdge = 'left' | 'right' | 'top' | 'bottom'
 export interface AppSettings extends Settings {
   /** A pen pointer has been seen on this device. */
   penSeen: boolean
-  /** Ink colour the pen draws with on this device. */
-  penColor: string
-  /** Pen width as a fraction of page or sheet width. */
-  penWidth: number
-  /** Tool puck centre as a fraction of the host height. */
-  puckY: number
-  /** Reader panes: the paper, the paper beside the notes sheet, or the notes sheet. */
+  /** Reader panes: the paper, the paper beside the notebook, or the notebook. */
   notesLayout: NotesLayout
   /** Paper pane width as a fraction of the panes in the Both layout. */
   splitRatio: number
@@ -69,9 +57,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   invertImages: false,
   fingerDraws: false,
   penSeen: false,
-  penColor: DEFAULT_PEN_COLOR,
-  penWidth: DEFAULT_PEN_WIDTH,
-  puckY: 0.6,
   notesLayout: 'paper',
   splitRatio: 0.5,
   palettes: DEFAULT_PALETTES,
@@ -96,24 +81,8 @@ export async function loadSettings(): Promise<AppSettings> {
 
 /** Applies a patch to the signal and stores the result. */
 export async function saveSettings(patch: Partial<AppSettings>): Promise<void> {
-  if (patch.puckY !== undefined) patch = { ...patch, puckY: Math.min(1, Math.max(0, patch.puckY)) }
   settings.value = { ...settings.value, ...patch }
   await idbSet('settings', KEY, settings.value)
-}
-
-/** Copies the stored pen colour and width into the pen signals and saves them back on change; returns the unsubscribe. */
-export function bindPenPalette(): () => void {
-  const stored = settings.peek()
-  penColor.value = PEN_COLORS.some((c) => c.value === stored.penColor) ? stored.penColor : DEFAULT_PEN_COLOR
-  penWidth.value = PEN_WIDTHS.some((w) => w.value === stored.penWidth) ? stored.penWidth : DEFAULT_PEN_WIDTH
-  return effect(() => {
-    const color = penColor.value
-    const width = penWidth.value
-    const current = settings.peek()
-    if (color !== current.penColor || width !== current.penWidth) {
-      saveSettings({ penColor: color, penWidth: width }).catch(console.error)
-    }
-  })
 }
 
 const HEX = /^#[0-9a-f]{6}$/i

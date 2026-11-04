@@ -10,21 +10,21 @@ import {
   flushPendingWrites,
   getPdfBlob,
   library,
-  loadNotes,
+  loadNotebook,
   loadSidecar,
-  refreshNotes,
+  refreshNotebook,
   refreshSidecar,
-  saveNotes,
+  saveNotebook,
   saveSidecar,
 } from '../drive/library'
-import { notesToMarkdown, sidecarToMarkdown } from '../export/markdown'
+import { notebookToMarkdown, sidecarToMarkdown } from '../export/markdown'
 import { InkLayer } from '../ink/InkLayer'
-import { Puck } from '../ink/Puck'
-import { mouseDraws, penTool } from '../ink/tools'
+import { ToolMenu } from '../ink/ToolMenu'
+import { isInkTool, pageWidthMm, setTool, tool, type Tool } from '../ink/tools'
 import { newId, now } from '../lib/ids'
 import { IMAGE_LONG_EDGE_PX, prepareImage } from '../notes/images'
-import { NotesSheet, type NotesSheetHandle } from '../notes/NotesSheet'
-import { createNotesStore, type NotesStore } from '../notes/notesStore'
+import { Notebook, type NotebookHandle } from '../notes/Notebook'
+import { createNotebookStore, type NotebookStore } from '../notes/notebookStore'
 import { openPdf, type PageLink, type PdfDoc } from '../pdf/document'
 import { isIOS } from '../pdf/platform'
 import { Viewer, type PendingSelection, type ViewerHandle } from '../pdf/Viewer'
@@ -45,15 +45,17 @@ interface Loaded {
   title: string
   /** A newer reading position merged from Drive after open; the view scrolls there unless the user already moved. */
   remotePosition: Signal<{ page: number; offset: number } | null>
-  /** The notes store, once the sheet has been shown. */
-  notes: ReadonlySignal<NotesStore | null>
-  /** Loads the notes and creates their store on the first call; later calls share it. */
-  ensureNotes(): Promise<NotesStore>
+  /** The notebook store, once the notes have been shown. */
+  notes: ReadonlySignal<NotebookStore | null>
+  /** Loads the notebook and creates its store on the first call; later calls share it. */
+  ensureNotes(): Promise<NotebookStore>
 }
 
 type Pane = 'paper' | 'notes'
 
 const NAV_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
+const TOOL_KEYS: Record<string, Tool> = { l: 'lasso', p: 'pen', h: 'highlighter', e: 'eraser' }
+const MENU_TOOLS: readonly Tool[] = ['lasso', 'pen', 'highlighter', 'eraser']
 
 const NO_STROKES: InkStroke[] = []
 const NO_THREADS: Thread[] = []
@@ -234,11 +236,11 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const viewer = useRef<ViewerHandle | null>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const panes = useRef<HTMLDivElement>(null)
-  const sheet = useRef<NotesSheetHandle | null>(null)
-  const sheetHandle = useMemo(() => (h: NotesSheetHandle) => (sheet.current = h), [])
+  const notebook = useRef<NotebookHandle | null>(null)
+  const notebookHandle = useMemo(() => (h: NotebookHandle) => (notebook.current = h), [])
   const areaArmed = useSignal(false)
   const lastPane = useSignal<Pane>('paper')
-  const penDrawing = useMemo(() => computed(() => penTool.value !== 'select'), [])
+  const penDrawing = useMemo(() => computed(() => isInkTool(tool.value)), [])
   const [bar, setBar] = useState<Bar | null>(null)
   const [note, setNote] = useState<{ id: string; rect: DOMRect } | null>(null)
   const [thread, setThread] = useState<Thread | null>(null)
@@ -246,8 +248,9 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const [backTo, setBackTo] = useState<number | null>(null)
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
   const [jumpTarget, setJumpTarget] = useState<{ page: number; box?: Box } | null>(null)
+  const [notesFailed, setNotesFailed] = useState(false)
+  const [notesAttempt, setNotesAttempt] = useState(0)
   const touchUi = s.penSeen || isIPadOS() || s.fingerDraws
-  const finePointer = useMemo(() => matches('(any-pointer: fine)'), [])
   const wide = () => matches(WIDE)
   const canLayoutBoth = useMedia(WIDE)
   const layout: NotesLayout = s.notesLayout === 'both' && !canLayoutBoth ? 'paper' : s.notesLayout
@@ -299,7 +302,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     if (!el) return
     moved.current = false
     const mark = (e: Event) => {
-      if (!(e.target as Element | null)?.closest?.('.mg-puck, .mg-puck-pop')) moved.current = true
+      if (!(e.target as Element | null)?.closest?.('.mg-toolmenu')) moved.current = true
     }
     const onKey = (e: KeyboardEvent) => {
       if (NAV_KEYS.has(e.key) && !(e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) mark(e)
@@ -323,6 +326,13 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const state = useRef({ bar, note, thread, sidebar })
   state.current = { bar, note, thread, sidebar }
 
+  // Opens and leaves the reader in Lasso on a device without touch UI.
+  useEffect(() => {
+    if (touchUi) return
+    setTool('lasso')
+    return () => setTool('lasso')
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')
@@ -332,13 +342,18 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         else historyRef.current.undo()
         return
       }
+      const picked = TOOL_KEYS[e.key.toLowerCase()]
+      if (picked && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        setTool(picked)
+        return
+      }
       if (e.key !== 'Escape') return
       const cur = state.current
       if (cur.bar || cur.note) return
       if (cur.thread) setThread(null)
       else if (cur.sidebar && !wide()) setSidebar(null)
-      else if (mouseDraws.value) mouseDraws.value = false
       else if (areaArmed.value) areaArmed.value = false
+      else if (tool.peek() !== 'lasso') setTool('lasso')
     }
     const undo = () => historyRef.current.undo()
     const redo = () => historyRef.current.redo()
@@ -355,16 +370,17 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   useEffect(() => {
     if (!showNotes) return
     let live = true
-    loaded.ensureNotes().catch(() => live && showToast('Could not open notes'))
+    setNotesFailed(false)
+    loaded.ensureNotes().catch(() => live && setNotesFailed(true))
     return () => {
       live = false
     }
-  }, [showNotes])
+  }, [showNotes, notesAttempt])
 
-  // Scrolls the sheet to a block added by To notes once the sheet is on screen.
+  // Scrolls the notebook to an image added by To notes once the notebook is on screen.
   useEffect(() => {
-    if (!scrollTarget || !showNotes || !notes || !sheet.current) return
-    sheet.current.scrollToBlock(scrollTarget)
+    if (!scrollTarget || !showNotes || !notes || !notebook.current) return
+    notebook.current.scrollToItem(scrollTarget)
     setScrollTarget(null)
   }, [scrollTarget, showNotes, notes])
 
@@ -427,13 +443,15 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const barText = bar?.kind === 'selection' ? (bar.sel.kind === 'text' ? bar.sel.text : '') : current?.kind === 'text' ? current.text : ''
 
   const toNotes = (page: number, box: Box) => {
+    const shown = showNotes
     void (async () => {
-      const sheetStore = await loaded.ensureNotes()
+      const nb = await loaded.ensureNotes()
       const { blob } = await doc.renderCrop(page, box, IMAGE_LONG_EDGE_PX)
       const img = await prepareImage(blob)
-      const block = sheetStore.addImageBlock({ src: img.dataUrl, aspect: img.height / img.width, page })
+      const target = (shown ? notebook.current?.currentPage() : null) ?? nb.pages.peek()[0]?.id ?? nb.addPage().id
+      const image = nb.addImage({ page: target, src: img.dataUrl, aspect: img.height / img.width, pdfPage: page })
       chooseLayout(wide() ? 'both' : 'notes')
-      setScrollTarget(block.id)
+      setScrollTarget(image.id)
     })().catch(() => showToast('Could not add to notes'))
   }
 
@@ -531,7 +549,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       const pages = new Set(sidecar.highlights.filter((h) => !h.deleted).map((h) => h.page))
       await Promise.all([...pages].map(ensureColumns))
       const md = sidecarToMarkdown(sidecar, { title, columns: columns.current })
-      const notesMd = notesToMarkdown(loaded.notes.peek()?.doc.peek() ?? (await loadNotes(pdfId)))
+      const notesMd = notebookToMarkdown(loaded.notes.peek()?.doc.peek() ?? (await loadNotebook(pdfId)))
       return notesMd ? `${md}\n${notesMd}` : md
     })()
     copyText(text).then(() => showToast('Copied as Markdown'), () => showToast('Could not copy'))
@@ -549,8 +567,11 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         cssW={cssW}
         cssH={cssH}
         strokes={inksByPage.value.get(page) ?? NO_STROKES}
+        pageWidthMm={pageWidthMm(doc.pageSize(page).w)}
+        paperDark={s.nightMode}
         onAddStroke={store.addStroke}
         onEraseStroke={store.removeStroke}
+        onReplaceStroke={store.replaceStroke}
       />
       {(threadsByPage.value.get(page) ?? NO_THREADS).map((t) => {
         const b = t.anchor.boxes[0]
@@ -578,8 +599,6 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         title={title}
         history={history}
         areaArmed={areaArmed}
-        touchUi={touchUi}
-        finePointer={finePointer}
         layout={layout}
         wide={canLayoutBoth}
         onLayout={chooseLayout}
@@ -608,7 +627,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         )}
         <div
           ref={panes}
-          class={`mg-panes mg-layout-${layout}${mouseDraws.value ? ' mg-drawing' : ''}`}
+          class={`mg-panes mg-layout-${layout}`}
           style={{ '--split': String(s.splitRatio) }}
         >
           {showPaper && (
@@ -654,7 +673,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
                   ← back to p.{backTo}
                 </button>
               )}
-              {active === 'paper' && <Puck visible={touchUi} />}
+              {active === 'paper' && <ToolMenu tools={MENU_TOOLS} />}
             </div>
           )}
           {layout === 'both' && <Divider panes={panes} ratio={s.splitRatio} />}
@@ -665,11 +684,18 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               onFocusIn={() => (lastPane.value = 'notes')}
             >
               {notes ? (
-                <NotesSheet store={notes} onJumpToPage={go} handle={sheetHandle} />
+                <Notebook store={notes} onJumpToPage={go} handle={notebookHandle} />
+              ) : notesFailed ? (
+                <div class="mg-notes-loading">
+                  <p class="mg-error">Could not open notes</p>
+                  <button type="button" class="btn" onClick={() => setNotesAttempt((n) => n + 1)}>
+                    Retry
+                  </button>
+                </div>
               ) : (
                 <p class="mg-muted mg-notes-loading">Loading notes…</p>
               )}
-              {active === 'notes' && <Puck visible={touchUi} />}
+              {active === 'notes' && <ToolMenu tools={MENU_TOOLS} />}
             </div>
           )}
         </div>
@@ -721,21 +747,21 @@ export function Reader({ pdfId }: { pdfId: string }) {
     let doc: PdfDoc | null = null
     let store: AnnotationStore | null = null
     let edited = false
-    let notes: NotesStore | null = null
+    let notes: NotebookStore | null = null
     let notesEdited = false
-    let notesLoad: Promise<NotesStore> | null = null
-    const notesSignal = signal<NotesStore | null>(null)
-    // Reads the local notes, creates their store, then merges the remote notes when they arrive.
-    const openNotes = async (): Promise<NotesStore> => {
-      const initial = await loadNotes(pdfId)
+    let notesLoad: Promise<NotebookStore> | null = null
+    const notesSignal = signal<NotebookStore | null>(null)
+    // Reads the local notebook, creates its store, then merges the remote notebook when it arrives.
+    const openNotes = async (): Promise<NotebookStore> => {
+      const initial = await loadNotebook(pdfId)
       if (cancelled) throw new Error('Reader closed')
-      const created = createNotesStore(initial, (d) => {
+      const created = createNotebookStore(initial, (d) => {
         notesEdited = true
-        saveNotes(pdfId, d)
+        saveNotebook(pdfId, d)
       })
       notes = created
       notesSignal.value = created
-      refreshNotes(pdfId).then(
+      refreshNotebook(pdfId).then(
         (merged) => {
           if (merged && !cancelled) created.replaceFromRemote(merged)
         },
@@ -743,7 +769,7 @@ export function Reader({ pdfId }: { pdfId: string }) {
       )
       return created
     }
-    const ensureNotes = (): Promise<NotesStore> => {
+    const ensureNotes = (): Promise<NotebookStore> => {
       if (!notesLoad) {
         notesLoad = openNotes()
         notesLoad.catch(() => (notesLoad = null))
@@ -794,10 +820,9 @@ export function Reader({ pdfId }: { pdfId: string }) {
     return () => {
       cancelled = true
       if (store && edited) saveSidecar(pdfId, store.sidecar.peek())
-      if (notes && notesEdited) saveNotes(pdfId, notes.doc.peek())
+      if (notes && notesEdited) saveNotebook(pdfId, notes.doc.peek())
       store?.dispose()
       doc?.destroy()
-      mouseDraws.value = false
       void flushPendingWrites()
     }
   }, [pdfId, attempt])

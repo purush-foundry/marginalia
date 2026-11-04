@@ -19,8 +19,6 @@ function mount(overrides: Partial<ToolbarProps> = {}): ToolbarProps {
     title: 'attention',
     history: createAnnotationStore(emptySidecar('p1', 'a.pdf', 0), () => {}, { documentUndo: false }),
     areaArmed: signal(false),
-    touchUi: false,
-    finePointer: true,
     layout: 'paper',
     wide: true,
     onLayout: vi.fn(),
@@ -78,7 +76,7 @@ describe('Toolbar', () => {
 
   test('below 700 px the lead is Back only and a Notes toggle switches between paper and notes', () => {
     const toggle = () => root.querySelector<HTMLButtonElement>('.mg-toolbar-tools button[aria-label="Notes"]')!
-    let props = mount({ wide: false, touchUi: true, layout: 'paper' })
+    let props = mount({ wide: false, layout: 'paper' })
     expect(root.querySelector('[role="radiogroup"]')).toBeNull()
     expect([...root.querySelectorAll('.mg-toolbar-lead > *')].map((e) => e.getAttribute('aria-label'))).toEqual(['Library'])
     expect(toggle().getAttribute('aria-pressed')).toBe('false')
@@ -86,7 +84,7 @@ describe('Toolbar', () => {
     expect(props.onLayout).toHaveBeenCalledWith('notes')
 
     act(() => render(null, root))
-    props = mount({ wide: false, touchUi: true, layout: 'notes' })
+    props = mount({ wide: false, layout: 'notes' })
     expect(toggle().getAttribute('aria-pressed')).toBe('true')
     act(() => toggle().click())
     expect(props.onLayout).toHaveBeenCalledWith('paper')
@@ -101,7 +99,7 @@ describe('Toolbar', () => {
     const style = document.createElement('style')
     style.textContent = readFileSync('src/app/reader.css', 'utf8')
     document.head.append(style)
-    mount({ wide: false, touchUi: true })
+    mount({ wide: false })
     const labels = [...root.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
     expect(labels).toEqual(['Library', 'Snip', 'Notes', 'Undo', 'Redo', 'Night mode', 'Sidebar', 'Ask threads', 'Copy as Markdown'])
     const lead = getComputedStyle(root.querySelector('.mg-toolbar-lead')!)
@@ -118,13 +116,14 @@ describe('Toolbar', () => {
     expect(root.querySelector('.mg-toolbar-tools button[aria-label="Notes"]')).toBeNull()
   })
 
-  test('touch devices get no pen strip; a laptop gets the Draw latch', () => {
-    mount({ touchUi: true })
+  test('no Draw button on any device', () => {
+    mount()
     expect(root.querySelector('button[aria-label="Draw"]')).toBeNull()
     expect(root.querySelector('button[aria-label="Pen"]')).toBeNull()
+    expect(root.querySelector('.mg-penstrip')).toBeNull()
     act(() => render(null, root))
-    mount()
-    expect(root.querySelector('button[aria-label="Draw"]')).not.toBeNull()
+    mount({ wide: false })
+    expect(root.querySelector('button[aria-label="Draw"]')).toBeNull()
   })
 
   test('Undo and Redo act on the history they are given', () => {

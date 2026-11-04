@@ -283,7 +283,7 @@ export function Settings(props: { onboarding?: boolean }) {
         <h2>Reading</h2>
         <Toggle label="Night mode" field="nightMode" />
         <Toggle label="Invert images in night mode" field="invertImages" />
-        <Toggle label="Finger draws" hint="A finger draws like the Pencil instead of scrolling." field="fingerDraws" />
+        <Toggle label="Draw with finger" hint="A finger draws like the Pencil instead of scrolling." field="fingerDraws" />
       </section>
       <CacheSection />
       <section>

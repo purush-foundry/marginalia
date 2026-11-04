@@ -1,8 +1,6 @@
 // Schema-2 notebook: fixed pages with z-ordered strokes, text boxes and images, and the schema-1 conversion.
 import { compareOrder, orderBetween } from '../lib/order.ts'
-import type { ImageBlock, NoteStroke, NotesBackground, NotesDoc, TextBlock } from '../types.ts'
-
-type PenStyle = 'ball' | 'fountain' | 'brush'
+import type { ImageBlock, NoteStroke, NotesBackground, NotesDoc, PenStyle, TextBlock } from '../types.ts'
 
 interface Item {
   id: string

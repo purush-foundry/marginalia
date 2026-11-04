@@ -1,6 +1,5 @@
 import { getStroke } from 'perfect-freehand'
-
-export type PenStyle = 'ball' | 'fountain' | 'brush'
+import type { PenStyle } from '../types.ts'
 
 /** Thinning and taper lengths (multiples of the size) per pen. */
 export const PEN_STYLES: Record<PenStyle, { thinning: number; startTaper: number; endTaper: number }> = {

@@ -1,7 +1,7 @@
 import { sortHighlights } from '../annot/store'
 import { compareOrder } from '../lib/order'
 import type { NotesDocV2 } from '../notes/model'
-import type { Box, HighlightColor, NotesDoc, Sidecar } from '../types'
+import type { Box, HighlightColor, Sidecar } from '../types'
 
 export interface ExportOptions {
   title: string
@@ -39,16 +39,6 @@ export function sidecarToMarkdown(sidecar: Sidecar, opts: ExportOptions): string
   }
 
   return out.join('\n\n') + '\n'
-}
-
-/** A `## Notes` section: non-empty text blocks and `(image, p.N)` lines in block order; empty when there is nothing to list. */
-export function notesToMarkdown(doc: NotesDoc): string {
-  const lines: string[] = []
-  for (const b of doc.blocks.filter((x) => !x.deleted).sort(compareOrder)) {
-    if (b.kind === 'image') lines.push(b.page ? `(image, p.${b.page})` : '(image)')
-    else if (b.text.trim()) lines.push(b.text)
-  }
-  return lines.length ? ['## Notes', ...lines].join('\n\n') + '\n' : ''
 }
 
 /** A `## Notes` section with a `### Page N` per live page holding text or images, each listed top to bottom; empty when there is nothing to list. */

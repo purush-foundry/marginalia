@@ -3,7 +3,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InkLayer } from '../ink/InkLayer.tsx'
-import { penTool } from '../ink/tools.ts'
+import { setTool } from '../ink/tools.ts'
 import type { Highlight, InkStroke } from '../types.ts'
 import type { PdfDoc } from './document.ts'
 import { Viewer, type ViewerHandle, type ViewerProps } from './Viewer.tsx'
@@ -88,13 +88,13 @@ afterEach(() => {
   act(() => render(null, root))
   root.remove()
   for (const undo of restore.splice(0).reverse()) undo()
-  penTool.value = 'pen'
+  setTool('pen')
 })
 
 describe('Viewer', () => {
   it('mounts pageOverlay inside the page so a pen stroke over the text layer reaches the ink layer', () => {
     const onAddStroke = vi.fn<(s: InkStroke) => void>()
-    penTool.value = 'pen'
+    setTool('pen')
     mount({
       pageOverlay: (page, cssW, cssH) => (
         <InkLayer page={page} cssW={cssW} cssH={cssH} strokes={[]} onAddStroke={onAddStroke} onEraseStroke={() => {}} />
@@ -113,6 +113,11 @@ describe('Viewer', () => {
 
     expect(onAddStroke).toHaveBeenCalledOnce()
     expect(onAddStroke.mock.calls[0][0].page).toBe(1)
+  })
+
+  it('the scroller bounds the live ink canvas', () => {
+    mount()
+    expect(root.querySelector('.mg-scroller')!.hasAttribute('data-ink-viewport')).toBe(true)
   })
 
   it('reports a tap on a highlight with the tapped box in client coordinates', () => {

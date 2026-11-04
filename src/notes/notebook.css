@@ -16,6 +16,7 @@
 .mg-nb-bar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
@@ -26,6 +27,17 @@
 
 .mg-nb-tool {
   font-size: 13px;
+}
+
+.mg-nb-tools {
+  display: flex;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.mg-nb-pick {
+  padding: 0;
+  background: transparent;
 }
 
 .mg-nb-menu-anchor {
@@ -99,6 +111,26 @@
   position: absolute;
 }
 
+.mg-nb-page > svg.ink-pen,
+.mg-nb-page > svg.ink-hl {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* p.N chips over the page, outside its ink input. */
+.mg-nb-chips {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mg-nb-chip-slot {
+  position: absolute;
+}
+
 .mg-nb-image {
   display: block;
   width: 100%;
@@ -131,6 +163,7 @@
   padding: 0 6px;
   border: 0;
   background: none;
+  pointer-events: auto;
 }
 
 .mg-nb-chip > span {

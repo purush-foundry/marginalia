@@ -578,12 +578,12 @@ describe('InkLayer mouse', () => {
     const fine = vi.fn((q: string) => ({ matches: q === '(pointer: fine)' }) as MediaQueryList)
     vi.stubGlobal('matchMedia', fine)
     const text = await mount({ strokes: [{ ...base, id: 'a', points: [0.1, 0.9, 0.5, 0.9, 0.9, 0.5] }] })
-    expect(layer.dataset.mouseDraws).toBe('')
+    expect(layer.getAttribute('data-mouse-draws')).toBe('')
     stroke(text, 'mouse', [20, 40], [100, 200])
     await act(() => {
       setTool('highlighter')
     })
-    expect(layer.dataset.mouseDraws).toBe('')
+    expect(layer.getAttribute('data-mouse-draws')).toBe('')
     stroke(text, 'mouse', [20, 40], [100, 200])
     expect(added.map((s) => s.tool)).toEqual(['pen', 'highlighter'])
     expect(added[0].points).toEqual([0.1, 0.1, 0.5, 0.5, 0.5, 0.5])
@@ -591,14 +591,14 @@ describe('InkLayer mouse', () => {
     await act(() => {
       setTool('eraser')
     })
-    expect(layer.dataset.mouseDraws).toBe('')
+    expect(layer.getAttribute('data-mouse-draws')).toBe('')
     stroke(text, 'mouse', [20, 360], [180, 360])
     expect(erased).toEqual(['a'])
 
     await act(() => {
       setTool('lasso')
     })
-    expect(layer.dataset.mouseDraws).toBeUndefined()
+    expect(layer.getAttribute('data-mouse-draws')).toBeNull()
     const down = pointer('pointerdown', { type: 'mouse', x: 20, y: 40 })
     text.dispatchEvent(down)
     text.dispatchEvent(pointer('pointerup', { type: 'mouse', x: 20, y: 40 }))
@@ -609,7 +609,7 @@ describe('InkLayer mouse', () => {
   it('marks the layer for mouse drawing only on a fine pointer', async () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false }) as MediaQueryList)
     await mount()
-    expect(layer.dataset.mouseDraws).toBeUndefined()
+    expect(layer.getAttribute('data-mouse-draws')).toBeNull()
   })
 })
 

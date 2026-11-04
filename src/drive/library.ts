@@ -598,11 +598,6 @@ export function loadNotebook(pdfId: string): Promise<NotesDocV2> {
   return load(NOTEBOOK, pdfId)
 }
 
-/** Retired v2 call: always rejects. */
-export function loadNotes(_pdfId: string): Promise<NotesDoc> {
-  return Promise.reject(new Error('Notes moved to the notebook'))
-}
-
 async function persist<T>(c: Companion<T>, pdfId: string, doc: T): Promise<void> {
   await localLane(async () => {
     const stored = await readStored(c, pdfId)
@@ -662,9 +657,6 @@ export function saveSidecar(pdfId: string, sidecar: Sidecar): void {
 export function saveNotebook(pdfId: string, doc: NotesDocV2): void {
   save(NOTEBOOK, pdfId, doc)
 }
-
-/** Retired v2 call: does nothing. */
-export function saveNotes(_pdfId: string, _doc: NotesDoc): void {}
 
 /** Writes every debounced sidecar and notes edit to IndexedDB and the upload queue immediately. */
 export async function flushPendingWrites(): Promise<void> {
@@ -752,11 +744,6 @@ export function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
 /** If the remote notes file's version differs from the one last merged: download, convert from schema 1 when needed, merge, store and return the notebook; else null, also when the remote is not a notes document. */
 export function refreshNotebook(pdfId: string): Promise<NotesDocV2 | null> {
   return refresh(NOTEBOOK, pdfId)
-}
-
-/** Retired v2 call: always resolves null. */
-export function refreshNotes(_pdfId: string): Promise<NotesDoc | null> {
-  return Promise.resolve(null)
 }
 
 // One message for the per-kind failure counts, joined with ' · '.

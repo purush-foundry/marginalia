@@ -52,26 +52,6 @@ describe('settings', () => {
 
     expect(withConfig.settings.value.googleClientId).toBe('from-config')
   })
-
-  test('pen colour and width persist per device; values outside the presets fall back', async () => {
-    const idb = await import('../lib/idb')
-    await idb.idbSet('settings', 'app', { penColor: '#2f6fed', penWidth: 0.007 })
-    await mod.loadSettings()
-    const tools = await import('../ink/tools')
-    const stop = mod.bindPenPalette()
-    expect(tools.penColor.value).toBe('#2f6fed')
-    expect(tools.penWidth.value).toBe(0.007)
-    tools.penColor.value = '#e8710a'
-    await vi.waitFor(async () =>
-      expect((await idb.idbGet<{ penColor: string }>('settings', 'app'))!.penColor).toBe('#e8710a'),
-    )
-    stop()
-    await idb.idbSet('settings', 'app', { penColor: '#ff00ff', penWidth: 3 })
-    await mod.loadSettings()
-    mod.bindPenPalette()
-    expect(tools.penColor.value).toBe('#d33a2c')
-    expect(tools.penWidth.value).toBe(0.004)
-  })
 })
 
 describe('tool settings', () => {

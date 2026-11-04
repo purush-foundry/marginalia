@@ -635,21 +635,6 @@ describe('notes', () => {
     expect(await lib.loadNotebook('p1')).toEqual(emptyNotebook('p1', 'p1.pdf', 0))
   })
 
-  test('the retired v2 notes calls reject, return null and store nothing', async () => {
-    paper('p1', 'root')
-    remoteNotes('n1', 'p1', 'root', withTexts('p1', 'a'))
-    await lib.setRootFolder(ROOT)
-    const stored = await idb.idbGet('notes', 'p1')
-
-    await expect(lib.loadNotes('p1')).rejects.toThrow('Notes moved to the notebook')
-    expect(await lib.refreshNotes('p1')).toBeNull()
-    lib.saveNotes('p1', withBlocks('p1', 'v1'))
-    await lib.flushPendingWrites()
-
-    expect(await idb.idbGet('notes', 'p1')).toEqual(stored)
-    expect(await idb.idbKeys('queue')).toEqual([])
-  })
-
   test('saveNotebook debounces into IndexedDB and flushQueue creates the notes file, then updates it', async () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)

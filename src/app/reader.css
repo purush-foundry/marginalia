@@ -94,15 +94,6 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
-.mg-penstrip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 4px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-}
-
 .mg-swatch::before {
   content: '';
   width: 18px;
@@ -196,14 +187,6 @@
   margin: 0;
   padding: 24px 16px;
   text-align: center;
-}
-
-.mg-panes.mg-drawing::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 2px solid var(--accent);
-  pointer-events: none;
 }
 
 .mg-sidebar {
