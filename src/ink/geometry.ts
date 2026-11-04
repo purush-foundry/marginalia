@@ -12,6 +12,8 @@ export const PEN_STYLES: Record<PenStyle, { thinning: number; startTaper: number
 const RESAMPLE_PX = 1
 const SMOOTH_SIGMA_PX = 1.5
 const PRESSURE_WINDOW = 5
+const SIZE_SCALE = 0.96
+const TAPER_MAX_FRACTION = 0.25
 
 function fmt(n: number): string {
   return String(Math.round(n * 100) / 100)
@@ -108,6 +110,13 @@ export function smoothStrokePoints(points: number[]): number[][] {
   return blur(resample(pts, RESAMPLE_PX), SMOOTH_SIGMA_PX / RESAMPLE_PX)
 }
 
+// Length of the polyline through the points.
+function arcLength(pts: number[][]): number {
+  let total = 0
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  return total
+}
+
 // Outline of a freehand stroke as a closed SVG path, in the same units as the points.
 export function strokeOutlinePath(
   points: number[],
@@ -118,16 +127,18 @@ export function strokeOutlinePath(
 ): string {
   if (points.length < 3) return ''
   const { thinning, startTaper, endTaper } = PEN_STYLES[pen]
-  const outline = getStroke(smoothStrokePoints(points), {
-    size: widthPx,
+  const smoothed = smoothStrokePoints(points)
+  const maxTaper = TAPER_MAX_FRACTION * arcLength(smoothed)
+  const outline = getStroke(smoothed, {
+    size: widthPx * SIZE_SCALE,
     thinning,
     smoothing: 0.65,
     streamline: 0.35,
     last: true,
     easing: (t) => t,
     simulatePressure: !pressureIsReal,
-    start: { cap: true, taper: ends.start ? startTaper * widthPx : 0 },
-    end: { cap: true, taper: ends.end ? endTaper * widthPx : 0 },
+    start: { cap: true, taper: ends.start ? Math.min(startTaper * widthPx, maxTaper) : 0 },
+    end: { cap: true, taper: ends.end ? Math.min(endTaper * widthPx, maxTaper) : 0 },
   })
   if (outline.length < 2) return ''
   const [x0, y0] = outline[0]

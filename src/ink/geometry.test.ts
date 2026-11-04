@@ -26,10 +26,33 @@ function heightAt(d: string, x: number): number {
   return hi > lo ? hi - lo : 0
 }
 
-// A horizontal 200 px line sampled every 2 px at one pressure.
-function flatLine(pressure: number): number[] {
+// Filled area of the outline polygon under the nonzero rule, by scanlines 0.2 px apart.
+function inkArea(d: string): number {
+  const n = pathNumbers(d)
+  const ys = n.filter((_, i) => i % 2 === 1)
+  const step = 0.2
+  let area = 0
+  for (let y = Math.min(...ys) + step / 2; y < Math.max(...ys); y += step) {
+    const hits: [number, number][] = []
+    for (let i = 0; i + 1 < n.length; i += 2) {
+      const j = (i + 2) % n.length
+      const [ax, ay, bx, by] = [n[i], n[i + 1], n[j], n[j + 1]]
+      if (ay <= y !== by <= y) hits.push([ax + ((bx - ax) * (y - ay)) / (by - ay), by > ay ? 1 : -1])
+    }
+    hits.sort((a, b) => a[0] - b[0])
+    let winding = 0
+    for (let k = 0; k < hits.length; k++) {
+      if (winding !== 0) area += (hits[k][0] - hits[k - 1][0]) * step
+      winding += hits[k][1]
+    }
+  }
+  return area
+}
+
+// A horizontal line from x = 0 sampled every 2 px at one pressure.
+function flatLine(pressure: number, length = 200): number[] {
   const out: number[] = []
-  for (let x = 0; x <= 200; x += 2) out.push(x, 50, pressure)
+  for (let x = 0; x <= length; x += 2) out.push(x, 50, pressure)
   return out
 }
 
@@ -135,6 +158,29 @@ describe('pen styles', () => {
       heightAt(strokeOutlinePath(flatLine(0.9), 6, true, pen), 100) /
       heightAt(strokeOutlinePath(flatLine(0.2), 6, true, pen), 100)
     expect(swing('brush')).toBeGreaterThan(swing('fountain'))
+  })
+
+  test('a long stroke keeps the full taper lengths', () => {
+    const long = strokeOutlinePath(flatLine(0.5, 200), 3.2, true, 'fountain')
+    const longer = strokeOutlinePath(flatLine(0.5, 400), 3.2, true, 'fountain')
+    for (let x = 5; x <= 9; x++) {
+      expect(heightAt(long, x)).toBeCloseTo(heightAt(longer, x), 1)
+      expect(heightAt(long, 200 - x)).toBeCloseTo(heightAt(longer, 400 - x), 1)
+    }
+    expect(heightAt(long, 198)).toBeLessThan(0.6 * heightAt(long, 100))
+  })
+
+  test('a short stroke caps each taper at a quarter of its length', () => {
+    const d = strokeOutlinePath(flatLine(0.5, 40), 6, true, 'brush')
+    expect(heightAt(d, 8)).toBeGreaterThan(0.85 * heightAt(d, 20))
+  })
+
+  test('the slow curve keeps the v2 ink area within 7 % with the ball and fountain pens', () => {
+    for (const pen of ['ball', 'fountain'] as const) {
+      const ratio = inkArea(inkOutlinePath(stored(0), 0.004, PAGE.w, PAGE.h, pen)) / 760.87
+      expect(ratio).toBeGreaterThan(0.93)
+      expect(ratio).toBeLessThan(1.07)
+    }
   })
 
   test('strokeOutlinePath without end tapers leaves full-width ends', () => {
