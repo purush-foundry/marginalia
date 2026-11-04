@@ -1,4 +1,4 @@
-/* Reader layout: toolbar over sidebar | viewer | Ask panel on wide screens; sidebar and Ask become sheets on phones. */
+/* Reader layout: toolbar over sidebar | paper and notes panes | Ask panel on wide screens; sidebar and Ask become sheets on phones. */
 .mg-reader {
   position: absolute;
   inset: 0;
@@ -34,6 +34,15 @@
   font-weight: 600;
 }
 
+.mg-snip-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
 .mg-toolbar-tools {
   flex: 0 1 auto;
   min-width: 0;
@@ -53,6 +62,30 @@
   padding: 0;
   background: transparent;
   position: relative;
+}
+
+.mg-seg {
+  flex: none;
+  display: inline-flex;
+  padding: 2px;
+  margin: 0 2px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.mg-seg-item {
+  min-width: 0;
+  padding: 0 10px;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.mg-seg-item[aria-checked='true'] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .mg-penstrip {
@@ -94,13 +127,71 @@
   position: relative;
 }
 
-.mg-viewer-wrap {
+.mg-panes {
+  --split: 0.5;
   flex: 1;
   min-width: 0;
+  display: flex;
   position: relative;
 }
 
-.mg-viewer-wrap.mg-drawing::after {
+.mg-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.mg-layout-both .mg-pane-paper {
+  flex: 0 0 clamp(320px, calc(var(--split) * 100%), calc(100% - 320px));
+}
+
+.mg-divider {
+  flex: none;
+  width: 12px;
+  margin: 0 -6px;
+  z-index: 6;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.mg-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+}
+
+.mg-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.5;
+  transform: translate(-50%, -50%);
+}
+
+.mg-divider:hover::before,
+.mg-divider:focus-visible::before {
+  width: 2px;
+  background: var(--accent);
+}
+
+.mg-notes-loading {
+  margin: 0;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.mg-panes.mg-drawing::after {
   content: '';
   position: absolute;
   inset: 0;

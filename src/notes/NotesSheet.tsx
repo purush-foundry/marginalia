@@ -158,6 +158,16 @@ export function NotesSheet({ store, onJumpToPage, handle }: NotesSheetProps) {
     return () => document.removeEventListener('keydown', onKey)
   }, [selectedId, store])
 
+  // A pointerdown outside the sheet drops the image selection.
+  useEffect(() => {
+    if (!selectedId) return
+    const onDown = (e: PointerEvent) => {
+      if (!scrollerRef.current?.contains(e.target as Node)) setSelected(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [selectedId])
+
   useEffect(() => {
     if (!menuOpen) return
     const onDown = (e: PointerEvent) => {

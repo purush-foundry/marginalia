@@ -5,6 +5,8 @@ import { DEFAULT_PEN_COLOR, DEFAULT_PEN_WIDTH, PEN_COLORS, PEN_WIDTHS, penColor,
 import { idbGet, idbSet } from '../lib/idb'
 import type { Settings } from '../types'
 
+export type NotesLayout = 'paper' | 'both' | 'notes'
+
 export interface AppSettings extends Settings {
   /** A pen pointer has been seen on this device. */
   penSeen: boolean
@@ -14,6 +16,10 @@ export interface AppSettings extends Settings {
   penWidth: number
   /** Tool puck centre as a fraction of the host height. */
   puckY: number
+  /** Reader panes: the paper, the paper beside the notes sheet, or the notes sheet. */
+  notesLayout: NotesLayout
+  /** Paper pane width as a fraction of the panes in the Both layout. */
+  splitRatio: number
 }
 
 const KEY = 'app'
@@ -30,6 +36,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   penColor: DEFAULT_PEN_COLOR,
   penWidth: DEFAULT_PEN_WIDTH,
   puckY: 0.6,
+  notesLayout: 'paper',
+  splitRatio: 0.5,
 }
 
 export const settings = signal<AppSettings>(DEFAULT_SETTINGS)

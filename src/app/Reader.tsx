@@ -1,5 +1,6 @@
-// Reader: loads a paper and its sidecar, then wires the viewer, ink, selection bar, sidebar and Ask panel.
-import { computed, signal, useComputed, useSignal, type Signal } from '@preact/signals'
+// Reader: loads a paper and its sidecar, then wires the paper and notes panes, ink, selection bar, sidebar and Ask panel.
+import { computed, signal, useComputed, useSignal, type ReadonlySignal, type Signal } from '@preact/signals'
+import type { RefObject } from 'preact'
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AskPanel } from '../ai/AskPanel'
 import { SelectionBar } from '../annot/SelectionBar'
@@ -9,23 +10,30 @@ import {
   flushPendingWrites,
   getPdfBlob,
   library,
+  loadNotes,
   loadSidecar,
+  refreshNotes,
   refreshSidecar,
+  saveNotes,
   saveSidecar,
 } from '../drive/library'
-import { sidecarToMarkdown } from '../export/markdown'
+import { notesToMarkdown, sidecarToMarkdown } from '../export/markdown'
 import { InkLayer } from '../ink/InkLayer'
+import { Puck } from '../ink/Puck'
 import { mouseDraws, penTool } from '../ink/tools'
 import { newId, now } from '../lib/ids'
+import { IMAGE_LONG_EDGE_PX, prepareImage } from '../notes/images'
+import { NotesSheet, type NotesSheetHandle } from '../notes/NotesSheet'
+import { createNotesStore, type NotesStore } from '../notes/notesStore'
 import { openPdf, type PageLink, type PdfDoc } from '../pdf/document'
 import { isIOS } from '../pdf/platform'
 import { Viewer, type PendingSelection, type ViewerHandle } from '../pdf/Viewer'
 import type { Anchor, Box, HighlightColor, InkStroke, PageText, Sidecar, Thread } from '../types'
 import { Icon } from './icons'
 import { folderHash, navigate } from './route'
-import { saveSettings, settings } from './settings'
+import { saveSettings, settings, type NotesLayout } from './settings'
 import { Sidebar, type SidebarTab } from './Sidebar'
-import { Toolbar } from './Toolbar'
+import { Toolbar, type UndoTarget } from './Toolbar'
 import { copyImage, copyText, settingsOpen, showToast } from './ui'
 import './reader.css'
 
@@ -35,10 +43,15 @@ interface Loaded {
   doc: PdfDoc
   store: AnnotationStore
   title: string
-  initial: { page: number; offset: number; zoom: number }
   /** A newer reading position merged from Drive after open; the view scrolls there unless the user already moved. */
   remotePosition: Signal<{ page: number; offset: number } | null>
+  /** The notes store, once the sheet has been shown. */
+  notes: ReadonlySignal<NotesStore | null>
+  /** Loads the notes and creates their store on the first call; later calls share it. */
+  ensureNotes(): Promise<NotesStore>
 }
+
+type Pane = 'paper' | 'notes'
 
 const NAV_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 
@@ -47,6 +60,10 @@ const NO_THREADS: Thread[] = []
 const DEFAULT_NOTE_COLOR: HighlightColor = 'yellow'
 const NOTE_W = 320
 const NOTE_H = 170
+const WIDE = '(min-width: 700px)'
+const MIN_PANE_PX = 320
+const SPLIT_STEP = 0.05
+const NO_HISTORY: UndoTarget = { canUndo: signal(false), canRedo: signal(false), undo() {}, redo() {} }
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -69,6 +86,79 @@ function isIPadOS(): boolean {
 
 function matches(query: string): boolean {
   return typeof matchMedia === 'function' && matchMedia(query).matches
+}
+
+// Live result of a media query.
+function useMedia(query: string): boolean {
+  const [on, setOn] = useState(() => matches(query))
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return
+    const list = matchMedia(query)
+    const update = () => setOn(list.matches)
+    update()
+    list.addEventListener('change', update)
+    return () => list.removeEventListener('change', update)
+  }, [query])
+  return on
+}
+
+// Paper pane ratio clamped so each pane keeps MIN_PANE_PX of the given width.
+function clampSplit(ratio: number, width: number): number {
+  const min = Math.min(0.5, MIN_PANE_PX / width)
+  return Math.min(1 - min, Math.max(min, ratio))
+}
+
+// Draggable bar between the panes: sets --split on the panes while dragging and stores the ratio on release; arrow keys step it.
+function Divider({ panes, ratio }: { panes: RefObject<HTMLDivElement | null>; ratio: number }) {
+  const drag = useRef<{ pointerId: number; x: number; ratio: number; width: number } | null>(null)
+  const widthOf = () => panes.current?.getBoundingClientRect().width ?? 0
+  const place = (r: number) => panes.current?.style.setProperty('--split', String(r))
+  const at = (e: PointerEvent) => {
+    const d = drag.current
+    return d && e.pointerId === d.pointerId ? clampSplit(d.ratio + (e.clientX - d.x) / d.width, d.width) : null
+  }
+  return (
+    <div
+      class="mg-divider"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize panes"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(ratio * 100)}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        const width = widthOf()
+        if (e.button !== 0 || width <= 0) return
+        e.preventDefault()
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          // The pointer can no longer be captured.
+        }
+        drag.current = { pointerId: e.pointerId, x: e.clientX, ratio, width }
+      }}
+      onPointerMove={(e) => {
+        const r = at(e)
+        if (r !== null) place(r)
+      }}
+      onPointerUp={(e) => {
+        const r = at(e)
+        if (r === null) return
+        drag.current = null
+        void saveSettings({ splitRatio: r })
+      }}
+      onPointerCancel={() => {
+        drag.current = null
+        place(ratio)
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        e.preventDefault()
+        void saveSettings({ splitRatio: clampSplit(ratio + (e.key === 'ArrowLeft' ? -SPLIT_STEP : SPLIT_STEP), widthOf()) })
+      }}
+    />
+  )
 }
 
 // The library route of the folder that holds the paper.
@@ -143,16 +233,36 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const s = settings.value
   const viewer = useRef<ViewerHandle | null>(null)
   const wrap = useRef<HTMLDivElement>(null)
+  const panes = useRef<HTMLDivElement>(null)
+  const sheet = useRef<NotesSheetHandle | null>(null)
+  const sheetHandle = useMemo(() => (h: NotesSheetHandle) => (sheet.current = h), [])
   const areaArmed = useSignal(false)
+  const lastPane = useSignal<Pane>('paper')
   const penDrawing = useMemo(() => computed(() => penTool.value !== 'select'), [])
   const [bar, setBar] = useState<Bar | null>(null)
   const [note, setNote] = useState<{ id: string; rect: DOMRect } | null>(null)
   const [thread, setThread] = useState<Thread | null>(null)
   const [sidebar, setSidebar] = useState<SidebarTab | null>(null)
   const [backTo, setBackTo] = useState<number | null>(null)
-  const penCapable = s.penSeen || isIPadOS()
+  const [scrollTarget, setScrollTarget] = useState<string | null>(null)
+  const [jumpTarget, setJumpTarget] = useState<{ page: number; box?: Box } | null>(null)
+  const touchUi = s.penSeen || isIPadOS() || s.fingerDraws
   const finePointer = useMemo(() => matches('(any-pointer: fine)'), [])
-  const wide = () => matches('(min-width: 700px)')
+  const wide = () => matches(WIDE)
+  const canLayoutBoth = useMedia(WIDE)
+  const layout: NotesLayout = s.notesLayout === 'both' && !canLayoutBoth ? 'paper' : s.notesLayout
+  const showPaper = layout !== 'notes'
+  const showNotes = layout !== 'paper'
+  const notes = loaded.notes.value
+  const active: Pane = layout === 'both' ? lastPane.value : layout === 'notes' ? 'notes' : 'paper'
+  const history: UndoTarget = active === 'notes' ? (notes ?? NO_HISTORY) : store
+  const historyRef = useRef(history)
+  historyRef.current = history
+  const chooseLayout = (next: NotesLayout) => void saveSettings({ notesLayout: next })
+  const paperInitial = useMemo(() => {
+    const { page, offset, zoom } = store.sidecar.peek().reading
+    return { page, offset, zoom }
+  }, [showPaper])
 
   const inksByPage = useComputed(() => groupByPage(store.inks.value, (s) => s.page))
   const threadsByPage = useComputed(() => groupByPage(store.threads.value, (t) => t.anchor.page))
@@ -187,11 +297,12 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   useEffect(() => {
     const el = wrap.current
     if (!el) return
-    const mark = () => {
-      moved.current = true
+    moved.current = false
+    const mark = (e: Event) => {
+      if (!(e.target as Element | null)?.closest?.('.mg-puck, .mg-puck-pop')) moved.current = true
     }
     const onKey = (e: KeyboardEvent) => {
-      if (NAV_KEYS.has(e.key) && !(e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) mark()
+      if (NAV_KEYS.has(e.key) && !(e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) mark(e)
     }
     const opts = { capture: true, passive: true }
     for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) el.addEventListener(type, mark, opts)
@@ -200,7 +311,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) el.removeEventListener(type, mark, opts)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [])
+  }, [showPaper])
   useEffect(
     () =>
       loaded.remotePosition.subscribe((pos) => {
@@ -217,8 +328,8 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       const typing = (e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !typing) {
         e.preventDefault()
-        if (e.shiftKey) store.redo()
-        else store.undo()
+        if (e.shiftKey) historyRef.current.redo()
+        else historyRef.current.undo()
         return
       }
       if (e.key !== 'Escape') return
@@ -229,9 +340,33 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       else if (mouseDraws.value) mouseDraws.value = false
       else if (areaArmed.value) areaArmed.value = false
     }
+    const undo = () => historyRef.current.undo()
+    const redo = () => historyRef.current.redo()
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    document.addEventListener('marginalia:undo', undo)
+    document.addEventListener('marginalia:redo', redo)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('marginalia:undo', undo)
+      document.removeEventListener('marginalia:redo', redo)
+    }
   }, [])
+
+  useEffect(() => {
+    if (!showNotes) return
+    let live = true
+    loaded.ensureNotes().catch(() => live && showToast('Could not open notes'))
+    return () => {
+      live = false
+    }
+  }, [showNotes])
+
+  // Scrolls the sheet to a block added by To notes once the sheet is on screen.
+  useEffect(() => {
+    if (!scrollTarget || !showNotes || !notes || !sheet.current) return
+    sheet.current.scrollToBlock(scrollTarget)
+    setScrollTarget(null)
+  }, [scrollTarget, showNotes, notes])
 
   useEffect(() => {
     const scroller = wrap.current?.querySelector('.mg-scroller')
@@ -241,11 +376,22 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     return () => scroller.removeEventListener('scroll', close)
   }, [bar])
 
+  // Scrolls the paper to the page, showing the paper first when only the notes are on screen.
   const go = (page: number, box?: Box) => {
+    if (!showPaper) {
+      setJumpTarget({ page, box })
+      chooseLayout(canLayoutBoth ? 'both' : 'paper')
+      return
+    }
     moved.current = true
     viewer.current?.scrollTo(page, box, 'smooth')
     if (!wide()) setSidebar(null)
   }
+  useEffect(() => {
+    if (!jumpTarget || !showPaper) return
+    setJumpTarget(null)
+    go(jumpTarget.page, jumpTarget.box)
+  }, [jumpTarget, showPaper])
 
   const openThread = (t: Thread) => {
     setThread(t)
@@ -280,7 +426,16 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const current = bar?.kind === 'highlight' ? store.highlights.value.find((h) => h.id === bar.id) : undefined
   const barText = bar?.kind === 'selection' ? (bar.sel.kind === 'text' ? bar.sel.text : '') : current?.kind === 'text' ? current.text : ''
 
-  const toNotes = (_page: number, _box: Box): void => undefined
+  const toNotes = (page: number, box: Box) => {
+    void (async () => {
+      const sheetStore = await loaded.ensureNotes()
+      const { blob } = await doc.renderCrop(page, box, IMAGE_LONG_EDGE_PX)
+      const img = await prepareImage(blob)
+      const block = sheetStore.addImageBlock({ src: img.dataUrl, aspect: img.height / img.width, page })
+      chooseLayout(wide() ? 'both' : 'notes')
+      setScrollTarget(block.id)
+    })().catch(() => showToast('Could not add to notes'))
+  }
 
   const barArea =
     bar?.kind === 'selection'
@@ -364,10 +519,9 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   }
 
   const onCite = (page: number, quote: string) => {
-    moved.current = true
     doc.getPageText(page).then(
-      (pt) => viewer.current?.scrollTo(page, findQuote(pt, quote), 'smooth'),
-      () => viewer.current?.scrollTo(page),
+      (pt) => go(page, findQuote(pt, quote)),
+      () => go(page),
     )
   }
 
@@ -376,7 +530,9 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
       const sidecar = store.sidecar.peek()
       const pages = new Set(sidecar.highlights.filter((h) => !h.deleted).map((h) => h.page))
       await Promise.all([...pages].map(ensureColumns))
-      return sidecarToMarkdown(sidecar, { title, columns: columns.current })
+      const md = sidecarToMarkdown(sidecar, { title, columns: columns.current })
+      const notesMd = notesToMarkdown(loaded.notes.peek()?.doc.peek() ?? (await loadNotes(pdfId)))
+      return notesMd ? `${md}\n${notesMd}` : md
     })()
     copyText(text).then(() => showToast('Copied as Markdown'), () => showToast('Could not copy'))
   }
@@ -420,10 +576,13 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     <div class="mg-reader">
       <Toolbar
         title={title}
-        store={store}
+        history={history}
         areaArmed={areaArmed}
-        penCapable={penCapable}
+        touchUi={touchUi}
         finePointer={finePointer}
+        layout={layout}
+        canLayoutBoth={canLayoutBoth}
+        onLayout={chooseLayout}
         nightMode={s.nightMode}
         threadCount={threadCount}
         sidebarOpen={sidebar !== null}
@@ -447,42 +606,71 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
             onClose={() => setSidebar(null)}
           />
         )}
-        <div ref={wrap} class={`mg-viewer-wrap${mouseDraws.value ? ' mg-drawing' : ''}`}>
-          <Viewer
-            doc={doc}
-            highlights={store.highlights}
-            crop={store.sidecar.peek().reading.crop}
-            nightMode={s.nightMode}
-            invertImages={s.invertImages}
-            initial={loaded.initial}
-            areaSelectArmed={areaArmed}
-            penDrawing={penDrawing}
-            pageOverlay={pageOverlay}
-            onSelection={(sel) => {
-              if (sel) {
-                setBar({ kind: 'selection', sel })
-                if (sel.kind === 'area') areaArmed.value = false
-              } else setBar((b) => (b?.kind === 'selection' ? null : b))
-            }}
-            onTapHighlight={(id, rect) => setBar({ kind: 'highlight', id, rect })}
-            onLink={onLink}
-            onReadingPosition={(pos) => {
-              if (moved.current) store.setReading(pos)
-            }}
-            handle={(h) => (viewer.current = h)}
-          />
-          {backTo !== null && (
-            <button
-              type="button"
-              class="btn mg-back-chip"
-              onClick={() => {
-                moved.current = true
-                viewer.current?.scrollTo(backTo)
-                setBackTo(null)
-              }}
+        <div
+          ref={panes}
+          class={`mg-panes mg-layout-${layout}${mouseDraws.value ? ' mg-drawing' : ''}`}
+          style={{ '--split': String(s.splitRatio) }}
+        >
+          {showPaper && (
+            <div
+              ref={wrap}
+              class="mg-pane mg-pane-paper"
+              onPointerDownCapture={() => (lastPane.value = 'paper')}
+              onFocusIn={() => (lastPane.value = 'paper')}
             >
-              ← back to p.{backTo}
-            </button>
+              <Viewer
+                doc={doc}
+                highlights={store.highlights}
+                crop={store.sidecar.peek().reading.crop}
+                nightMode={s.nightMode}
+                invertImages={s.invertImages}
+                initial={paperInitial}
+                areaSelectArmed={areaArmed}
+                penDrawing={penDrawing}
+                pageOverlay={pageOverlay}
+                onSelection={(sel) => {
+                  if (sel) {
+                    setBar({ kind: 'selection', sel })
+                    if (sel.kind === 'area') areaArmed.value = false
+                  } else setBar((b) => (b?.kind === 'selection' ? null : b))
+                }}
+                onTapHighlight={(id, rect) => setBar({ kind: 'highlight', id, rect })}
+                onLink={onLink}
+                onReadingPosition={(pos) => {
+                  if (moved.current) store.setReading(pos)
+                }}
+                handle={(h) => (viewer.current = h)}
+              />
+              {backTo !== null && (
+                <button
+                  type="button"
+                  class="btn mg-back-chip"
+                  onClick={() => {
+                    moved.current = true
+                    viewer.current?.scrollTo(backTo)
+                    setBackTo(null)
+                  }}
+                >
+                  ← back to p.{backTo}
+                </button>
+              )}
+              {active === 'paper' && <Puck visible={touchUi} />}
+            </div>
+          )}
+          {layout === 'both' && <Divider panes={panes} ratio={s.splitRatio} />}
+          {showNotes && (
+            <div
+              class="mg-pane mg-pane-notes"
+              onPointerDownCapture={() => (lastPane.value = 'notes')}
+              onFocusIn={() => (lastPane.value = 'notes')}
+            >
+              {notes ? (
+                <NotesSheet store={notes} onJumpToPage={go} handle={sheetHandle} />
+              ) : (
+                <p class="mg-muted mg-notes-loading">Loading notes…</p>
+              )}
+              {active === 'notes' && <Puck visible={touchUi} />}
+            </div>
           )}
         </div>
         {thread && (
@@ -533,6 +721,35 @@ export function Reader({ pdfId }: { pdfId: string }) {
     let doc: PdfDoc | null = null
     let store: AnnotationStore | null = null
     let edited = false
+    let notes: NotesStore | null = null
+    let notesEdited = false
+    let notesLoad: Promise<NotesStore> | null = null
+    const notesSignal = signal<NotesStore | null>(null)
+    // Reads the local notes, creates their store, then merges the remote notes when they arrive.
+    const openNotes = async (): Promise<NotesStore> => {
+      const initial = await loadNotes(pdfId)
+      if (cancelled) throw new Error('Reader closed')
+      const created = createNotesStore(initial, (d) => {
+        notesEdited = true
+        saveNotes(pdfId, d)
+      })
+      notes = created
+      notesSignal.value = created
+      refreshNotes(pdfId).then(
+        (merged) => {
+          if (merged && !cancelled) created.replaceFromRemote(merged)
+        },
+        () => undefined,
+      )
+      return created
+    }
+    const ensureNotes = (): Promise<NotesStore> => {
+      if (!notesLoad) {
+        notesLoad = openNotes()
+        notesLoad.catch(() => (notesLoad = null))
+      }
+      return notesLoad
+    }
     setLoaded(null)
     setError(null)
     setProgress(0)
@@ -546,16 +763,19 @@ export function Reader({ pdfId }: { pdfId: string }) {
       })
       const sidecar = await loadSidecar(pdfId)
       if (cancelled) return
-      const opened = createAnnotationStore(sidecar, (next) => {
-        edited = true
-        saveSidecar(pdfId, next)
-      })
+      const opened = createAnnotationStore(
+        sidecar,
+        (next) => {
+          edited = true
+          saveSidecar(pdfId, next)
+        },
+        { documentUndo: false },
+      )
       store = opened
-      const { page, offset, zoom } = sidecar.reading
       const name = library.peek()?.papers[pdfId]?.name ?? sidecar.pdfName
       const title = name.replace(/\.pdf$/i, '') || doc.title || 'Untitled'
       const remotePosition = signal<{ page: number; offset: number } | null>(null)
-      setLoaded({ doc, store: opened, title, initial: { page, offset, zoom }, remotePosition })
+      setLoaded({ doc, store: opened, title, remotePosition, notes: notesSignal, ensureNotes })
       // Applies the merged remote sidecar, then moves an unread paper to reading.
       const settle = (merged: Sidecar | null) => {
         if (cancelled) return
@@ -574,6 +794,7 @@ export function Reader({ pdfId }: { pdfId: string }) {
     return () => {
       cancelled = true
       if (store && edited) saveSidecar(pdfId, store.sidecar.peek())
+      if (notes && notesEdited) saveNotes(pdfId, notes.doc.peek())
       store?.dispose()
       doc?.destroy()
       mouseDraws.value = false

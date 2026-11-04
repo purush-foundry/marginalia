@@ -187,6 +187,16 @@ describe('annotation store', () => {
     expect(store.highlights.value).toHaveLength(1)
   })
 
+  it('documentUndo: false ignores the document undo and redo events', () => {
+    const store = createAnnotationStore(emptySidecar('pdf', 'a.pdf', 1), () => {}, { documentUndo: false })
+    store.addHighlight(text(1, 0.1, 0.1))
+    document.dispatchEvent(new CustomEvent('marginalia:undo'))
+    expect(store.highlights.value).toHaveLength(1)
+    store.undo()
+    document.dispatchEvent(new CustomEvent('marginalia:redo'))
+    expect(store.highlights.value).toHaveLength(0)
+  })
+
   it('ignores document events after dispose', () => {
     const { store } = make()
     store.addHighlight(text(1, 0.1, 0.1))

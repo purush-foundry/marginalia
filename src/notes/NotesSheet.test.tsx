@@ -251,6 +251,18 @@ test('a selected image is removed by Delete in its bar and by Backspace', async 
   expect(store.blocks.value).toHaveLength(0)
 })
 
+test('a pointerdown outside the sheet drops the image selection, so Backspace there keeps the image', async () => {
+  store.addImageBlock({ src: 'data:x', aspect: 0.5 })
+  await mount()
+  await tap($('figure.mg-note-image'))
+  const outside = document.createElement('div')
+  document.body.appendChild(outside)
+  restores.push(() => outside.remove())
+  await act(() => pointer(outside, 'pointerdown', 1, 1))
+  await act(() => key(document.body, 'Backspace'))
+  expect(store.blocks.value).toHaveLength(1)
+})
+
 test('Backspace in a text block does not remove a selected image', async () => {
   store.addImageBlock({ src: 'data:x', aspect: 0.5 })
   store.addTextBlock('ab')

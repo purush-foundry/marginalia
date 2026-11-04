@@ -25,7 +25,7 @@ export interface AnnotationStore {
   redo(): void
   /** Replaces state with a merged sidecar from the sync layer; clears undo history. */
   replaceFromRemote(sidecar: Sidecar): void
-  /** Removes the document undo/redo listeners; later events do nothing. */
+  /** Removes the document undo/redo listeners, if any; later events do nothing. */
   dispose(): void
 }
 
@@ -68,7 +68,12 @@ export function sortHighlights(list: Highlight[], columns: Record<number, Box[]>
   return keyed.map((k) => k.h)
 }
 
-export function createAnnotationStore(initial: Sidecar, persist: (sidecar: Sidecar) => void): AnnotationStore {
+/** With `documentUndo: false` the store ignores the document's marginalia:undo and marginalia:redo events. */
+export function createAnnotationStore(
+  initial: Sidecar,
+  persist: (sidecar: Sidecar) => void,
+  opts: { documentUndo?: boolean } = {},
+): AnnotationStore {
   const state = signal<Sidecar>(initial)
   const columns = signal<Record<number, Box[]>>({})
   const undoStack = signal<HistoryEntry[]>([])
@@ -135,8 +140,10 @@ export function createAnnotationStore(initial: Sidecar, persist: (sidecar: Sidec
     undoStack.value = [...undoStack.value, entry]
   }
 
-  document.addEventListener('marginalia:undo', undo)
-  document.addEventListener('marginalia:redo', redo)
+  if (opts.documentUndo !== false) {
+    document.addEventListener('marginalia:undo', undo)
+    document.addEventListener('marginalia:redo', redo)
+  }
 
   return {
     sidecar: state,

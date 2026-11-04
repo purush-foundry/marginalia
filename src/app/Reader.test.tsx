@@ -3,9 +3,11 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { IMAGE_MAX_EDGE_PX } from '../config'
 import type { PdfDoc } from '../pdf/document'
+import type { NotesSheetProps } from '../notes/NotesSheet'
 import type { ViewerHandle, ViewerProps } from '../pdf/Viewer'
-import { emptySidecar, type Sidecar, type TextHighlight } from '../types'
+import { emptyNotes, emptySidecar, type NotesDoc, type Sidecar, type TextBlock, type TextHighlight } from '../types'
 import { Reader } from './Reader'
+import { DEFAULT_SETTINGS, settings } from './settings'
 import { toast } from './ui'
 
 const viewer: { props: ViewerProps | null } = { props: null }
@@ -19,6 +21,23 @@ vi.mock('../pdf/Viewer', () => ({
     return <div class="fake-viewer" />
   },
 }))
+
+const sheet = vi.hoisted(() => ({ props: null as NotesSheetProps | null, scrollToBlock: vi.fn() }))
+
+vi.mock('../notes/NotesSheet', () => ({
+  NotesSheet: (props: NotesSheetProps) => {
+    sheet.props = props
+    props.handle?.({ scrollToBlock: sheet.scrollToBlock })
+    return <div class="fake-sheet" />
+  },
+}))
+
+const images = vi.hoisted(() => ({
+  IMAGE_LONG_EDGE_PX: 1600,
+  prepareImage: vi.fn(),
+}))
+
+vi.mock('../notes/images', () => images)
 
 const doc = {
   numPages: 2,
@@ -51,6 +70,9 @@ const drive = vi.hoisted(() => ({
   saveSidecar: vi.fn(),
   refreshSidecar: vi.fn(),
   flushPendingWrites: vi.fn(),
+  loadNotes: vi.fn(),
+  saveNotes: vi.fn(),
+  refreshNotes: vi.fn(),
 }))
 
 vi.mock('../drive/library', async () => {
@@ -62,8 +84,29 @@ const { openPdf } = await import('../pdf/document')
 
 let root: HTMLElement
 
+// Answers the width query live and every other media query with `fine`.
+function stubMedia(wide: boolean, fine = true) {
+  const listeners = new Set<() => void>()
+  const media = { wide }
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    media: query,
+    get matches() {
+      return query === '(min-width: 700px)' ? media.wide : fine
+    },
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  }))
+  return (next: boolean) => {
+    media.wide = next
+    for (const fn of listeners) fn()
+  }
+}
+
 beforeEach(() => {
   viewer.props = null
+  sheet.props = null
+  settings.value = DEFAULT_SETTINGS
+  stubMedia(true)
   vi.clearAllMocks()
   drive.getPdfBlob.mockImplementation(async (_id: string, onProgress?: (f: number) => void) => {
     onProgress?.(1)
@@ -72,6 +115,10 @@ beforeEach(() => {
   drive.loadSidecar.mockImplementation(async (id: string) => emptySidecar(id, 'attention.pdf', 1))
   drive.refreshSidecar.mockResolvedValue(null)
   drive.flushPendingWrites.mockResolvedValue(undefined)
+  drive.loadNotes.mockImplementation(async (id: string) => emptyNotes(id, 'attention.pdf', 1))
+  drive.refreshNotes.mockResolvedValue(null)
+  images.prepareImage.mockResolvedValue({ dataUrl: 'data:image/jpeg;base64,AAAA', width: 800, height: 400, bytes: 3, mediaType: 'image/jpeg' })
+  doc.renderCrop.mockResolvedValue({ blob: new Blob(['jpg']), mediaType: 'image/png' })
   root = document.createElement('div')
   document.body.append(root)
 })
@@ -79,6 +126,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => render(null, root))
   root.remove()
+  vi.unstubAllGlobals()
 })
 
 async function open(): Promise<ViewerProps> {
@@ -89,6 +137,20 @@ async function open(): Promise<ViewerProps> {
 
 const lastSaved = (): Sidecar => drive.saveSidecar.mock.calls.at(-1)![1] as Sidecar
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+const lastSavedNotes = (): NotesDoc => drive.saveNotes.mock.calls.at(-1)![1] as NotesDoc
+const radios = () => [...root.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Layout"] [role="radio"]')]
+const radio = (label: string) => radios().find((r) => r.textContent === label)!
+const pointerDown = (el: Element) => void el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+
+async function showSheet(layout: 'Notes' | 'Both' = 'Notes') {
+  await act(async () => radio(layout).click())
+  await vi.waitFor(() => expect(sheet.props).not.toBeNull())
+  return sheet.props!.store
+}
+
+async function areaSelect(props: ViewerProps, box = { x: 0.1, y: 0.2, w: 0.3, h: 0.3 }) {
+  await act(async () => props.onSelection({ page: 1, boxes: [box], text: '', endRect: new DOMRect(100, 300, 40, 16), kind: 'area' }))
+}
 
 describe('Reader', () => {
   test('opens the paper, creates the store, and persists a highlight made from a selection', async () => {
@@ -226,7 +288,7 @@ describe('Reader', () => {
     expect(drive.saveSidecar).not.toHaveBeenCalled()
 
     await act(async () => {
-      root.querySelector('.mg-viewer-wrap')!.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true }))
+      root.querySelector('.mg-pane-paper')!.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true }))
     })
     await act(async () => props.onReadingPosition({ page: 7, offset: 0.5, zoom: 0 }))
     expect(lastSaved().reading).toMatchObject({ page: 7, offset: 0.5, status: 'done' })
@@ -272,5 +334,244 @@ describe('Reader open retry', () => {
     await act(async () => render(<Reader pdfId="p1" />, root))
 
     await vi.waitFor(() => expect(root.querySelector('.mg-error')?.textContent).toContain('Invalid PDF structure'))
+  })
+})
+
+describe('Reader notes', () => {
+  test('the notes file is not read on open; showing Notes loads it', async () => {
+    let resolveNotes: (d: NotesDoc) => void = () => undefined
+    drive.loadNotes.mockReturnValue(new Promise((resolve) => (resolveNotes = resolve)))
+    const theirs: TextBlock = { kind: 'text', id: 'b1', order: 'a', text: 'from the iPad', createdAt: 2, updatedAt: 2 }
+    drive.refreshNotes.mockResolvedValue({ ...emptyNotes('p1', 'attention.pdf', 1), blocks: [theirs] })
+    await open()
+    expect(drive.loadNotes).not.toHaveBeenCalled()
+    expect(drive.refreshNotes).not.toHaveBeenCalled()
+
+    await act(async () => radio('Notes').click())
+    expect(drive.loadNotes).toHaveBeenCalledWith('p1')
+    expect(settings.value.notesLayout).toBe('notes')
+    expect(root.querySelector('.fake-viewer')).toBeNull()
+    expect(root.querySelector('.mg-pane-notes')!.textContent).toContain('Loading notes…')
+
+    await act(async () => resolveNotes(emptyNotes('p1', 'attention.pdf', 1)))
+    await vi.waitFor(() => expect(sheet.props).not.toBeNull())
+    expect(drive.refreshNotes).toHaveBeenCalledWith('p1')
+    await vi.waitFor(() => expect(sheet.props!.store.blocks.value).toEqual([theirs]))
+
+    act(() => render(null, root))
+    expect(drive.saveNotes).not.toHaveBeenCalled()
+  })
+
+  test('Both is offered only from 700 px', async () => {
+    const setWide = stubMedia(true)
+    await open()
+    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Both', 'Notes'])
+    await showSheet('Both')
+    expect(root.querySelector('.mg-pane-paper .fake-viewer')).not.toBeNull()
+    expect(root.querySelector('.mg-pane-notes .fake-sheet')).not.toBeNull()
+    expect(root.querySelector('.mg-divider[role="separator"][aria-orientation="vertical"][aria-label="Resize panes"]')).not.toBeNull()
+
+    await act(async () => setWide(false))
+    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Notes'])
+    expect(root.querySelector('.mg-pane-notes')).toBeNull()
+    expect(root.querySelector('.mg-divider')).toBeNull()
+  })
+
+  test('a stored Both on a narrow window shows the paper and keeps the setting', async () => {
+    stubMedia(false)
+    settings.value = { ...DEFAULT_SETTINGS, notesLayout: 'both' }
+    await open()
+    expect(root.querySelector('.fake-viewer')).not.toBeNull()
+    expect(root.querySelector('.mg-pane-notes')).toBeNull()
+    expect(radios().map((r) => r.textContent)).toEqual(['Paper', 'Notes'])
+    expect(radio('Paper').getAttribute('aria-checked')).toBe('true')
+    expect(settings.value.notesLayout).toBe('both')
+    expect(drive.loadNotes).not.toHaveBeenCalled()
+  })
+
+  test('dragging the divider stores the split ratio', async () => {
+    settings.value = { ...DEFAULT_SETTINGS, notesLayout: 'both' }
+    await open()
+    const panes = root.querySelector<HTMLElement>('.mg-panes')!
+    panes.getBoundingClientRect = () => new DOMRect(0, 0, 1000, 800)
+    expect(panes.style.getPropertyValue('--split')).toBe('0.5')
+    const divider = root.querySelector<HTMLElement>('.mg-divider')!
+    const drag = (type: string, x: number) =>
+      divider.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: x, button: 0 }))
+
+    await act(async () => {
+      drag('pointerdown', 500)
+      drag('pointermove', 600)
+    })
+    expect(Number(panes.style.getPropertyValue('--split'))).toBeCloseTo(0.6)
+    expect(settings.value.splitRatio).toBe(0.5)
+    await act(async () => {
+      drag('pointerup', 600)
+    })
+    expect(settings.value.splitRatio).toBeCloseTo(0.6)
+
+    await act(async () => {
+      drag('pointerdown', 600)
+      drag('pointermove', 0)
+      drag('pointerup', 0)
+    })
+    expect(settings.value.splitRatio).toBeCloseTo(0.32)
+
+    await act(async () => {
+      divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    expect(settings.value.splitRatio).toBeCloseTo(0.37)
+  })
+
+  test('To notes appends the crop as an image block linked to its page and shows the sheet', async () => {
+    const props = await open()
+    const box = { x: 0.1, y: 0.2, w: 0.3, h: 0.3 }
+    await areaSelect(props, box)
+    await act(async () => button('To notes')!.click())
+
+    await vi.waitFor(() => expect(drive.saveNotes).toHaveBeenCalled())
+    expect(doc.renderCrop).toHaveBeenCalledWith(1, box, 1600)
+    const block = lastSavedNotes().blocks.at(-1)!
+    expect(block).toMatchObject({ kind: 'image', page: 1, src: 'data:image/jpeg;base64,AAAA', aspect: 0.5 })
+    expect(settings.value.notesLayout).toBe('both')
+    await vi.waitFor(() => expect(sheet.scrollToBlock).toHaveBeenCalledWith(block.id))
+    expect(button('To notes')).toBeNull()
+  })
+
+  test('To notes on a narrow window switches to Notes; a failure says so', async () => {
+    stubMedia(false)
+    const props = await open()
+    await areaSelect(props)
+    await act(async () => button('To notes')!.click())
+    await vi.waitFor(() => expect(settings.value.notesLayout).toBe('notes'))
+
+    images.prepareImage.mockRejectedValueOnce(new Error('decode'))
+    await act(async () => radio('Paper').click())
+    await areaSelect(viewer.props!)
+    await act(async () => button('To notes')!.click())
+    await vi.waitFor(() => expect(toast.value).toBe('Could not add to notes'))
+  })
+
+  test('Undo acts on the pane touched last', async () => {
+    settings.value = { ...DEFAULT_SETTINGS, notesLayout: 'both' }
+    const props = await open()
+    await vi.waitFor(() => expect(sheet.props).not.toBeNull())
+    const notes = sheet.props!.store
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'mine', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => button('Green')!.click())
+    await act(async () => {
+      notes.addTextBlock('an idea')
+    })
+
+    await act(async () => pointerDown(root.querySelector('.mg-pane-notes .fake-sheet')!))
+    await act(async () => button('Undo')!.click())
+    expect(notes.blocks.value).toEqual([])
+    expect(props.highlights.value).toHaveLength(1)
+
+    await act(async () => pointerDown(root.querySelector('.mg-pane-paper .fake-viewer')!))
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }))
+    })
+    expect(props.highlights.value).toHaveLength(0)
+    expect(notes.blocks.value).toEqual([])
+
+    await act(async () => {
+      document.dispatchEvent(new CustomEvent('marginalia:redo'))
+    })
+    expect(props.highlights.value).toHaveLength(1)
+    expect(notes.blocks.value).toEqual([])
+  })
+
+  test('Copy as Markdown appends the Notes section', async () => {
+    const writeText = vi.fn(async (_: string) => undefined)
+    vi.stubGlobal('ClipboardItem', undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const note: TextBlock = { kind: 'text', id: 'b1', order: 'a', text: 'my note', createdAt: 1, updatedAt: 1 }
+    drive.loadNotes.mockResolvedValue({ ...emptyNotes('p1', 'attention.pdf', 1), blocks: [note] })
+    await open()
+    await act(async () => button('Copy as Markdown')!.click())
+
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('# attention\n\n## Notes\n\nmy note\n'))
+  })
+
+  test('closing after a notes edit queues the notes and flushes', async () => {
+    let settle: (d: NotesDoc | null) => void = () => undefined
+    drive.refreshNotes.mockReturnValue(new Promise((resolve) => (settle = resolve)))
+    await open()
+    const notes = await showSheet()
+    await act(async () => {
+      notes.addTextBlock('mine')
+    })
+    const theirs: TextBlock = { kind: 'text', id: 'theirs', order: 'z', text: 'theirs', createdAt: 2, updatedAt: 2 }
+    await act(async () => settle({ ...emptyNotes('p1', 'attention.pdf', 1), blocks: [notes.blocks.value[0], theirs] }))
+
+    act(() => render(null, root))
+
+    expect(lastSavedNotes().blocks.map((b) => b.id).sort()).toEqual([notes.blocks.value[0].id, 'theirs'].sort())
+    expect(drive.saveNotes.mock.calls.at(-1)![0]).toBe('p1')
+    expect(drive.saveNotes.mock.invocationCallOrder.at(-1)!).toBeLessThan(drive.flushPendingWrites.mock.invocationCallOrder.at(-1)!)
+  })
+
+  test('Notes and back returns the paper to where it was', async () => {
+    const props = await open()
+    await act(async () => {
+      root.querySelector('.mg-pane-paper')!.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true }))
+    })
+    await act(async () => props.onReadingPosition({ page: 7, offset: 0.25, zoom: 0 }))
+    await showSheet()
+    expect(root.querySelector('.fake-viewer')).toBeNull()
+    await act(async () => radio('Paper').click())
+
+    expect(viewer.props).not.toBe(props)
+    expect(viewer.props!.initial).toEqual({ page: 7, offset: 0.25, zoom: 0 })
+    await act(async () => viewer.props!.onReadingPosition({ page: 1, offset: 0, zoom: 0 }))
+    expect(lastSaved().reading).toMatchObject({ page: 7, offset: 0.25 })
+  })
+
+  test('a p.N chip in the Notes layout shows the paper at that page', async () => {
+    stubMedia(false)
+    settings.value = { ...DEFAULT_SETTINGS, notesLayout: 'notes' }
+    await act(async () => render(<Reader pdfId="p1" />, root))
+    await vi.waitFor(() => expect(sheet.props).not.toBeNull())
+    expect(root.querySelector('.fake-viewer')).toBeNull()
+
+    await act(async () => sheet.props!.onJumpToPage(4))
+    expect(settings.value.notesLayout).toBe('paper')
+    expect(root.querySelector('.fake-viewer')).not.toBeNull()
+    expect(scrollTo).toHaveBeenCalledWith(4, undefined, 'smooth')
+    await act(async () => viewer.props!.onReadingPosition({ page: 4, offset: 0, zoom: 0 }))
+    expect(lastSaved().reading).toMatchObject({ page: 4 })
+  })
+
+  test('pen devices get the puck over the active pane and no pen strip in the toolbar', async () => {
+    settings.value = { ...DEFAULT_SETTINGS, penSeen: true, notesLayout: 'both' }
+    await open()
+    expect(root.querySelector('.mg-pane-paper .mg-puck')).not.toBeNull()
+    expect(root.querySelector('.mg-pane-notes .mg-puck')).toBeNull()
+    expect(root.querySelector('.mg-toolbar button[aria-label="Pen"]')).toBeNull()
+
+    await act(async () => pointerDown(root.querySelector('.mg-pane-notes')!))
+    expect(root.querySelector('.mg-pane-notes .mg-puck')).not.toBeNull()
+    expect(root.querySelector('.mg-pane-paper .mg-puck')).toBeNull()
+  })
+
+  test('a tap on the puck is not a move: restore-time positions stay unsaved', async () => {
+    settings.value = { ...DEFAULT_SETTINGS, penSeen: true }
+    drive.loadSidecar.mockResolvedValue({
+      ...emptySidecar('p1', 'attention.pdf', 1),
+      reading: { page: 3, offset: 0.2, zoom: 0, status: 'reading', updatedAt: 5 },
+    })
+    const props = await open()
+    await act(async () => pointerDown(root.querySelector('.mg-pane-paper .mg-puck')!))
+    await act(async () => props.onReadingPosition({ page: 1, offset: 0, zoom: 0 }))
+    expect(drive.saveSidecar).not.toHaveBeenCalled()
+  })
+
+  test('a laptop gets no puck', async () => {
+    await open()
+    expect(root.querySelector('.mg-puck')).toBeNull()
+    expect(button('Draw')).not.toBeNull()
   })
 })
