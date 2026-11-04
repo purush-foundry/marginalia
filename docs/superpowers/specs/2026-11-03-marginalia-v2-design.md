@@ -134,8 +134,9 @@ second way in.
 
 ### Layout
 
-- A segmented control in the toolbar: **Paper · Both · Notes**. Below 700 px only Paper ·
-  Notes. In Both, the paper is on the left and the sheet on the right with a draggable divider
+- A segmented control in the toolbar: **Paper · Both · Notes**. Below 700 px a single
+  **Notes** toggle (pressed in the Notes layout; it switches between Paper and Notes) and the
+  toolbar lead shows only Back, so Night, Sidebar and Threads fit on a 390 px phone. In Both, the paper is on the left and the sheet on the right with a draggable divider
   (default half and half, remembered per device); fit-width zoom recomputes for the narrower
   paper pane. Each pane scrolls on its own. The last layout is remembered per device.
 - One continuous sheet per paper, not pages. Minimum height is the pane height; it grows to the
