@@ -1,0 +1,118 @@
+.mg-thumbs {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mg-thumbs[data-layout='column'] {
+  width: 160px;
+  flex: none;
+  border-right: 1px solid var(--border);
+}
+
+.mg-thumbs[data-layout='sheet'] {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  max-height: 60%;
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: var(--shadow);
+}
+
+.mg-thumbs-close {
+  align-self: flex-end;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--text);
+}
+
+.mg-thumbs-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.mg-thumbs[data-layout='sheet'] .mg-thumbs-list {
+  flex-direction: row;
+  align-items: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  touch-action: pan-x;
+}
+
+.mg-thumb-cell {
+  position: relative;
+  flex: none;
+}
+
+.mg-thumb {
+  display: block;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  line-height: 0;
+  -webkit-touch-callout: none;
+}
+
+.mg-thumb[aria-current='page'] {
+  border-color: var(--accent, currentColor);
+}
+
+.mg-thumb[data-dragging] {
+  opacity: 0.5;
+}
+
+.mg-thumb[data-over] {
+  outline: 2px dashed var(--accent, currentColor);
+}
+
+.mg-thumb-box {
+  fill: rgba(128, 128, 128, 0.25);
+  stroke: rgba(128, 128, 128, 0.7);
+  stroke-width: 1;
+}
+
+.mg-thumb-menu {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.mg-thumb-menu-item {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.mg-thumb-menu-item:disabled {
+  opacity: 0.4;
+}
