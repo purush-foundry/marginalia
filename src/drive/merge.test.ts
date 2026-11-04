@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { convertV1, emptyNotebook, type NotePage, type NotebookStroke, type NotesDocV2, type TextObject } from '../notes/model'
 import { emptyNotes, emptySidecar, type AreaHighlight, type NotesDoc, type Sidecar } from '../types'
 import { mergeNotebooks, mergeSidecars } from './merge'
@@ -167,5 +167,35 @@ describe('mergeNotebooks', () => {
     const dead = { ...a, strokes: [{ ...a.strokes[0], updatedAt: 9, deleted: true }] }
     expect(mergeNotebooks(live, dead).strokes[0].deleted).toBe(true)
     expect(mergeNotebooks(dead, live).strokes[0].deleted).toBe(true)
+  })
+
+  test('two versions that differ only in points or src at the same time merge the same in either order', () => {
+    const image = { id: 'img', createdAt: 1, updatedAt: 4, page: 'p', box: { x: 0, y: 0, w: 0.5 }, src: 'data:a', aspect: 1, z: 'W' }
+    const a = notebook({ strokes: [ink('s', 3, { points: [0.1, 0.2, 0.5] })], images: [image] })
+    const b = notebook({ strokes: [ink('s', 3, { points: [0.1, 0.3, 0.5] })], images: [{ ...image, src: 'data:b' }] })
+    expect(mergeNotebooks(a, b)).toEqual(mergeNotebooks(b, a))
+  })
+
+  test('a large notebook with snips merges with its stored copy quickly and never stringifies points or src', () => {
+    const points = Array.from({ length: 150 }, (_, i) => i / 150)
+    const pages = Array.from({ length: 20 }, (_, i) => page(`p${i}`, 5))
+    const strokes = Array.from({ length: 6000 }, (_, i) => ink(`s${i}`, 7, { page: `p${i % 20}`, points: [...points] }))
+    const src = `data:image/png;base64,${'A'.repeat(1_000_000)}`
+    const images = Array.from({ length: 5 }, (_, i) => ({ id: `img${i}`, createdAt: 1, updatedAt: 8, page: 'p0', box: { x: 0, y: 0, w: 0.5 }, src: src + i, aspect: 1, z: 'W' }))
+    const doc = notebook({ pages, strokes, texts: [text('t', 9)], images })
+    const stored = structuredClone(doc)
+    const stringify = vi.spyOn(JSON, 'stringify')
+    try {
+      const start = performance.now()
+      const merged = mergeNotebooks(doc, stored)
+      mergeNotebooks(doc, doc)
+      const elapsed = performance.now() - start
+      expect([merged.pages.length, merged.strokes.length, merged.images.map((i) => i.src.length)]).toEqual([20, 6000, images.map((i) => i.src.length)])
+      expect(elapsed).toBeLessThan(100)
+      const heavy = stringify.mock.calls.filter(([v]) => typeof v === 'object' && v !== null && ('src' in v || 'points' in v))
+      expect(heavy).toHaveLength(0)
+    } finally {
+      stringify.mockRestore()
+    }
   })
 })
