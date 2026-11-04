@@ -738,6 +738,29 @@ test('the Text tool drops a 60 % box at the tap and edits it', async () => {
   expect(tool.value).toBe('text')
 })
 
+test('a Text-tool press on empty paper cancels the browser default; one on a text box or a finger under the Pen does not', async () => {
+  await mount()
+  // A press and a release far from it, so nothing is created; returns the pointerdown.
+  const down = (el: Element, pointerType: string) => {
+    const init = { bubbles: true, cancelable: true, pointerType, pointerId: 5, isPrimary: true, button: 0, clientX: 16 + 200, clientY: 16 + 200 }
+    const e = new PointerEvent('pointerdown', { ...init, buttons: 1 })
+    el.dispatchEvent(e)
+    el.dispatchEvent(new PointerEvent('pointerup', { ...init, clientX: 16 + 400 }))
+    return e
+  }
+  await act(() => setTool('text'))
+  expect(down(page('page-1'), 'pen').defaultPrevented).toBe(true)
+  expect(down(page('page-1'), 'touch').defaultPrevented).toBe(true)
+  await act(() => {
+    store.addText({ page: 'page-1', box: { x: 0.1, y: 0.1, w: 0.5 }, text: 'hi', size: 'm', color: '#000' })
+  })
+  expect(down(page('page-1').querySelector('.mg-nb-text')!, 'pen').defaultPrevented).toBe(false)
+  await act(() => setTool('pen'))
+  penActivity.lastUp = -Infinity
+  expect(down(page('page-1'), 'touch').defaultPrevented).toBe(false)
+  expect(store.doc.value.texts).toHaveLength(1)
+})
+
 test('a lasso move across a page boundary re-parents the selection to the page under the pointer', async () => {
   await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
   await penPath(page('page-1'), [[116, 1016], [316, 1116]])

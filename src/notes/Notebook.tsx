@@ -771,6 +771,8 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
     const primary = e.pointerType === 'touch' ? e.isPrimary : e.button === 0
     const onText = target?.closest('.mg-nb-text, .mg-nb-text-frame')
     textTap.current = tool.peek() === 'text' && primary && page && !onText ? { id: e.pointerId, x: e.clientX, y: e.clientY, page, editing: editingRef.current } : null
+    // Keeps the compatibility mouse events from moving focus off the box this tap creates.
+    if (textTap.current) e.preventDefault()
   }
 
   const onPagesUp = (e: PointerEvent) => {
