@@ -18,8 +18,7 @@ Vitest runs in happy-dom. The shell's own tests, and what the final fix wave add
   tapped highlight; the viewer selection is cleared after bar actions and on dismiss; flush and
   release on close; a newer remote reading state wins on open (the viewer scrolls there, nothing is
   stamped until the user scrolls); restore-time positions are not persisted; closing queues the
-  store state only after an edit; closing turns the Draw latch off; a cached PDF pdf.js cannot open
-  is replaced by a fresh download.
+  store state only after an edit; a cached PDF pdf.js cannot open is replaced by a fresh download.
 - `src/drive/library.test.ts` — Drive mirror, sidecar save/flush/merge and PDF cache against a fake
   Drive: a failed IndexedDB write keeps the edit and retries; `refreshSidecar` finds a sidecar the
   index has not seen; sync pulls other devices' sidecars, and one failed download neither stops the
@@ -50,14 +49,6 @@ What v2 added:
 - `src/ink/InkLayer.test.tsx` — the live frame is filled with the outline the committed stroke
   gets; predicted samples are drawn live, never stored; Black strokes, live and committed, show in
   the pale ink at night and keep their stored colour.
-- `src/ink/PenStrip.test.tsx` — three widths and six colours with the active ones marked; a pick
-  returns from the eraser to the pen; Select only with `withSelect`; the stacked layout; the Black
-  swatch shows pale at night.
-- `src/app/settings.test.ts` — pen colour and width round-trip per device; values outside the
-  presets fall back.
-- `src/ink/Puck.test.tsx` — a tap flips Pen ⇄ Eraser, a long-press opens the palette, a tap while
-  the palette is open closes it without flipping, a drag along the edge moves the puck and is
-  remembered, the puck and palette stay inside the host, the colour ring shows Black pale at night.
 - `src/library/quotes.test.ts` — the quotation pick is deterministic; every quotation is short
   and attributed.
 - `src/library/homeArt.test.ts` — the drawing without pictures; Drive pictures cached by version,
@@ -75,13 +66,8 @@ What v2 added:
   `notesFor` and no `pdf` key, so a v1 sidecar lookup never returns it; a stored or downloaded
   annotations body without `highlights` opens as an empty sidecar, is never merged and never
   uploaded; home pictures recorded in the index.
-- `src/notes/notesStore.test.ts` — blocks in order, split and join, typing as one undo step,
-  image resize clamps, strokes, background, remote replace, its own undo stack.
 - `src/notes/images.test.ts` — long edge 1600 px, JPEG at 0.82 or PNG with transparency, steps
   down to fit 1.5 MB, gives up below 400 px, never upscales, closes the decoded image.
-- `src/notes/NotesSheet.test.tsx` — Enter, Backspace, title, images from paste, drop and picker,
-  resize, delete, the p.N chip, background menu, ink in sheet units, the caret above the keyboard,
-  a pointerdown outside the sheet drops the image selection, Black ink shows pale at night.
 - `src/pdf/Viewer.test.tsx` — an armed Snip takes the next box from the pen in the Pen tool, from a
   finger, and from a pen landing during a palm-started drag.
 - `src/app/ui.test.ts` — Copy image writes a PNG `ClipboardItem` or downloads it.
@@ -99,6 +85,54 @@ What v2 added:
 - `src/export/markdown.test.ts` — the Notes section lists text blocks in order and images as
   `(image, p.N)`, and is empty when there is nothing to list.
 
+What v3 added:
+
+- `src/ink/geometry.test.ts` — the smoothing keeps the wiggle on a slow curve under half a turn for
+  every pen; the ball pen keeps its width; fountain and brush taper their ends.
+- `src/ink/liveOutline.test.ts` — the live stroke freezes chunks of 300 samples and re-outlines
+  only the tail; chunks overlap, only the ends taper, and predicted samples stay in the tail.
+- `src/ink/InkLayer.test.tsx` — a pen reporting zero pressure keeps the last pressure; the live
+  stroke is drawn in chunks on a canvas sized to the visible part of the page; the highlighter
+  draws as one translucent path, under the ink on dark paper; the segment eraser splits strokes,
+  keeps splitting its own pieces and hands one replace per stroke to the store on lift; eraser
+  filters; Auto-deselect; a three-finger double tap redoes.
+- `src/ink/erase.test.ts` — `splitStrokeAt` cuts a stroke where it enters and leaves the eraser
+  circle, drops one-sample pieces, and returns null when nothing is hit.
+- `src/ink/tools.test.ts` — tool switching records the previous tool; colour and width slots add,
+  edit, move and clamp; millimetres to page fractions.
+- `src/app/settings.test.ts` — tool palettes and settings round-trip per device; invalid stored
+  fields fall back one by one; the dock edge and position persist.
+- `src/ink/ToolMenu.test.tsx` — a tap flips Pen ⇄ Eraser, a long-press expands the tools, slots
+  pick and edit, the pill docks to the nearest edge, panels and editors stay inside the host.
+- `src/ink/color.test.ts` — the twelve presets, HSL to hex, hex normalisation and the colour wheel.
+- `src/annot/store.test.ts` — `replaceStroke` tombstones the stroke and adds its pieces as one
+  undo step.
+- `src/notes/model.test.ts` — the empty notebook, schema-1 conversion into pages, and `pageLayers`
+  grouping consecutive strokes between objects by z.
+- `src/notes/notebookStore.test.ts` — pages, strokes, text and images with undo, the only live
+  page is never deleted, Add Page copies the style, remote replace clears history.
+- `src/drive/merge.test.ts` — notebooks merge pages, strokes, text and images by id; two devices
+  converting the same v1 notes merge without duplicates.
+- `src/drive/library.test.ts` — schema 1 and 2 notes files load, a schema-1 file converts and the
+  conversion is uploaded, and queued edits from a v2 client merge into a schema-2 remote.
+- `src/export/markdown.test.ts` — the Notes section lists each live page's text and images top to
+  bottom, skipping empty pages but counting them.
+- `src/notes/viewport.test.ts` — zoom clamps, page widths and the scroll that keeps a point still.
+- `src/notes/paper.test.tsx` — ruled, grid and dot templates at their spacing, and the rule
+  colour on dark paper.
+- `src/notes/Notebook.test.tsx` — pages stack and centre; templates and colours; Add Page; the
+  Template sheet; ink in page-width units and millimetres; pinch, double-tap and Ctrl-wheel zoom;
+  pull-to-add; a pinch while the pen is down does nothing; images, text and the p.N chip, which a
+  pen tap opens without drawing; strokes above or below images by z; the tool row; segment-eraser
+  pieces shown during the drag; a stroke on one page does not re-outline another.
+- `src/app/Reader.test.tsx` — the notebook loads only when shown and offers Retry when it fails;
+  To notes adds the crop to the current page at half width with its PDF page; Copy as Markdown
+  appends the notebook; closing after an edit queues the notebook and flushes; the tool menu sits
+  over the active pane on every device; the laptop opens in Lasso and a mouse drag selects text;
+  L, P, H, E and Esc; paper ink in page millimetres and the highlighter under the ink at night.
+- `src/app/Toolbar.test.tsx` — no Draw button on any device.
+- `src/pdf/Viewer.test.tsx` — the scroller is the ink viewport.
+
 ## Checked in headless Chrome (not on a device)
 
 Against `dist/` served under `/marginalia/`, with a seeded library and cached `attention.pdf`:
@@ -114,13 +148,13 @@ Not yet run; do these before calling v1 done.
 
 ### iPad with Apple Pencil (Safari home-screen app)
 
-- [ ] The tool puck is visible without ever using the Pencil; long-press shows Pen / Eraser /
-      Select and the colours.
+- [ ] The tool menu is visible without ever using the Pencil; long-press shows the tools and the
+      colours.
 - [ ] Pen draws; strokes have pressure-shaped ends and stay put after zooming.
 - [ ] Resting the palm while drawing makes no marks and does not scroll.
-- [ ] A finger always scrolls while the Pen tool is active (Finger draws off).
+- [ ] A finger always scrolls while the Pen tool is active (Draw with finger off).
 - [ ] Eraser removes whole strokes; Undo / Redo buttons and two-finger double-tap undo work.
-- [ ] Select tool: Pencil drag selects text and shows the selection bar; Pen tool never selects.
+- [ ] Lasso tool: Pencil drag selects text and shows the selection bar; Pen tool never selects.
 - [ ] Long-press on a figure starts an area box; Ask sends the crop ("+ image" in the Ask panel).
 - [ ] Sidebar and Ask panel sit beside the page in landscape and portrait (≥ 700 px).
 - [ ] Night mode inverts pages but not images; "Invert images" inverts them too.
@@ -157,9 +191,10 @@ Not yet run; do these before calling v1 done.
 
 ### Laptop (Chrome)
 
-- [ ] Draw latch: the viewer gets an accent border, the mouse draws, Esc or the button exits.
+- [ ] A paper opens in Lasso and a mouse drag selects text; P, H or E makes the mouse draw, and
+      L or Esc stops it.
 - [ ] The Snip button boxes an equation; the bar appears on release; the button disarms.
-- [ ] ⌘/Ctrl-Z undo, ⇧⌘Z redo; Esc closes the bar, then the Ask panel, then the latch.
+- [ ] ⌘/Ctrl-Z undo, ⇧⌘Z redo; Esc closes the bar, then the Ask panel, then returns to Lasso.
 - [ ] An internal link (citation, figure ref) scrolls and shows "← back to p.N".
 - [ ] Install as an app from the address bar; it opens standalone.
 - [ ] Settings → Paste fills the Anthropic key and Test key passes.
@@ -193,3 +228,21 @@ Not yet run; do these before calling v1 done.
       the landscape and portrait pictures on rotation, and the drawing comes back when the files
       are removed.
 - [ ] The quotation cartouche fits inside the band on the iPad.
+
+### v3
+
+- [ ] Slow handwriting with the Pencil looks like the same words written in Apple Notes, at Fine,
+      Medium and Thick for each of Ball, Fountain and Brush.
+- [ ] The live stroke keeps up at 120 Hz on a long line: write a full page line without lifting.
+- [ ] Live and lifted strokes look the same at the chunk seams.
+- [ ] The segment eraser splits strokes, and Undo restores them.
+- [ ] The highlighter leaves black ink black on white and yellow paper, and sits under the ink on
+      dark paper and on night-mode PDF pages.
+- [ ] Pinch zoom stays around the fingers; double-tap switches fit-width and 200 %; Ctrl-wheel
+      zooms on the laptop.
+- [ ] Pulling past the last notebook page adds one.
+- [ ] A v2 notes file opens as pages on every device, without duplicates.
+- [ ] The pill docks to each edge and stays there after relaunch.
+- [ ] A three-finger double tap redoes.
+
+The lasso, text boxes, shapes and page thumbnails arrive with Phase B.

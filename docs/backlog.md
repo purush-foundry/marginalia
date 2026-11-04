@@ -44,12 +44,9 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 
 ## Ink
 
-- Pen width varies with pressure along the whole stroke; the spec wording is fixed-width
-  strokes with pressure-shaped ends.
 - Two-finger double-tap undo only works over a page, not in gaps or on the scroller.
 - Thread markers need a finger tap while the Pencil is in pen or eraser mode.
-- Eraser allocations, erasures surviving cancel, the dead `touch-action` base rule, simplify
-  tolerance, swallowed-id leak.
+- Erasures surviving cancel, simplify tolerance, swallowed-id leak.
 
 ## Ask (Claude)
 
@@ -83,18 +80,6 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 
 ## Deferred from the v2 reviews (2026-11-03)
 
-### Pencil and puck
-
-- The `getContext` spy in `InkLayer.test.tsx` is never restored; add `vi.restoreAllMocks()`.
-- `bindPenPalette` tracks `settings` through `saveSettings`; wrap it in `untracked`.
-- The predicted tail can flip `pressureVaries` for the live frame only.
-- A puck gesture whose up/cancel never arrives leaves the puck unresponsive (no stale reset);
-  the palette only fits hosts taller than about 272 px; no `contextmenu` guard; `puckY` from
-  storage is not sanitised (NaN → `NaNpx`).
-- The live canvas covers the whole page or sheet under a 4 Mpx cap, so the live stroke may be
-  softer than the committed one on large pages; size it to the visible area if the device
-  check shows it.
-
 ### Snip
 
 - The download fallback revokes the object URL right after `click()`; WebKit may lose the
@@ -127,21 +112,13 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 - v2 ignores a bad annotations record but does not repair an index slot that already points at
   a notes file (no client can create that state any more).
 
-### Notes sheet
+### Notebook images
 
-- Ink is stored in sheet units (scales with the sheet width) while text stays a fixed size, so
-  handwriting drifts from its words after a pane-width change. Decide after the device test.
-- A 300-stroke sheet re-outlines every stroke on each new line of text and each divider move.
-- "+ Image" loses the insertion point on desktop (button focus); the 1.5 MB cap is on the blob,
-  not the data URL (~2 MB base64); typing coalescing has no blur/pause boundary; stored vs
-  visible image width disagree above ~0.86 on narrow sheets; the Enter guard misses Android
-  keyboards (`beforeinput` `insertParagraph` is the robust path); keyboard accessibility (menu
-  arrows/Escape, image selection, handle); `scaleY` duplicates `InkLayer`'s `widthUnits`;
-  `decodeImage` is untested (no `createImageBitmap` in happy-dom).
+- The 1.5 MB cap is on the blob, not the data URL (~2 MB base64); `decodeImage` is untested (no
+  `createImageBitmap` in happy-dom).
 
 ### Reader
 
-- "Loading notes…" sticks after a `loadNotes` rejection until the layout toggles.
 - Layout radiogroup lacks arrow keys; divider `aria-valuenow` is the stored ratio; no Home/End.
 - Panes under 640 px total leave the notes pane under 320 px.
 - `notesLayout`/`splitRatio` from storage are not sanitised.

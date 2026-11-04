@@ -4,12 +4,12 @@ A light PDF paper reader for one person. It runs as a web app and an installable
 (Chrome), iPhone and iPad (Safari, home-screen app). Your papers live in one Google Drive folder;
 Marginalia mirrors that folder tree, caches PDFs on the device, and stores every highlight, ink
 stroke, note and Claude thread in a small JSON sidecar next to each PDF
-(`<paper>.marginalia.json`), and the notes sheet in a second file beside it
+(`<paper>.marginalia.json`), and the notebook in a second file beside it
 (`<paper>.marginalia-notes.json`), so nothing is locked in.
 
 - Highlight text in four colours, or an area (equations, figures, tables).
-- Draw with the Apple Pencil, or with the mouse through the Draw latch.
-- Snip a figure or equation to the clipboard or onto a notes sheet that sits beside the paper.
+- Draw with the Apple Pencil, or with the mouse under Pen, Highlighter or Eraser.
+- Snip a figure or equation to the clipboard or into a notebook that sits beside the paper.
 - Ask Claude about a passage or area; answers quote the paper and link back to the page.
 - Unread / reading / done badges, outline, highlight list, Copy as Markdown.
 - Works offline for cached papers; edits sync through Drive when you are back online.
@@ -69,35 +69,54 @@ comes next (finger, mouse, or the Pencil in any tool); the lead of the toolbar s
 while it is armed, and Esc or a second tap disarms it. Long-press on a figure on touch works too.
 Releasing the box shows the bar: a colour makes an area highlight, **Ask** sends the crop to
 Claude, **Copy image** puts a PNG on the clipboard (or downloads it), and **To notes** adds the
-crop to the notes sheet with a **p.N** chip that scrolls the paper back to that page.
+crop to the current notebook page at half the page width, with a **p.N** chip that scrolls the
+paper back to that page.
 
-### Notes sheet
+### Notebook
 
-Each paper has one notes sheet. The **Paper · Both · Notes** control in the toolbar picks what
-is on screen; **Both** puts the paper on the left and the sheet on the right with a divider you
-can drag (or move with the arrow keys), and is offered from 700 px wide. Below 700 px, as on an
-iPhone, the control is a single **Notes** toggle that switches between the paper and the sheet.
-The layout and the split are remembered per device.
+Each paper has one notebook. The **Paper · Both · Notes** control in the toolbar picks what is on
+screen; **Both** puts the paper on the left and the notebook on the right with a divider you can
+drag (or move with the arrow keys), and is offered from 700 px wide. Below 700 px, as on an
+iPhone, the control is a single **Notes** toggle that switches between the paper and the notebook.
+The layout and the split are remembered per device. The notebook loads the first time you show it.
 
-- **Typing:** tap the sheet and type; Enter starts a new paragraph, Backspace at the start joins
-  it to the one before, and the first paragraph is the title.
-- **Pencil:** the Pen draws on the sheet as on the page, the Eraser removes whole strokes, and
-  Select places the caret or picks an image. A finger never draws.
-- **Images:** paste, drop, **+ Image**, or **To notes** from a Snip. Tap an image to select it,
-  drag its corner to resize, and delete it from its bar or with Backspace.
-- **Background:** Blank, Grid, Dots or Lines from the menu at the top right of the sheet; every
-  device shows the same one.
+- **Pages:** fixed-size pages on a grey canvas. **Add Page** adds one **Before**, **After** or
+  **Last**; pulling past the last page and letting go adds one too, styled like the last page.
+- **Template:** the sheet sets the current page's template (Blank, Ruled narrow, Ruled college,
+  Ruled wide, Grid, Dots), colour (White · Yellow · Dark), size (A4 · Letter · Standard) and
+  orientation, or all pages with **Apply to all pages**.
+- **Zoom:** pinch, or double-tap to switch between fit-width and 200 %; Ctrl-wheel on the laptop.
+- **Images:** paste, drop, **Image**, or **To notes** from a Snip; they land on the current page.
+- **Tools:** the bar has Lasso · Pen · Highlighter · Eraser; ink is stored per page in the
+  page's own width, and a stroke drawn after an image sits above it.
+- **v2 notes:** notes from v2 convert into pages the first time they open, the text stacked from
+  the top of page 1 and the ink kept where it was drawn.
 
 Undo and Redo act on the pane you touched last. **Copy as Markdown** ends with a Notes section
-that lists the text and `(image, p.N)` lines.
+that lists each page's text and `(image, p.N)` lines.
 
-### Tool puck
+### Tool menu
 
-On an iPad, once a Pencil has been used, or with Finger draws on, a round puck sits at the right edge of the pane you
-are working in. Tap it to flip the Pencil between Pen and Eraser; long-press it for the palette
-(tools, widths, colours), and tap it again to close the palette; drag it up or down the edge to
-move it. It never changes what a finger does. In night mode Black ink shows pale so it stays
-visible; it is still stored as Black.
+A round pill floats over the pane you are working in, on every device. Tap it to flip between Pen
+and Eraser; long-press it to expand the tools (Lasso, Pen, Highlighter, Eraser) and their colour
+and thickness slots. Tap a slot to pick it and tap the selected slot again to edit it; drag the
+pill to any edge to dock it there, and it stays there after a relaunch. The Pencil always uses the
+selected tool and a finger never draws unless **Draw with finger** is on in Settings. On the
+laptop the mouse draws under Pen, Highlighter and Eraser; **Lasso** or **Esc** stops it, and a
+paper always opens in Lasso so a mouse drag selects text. The keys **L**, **P**, **H** and **E**
+pick Lasso, Pen, Highlighter and Eraser outside text fields. In night mode Black ink shows pale so
+it stays visible; it is still stored as Black.
+
+### Pens
+
+- **Pen types:** Ball, Fountain and Brush. Widths are in millimetres of the page, 0.25 / 0.35 /
+  0.5 by default, so a line is the same thickness on a paper page and a notebook page.
+- **Highlighter:** 3 / 5 / 8 mm by default; it sits under the ink on dark paper and in night mode,
+  and **Draw straight line** keeps only its ends.
+- **Eraser:** **Stroke** removes whole strokes and **Segment** cuts out only what it passes over;
+  sizes 2 / 4 / 8 mm; filters choose whether it erases pen, highlighter or both; **Auto-deselect**
+  returns to the previous tool after each erase.
+- **Gestures:** a two-finger double tap undoes and a three-finger double tap redoes.
 
 ### Home pictures
 
@@ -165,5 +184,5 @@ GitHub Pages serves at `https://purush-foundry.github.io/marginalia/`. Open apps
 - Three-column papers interleave their columns in text selection and in the text sent to Claude.
 - Pages with a `/Rotate` entry render unrotated.
 - iOS needs 18 or later.
-- Apple Pencil Pro squeeze and double-tap do not reach web apps; use the tool puck.
-- Ink on the notes sheet stays where it was drawn when text above it reflows.
+- Apple Pencil Pro squeeze and double-tap do not reach web apps; use the tool menu.
+- Notebook text cannot be edited yet; text converted from v2 notes shows as read-only boxes.
