@@ -73,6 +73,12 @@ test('a closed stroke with four corners fits a rectangle of 5 samples', () => {
   expect(shape.anchor[0]).toBeCloseTo(60, 0)
   expect(shape.anchor[1]).toBeCloseTo(40, 0)
   expect(new Set(pressures(shape.points))).toEqual(new Set([0.5]))
+  for (const overshoot of [0, 10, 20]) {
+    const fromEdge = fitShape(jittered([[60, 10], ...corners.slice(1), corners[0], [60 + overshoot, 10]]))!
+    expect(fromEdge.kind).toBe('rectangle')
+    expect(fromEdge.points).toHaveLength(5 * 3)
+    expectCorners(fromEdge.points, corners)
+  }
 })
 
 test('a closed stroke with three corners fits a triangle', () => {
@@ -81,11 +87,13 @@ test('a closed stroke with three corners fits a triangle', () => {
     [50, 80],
     [0, 0],
   ]
-  const shape = fitShape(jittered([[50, 0], ...corners, [50, 0]]))!
-  expect(shape.kind).toBe('triangle')
-  expect(shape.points).toHaveLength(4 * 3)
-  expectClosed(shape.points)
-  expectCorners(shape.points, corners)
+  for (const overshoot of [0, 10, 20]) {
+    const shape = fitShape(jittered([[50, 0], ...corners, [50 + overshoot, 0]]))!
+    expect(shape.kind).toBe('triangle')
+    expect(shape.points).toHaveLength(4 * 3)
+    expectClosed(shape.points)
+    expectCorners(shape.points, corners)
+  }
 })
 
 test('an open stroke without corners fits a line from first to last sample', () => {

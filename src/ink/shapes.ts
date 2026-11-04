@@ -87,6 +87,18 @@ function corners(r: Pt[], closed: boolean): number[] {
   return runs.map((run) => run.reduce((best, s) => (s.a > best.a ? s : best)).i).sort((a, b) => a - b)
 }
 
+// The path cut at its sample nearest the start within its second half, dropping any overshoot past the start.
+function trimOvershoot(pts: Pt[]): Pt[] {
+  const half = length(pts) / 2
+  let arc = 0
+  let cut = pts.length - 1
+  for (let i = 1; i < pts.length; i++) {
+    arc += dist(pts[i - 1], pts[i])
+    if (arc >= half && dist(pts[i], pts[0]) < dist(pts[cut], pts[0])) cut = i
+  }
+  return pts.slice(0, cut + 1)
+}
+
 function flat(pts: Pt[]): number[] {
   return pts.flatMap(([x, y]) => [x, y, PRESSURE])
 }
@@ -138,12 +150,13 @@ export function fitShape(points: number[]): Shape | null {
   const last = pts[pts.length - 1]
   const [x0, y0, x1, y1] = bbox(pts)
   if (dist(first, last) < CLOSED_GAP * Math.hypot(x1 - x0, y1 - y0)) {
-    const loop = resample([...pts, first], RESAMPLE)
+    const drawn = trimOvershoot(pts)
+    const loop = resample([...drawn, first], RESAMPLE)
     if (dist(loop[0], loop[loop.length - 1]) < 1e-9) loop.pop()
     const at = corners(loop, true).map((i) => loop[i])
     if (at.length === 3) return polygon('triangle', at)
     if (at.length === 4) return polygon('rectangle', at)
-    if (at.length <= 2) return ellipse(pts)
+    if (at.length <= 2) return ellipse(drawn)
     return null
   }
   const r = resample(pts, RESAMPLE)
