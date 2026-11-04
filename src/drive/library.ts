@@ -64,12 +64,14 @@ interface Companion<T> {
   kind: 'annotations' | 'notes'
   store: 'sidecars' | 'notes'
   tag: '1' | 'notes'
+  pdfKey: 'pdf' | 'notesFor'
   nameFor(pdfName: string): string
   queueKey(pdfId: string): string
   map(index: LibraryIndex): Record<string, DriveNode>
   empty(pdfId: string, pdfName: string): T
   merge(a: T, b: T): T
   accepts(remote: unknown): remote is T
+  unparseableIsForeign: boolean
   newer(remote: unknown): boolean
   label: string
 }
@@ -107,16 +109,23 @@ function isNewerNotes(remote: unknown): boolean {
   return kind === 'notes' && typeof schema === 'number' && schema > 1
 }
 
+// True for an annotations document: an object with a highlights array.
+function isSidecarDoc(x: unknown): x is Sidecar {
+  return typeof x === 'object' && x !== null && Array.isArray((x as Partial<Sidecar>).highlights)
+}
+
 const ANNOTATIONS: Companion<Sidecar> = {
   kind: 'annotations',
   store: 'sidecars',
   tag: '1',
+  pdfKey: 'pdf',
   nameFor: sidecarNameFor,
   queueKey: (pdfId) => pdfId,
   map: (index) => index.sidecars,
   empty: (pdfId, pdfName) => emptySidecar(pdfId, pdfName, 0),
   merge: mergeSidecars,
-  accepts: (_remote: unknown): _remote is Sidecar => true,
+  accepts: isSidecarDoc,
+  unparseableIsForeign: false,
   newer: () => false,
   label: 'annotation',
 }
@@ -125,12 +134,14 @@ const NOTES: Companion<NotesDoc> = {
   kind: 'notes',
   store: 'notes',
   tag: 'notes',
+  pdfKey: 'notesFor',
   nameFor: notesNameFor,
   queueKey: (pdfId) => NOTES_QUEUE_PREFIX + pdfId,
   map: (index) => index.notes ?? {},
   empty: (pdfId, pdfName) => emptyNotes(pdfId, pdfName, 0),
   merge: mergeNotes,
   accepts: isNotesDoc,
+  unparseableIsForeign: true,
   newer: isNewerNotes,
   label: 'notes',
 }
@@ -187,11 +198,11 @@ function companionOf(node: DriveNode): Companion<unknown> | undefined {
   return COMPANIONS.find((c) => c.tag === tag) ?? COMPANIONS.find((c) => node.name.endsWith(c.nameFor('')))
 }
 
-// Maps a companion file to its PDF by appProperties.pdf, else by expected name in a shared parent.
+// Maps a companion file to its PDF by its kind's appProperties key, else by expected name in a shared parent.
 function attachCompanion(index: LibraryIndex, node: DriveNode): void {
   const c = companionOf(node)
   if (!c) return
-  const tagged = node.appProperties?.pdf
+  const tagged = node.appProperties?.[c.pdfKey]
   const pdfId =
     tagged && has(index.papers, tagged)
       ? tagged
@@ -532,12 +543,28 @@ function emptyFor<T>(c: Companion<T>, pdfId: string): T {
   return c.empty(pdfId, library.peek()?.papers[pdfId]?.name ?? '')
 }
 
-// The latest local document of the kind: the pending edit, else the stored record, else an empty one.
+// The stored record of the kind, or undefined when there is none or its document is not of the kind.
+async function readStored<T>(c: Companion<T>, pdfId: string): Promise<StoredCompanion<T> | undefined> {
+  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+  return stored && c.accepts(stored.sidecar) ? stored : undefined
+}
+
+// Deletes the stored record of the kind when its document is not of the kind.
+function dropInvalid<T>(c: Companion<T>, pdfId: string): Promise<void> {
+  return localLane(async () => {
+    const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    if (stored && !c.accepts(stored.sidecar)) await idbDel(c.store, pdfId)
+  })
+}
+
+// The latest local document of the kind: the pending edit, else the valid stored record, else an empty one.
 async function load<T>(c: Companion<T>, pdfId: string): Promise<T> {
   const pending = pendingSaves.get(c.queueKey(pdfId))
   if (pending) return pending.doc as T
-  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
-  return stored?.sidecar ?? emptyFor(c, pdfId)
+  const stored = await readStored(c, pdfId)
+  if (stored) return stored.sidecar
+  await dropInvalid(c, pdfId)
+  return emptyFor(c, pdfId)
 }
 
 /** The latest local sidecar (including an unsaved debounced edit), or an empty one. */
@@ -552,7 +579,7 @@ export function loadNotes(pdfId: string): Promise<NotesDoc> {
 
 async function persist<T>(c: Companion<T>, pdfId: string, doc: T): Promise<void> {
   await localLane(async () => {
-    const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    const stored = await readStored(c, pdfId)
     const merged = stored ? c.merge(doc, stored.sidecar) : doc
     const record: StoredCompanion<T> = { ...stored, sidecar: merged, dirty: true }
     await idbSet(c.store, pdfId, record)
@@ -632,7 +659,7 @@ async function locate<T>(c: Companion<T>, pdfId: string): Promise<DriveNode | un
   const paper = index?.papers[pdfId]
   const parent = index && paper && parentOf(index, paper)
   if (known || !paper || !parent) return known
-  const found = await findCompanionFile(pdfId, c.nameFor(paper.name), parent, c.tag)
+  const found = await findCompanionFile(pdfId, c.nameFor(paper.name), parent, c.tag, c.pdfKey)
   const current = library.peek()
   if (!found || !current || !has(current.papers, pdfId)) return found ?? undefined
   await commit(withCompanion(current, c, pdfId, found))
@@ -645,8 +672,7 @@ async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
   try {
     remote = await downloadJson<unknown>(id)
   } catch (err) {
-    // Unparseable content is foreign for a kind that validates; a kind that accepts anything keeps the error.
-    if (err instanceof SyntaxError && !c.accepts(undefined)) return { status: 'foreign' }
+    if (err instanceof SyntaxError && c.unparseableIsForeign) return { status: 'foreign' }
     throw err
   }
   if (c.newer(remote)) return { status: 'newer' }
@@ -658,7 +684,7 @@ async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveN
   const remote = await download(c, remoteNode.id)
   if (remote.status === 'newer') return null
   return localLane(async () => {
-    const latest = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    const latest = await readStored(c, pdfId)
     const seen = { remoteId: remoteNode.id, remoteVersion: remoteNode.version }
     if (remote.status === 'foreign') {
       const record: StoredCompanion<T> = { sidecar: latest?.sidecar ?? emptyFor(c, pdfId), ...seen, dirty: true }
@@ -679,7 +705,7 @@ async function refresh<T>(c: Companion<T>, pdfId: string): Promise<T | null> {
   const known = await locate(c, pdfId)
   if (!known) return null
   const remoteNode = await getNode(known.id)
-  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+  const stored = await readStored(c, pdfId)
   if (!remoteMoved(stored, remoteNode)) return null
   const merged = await mergeRemote(c, pdfId, remoteNode)
   const pending = pendingSaves.get(c.queueKey(pdfId))
@@ -710,7 +736,7 @@ async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
   try {
     for (const [pdfId, node] of Object.entries(c.map(index))) {
       try {
-        if (!remoteMoved(await idbGet<StoredCompanion<T>>(c.store, pdfId), node)) continue
+        if (!remoteMoved(await readStored(c, pdfId), node)) continue
         if ((await mergeRemote(c, pdfId, node)) !== null) pulled++
       } catch (err) {
         if (failureState(err).status === 'offline') throw err
@@ -743,7 +769,7 @@ async function pullSidecars(): Promise<void> {
 // Uploads one queued companion file, merging first if the remote moved, and records the new remote version; leaves it queued when the remote has a newer schema.
 async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
   const key = c.queueKey(pdfId)
-  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+  const stored = await readStored(c, pdfId)
   const index = library.peek()
   const paper = index?.papers[pdfId]
   if (!stored || (index && index.syncedAt > 0 && !paper)) {
@@ -769,13 +795,13 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
   }
   if (!node) {
     if (!paper || !parent) return
-    node = await createJsonFile(c.nameFor(paper.name), parent, body, { marginalia: c.tag, pdf: pdfId })
+    node = await createJsonFile(c.nameFor(paper.name), parent, body, { marginalia: c.tag, [c.pdfKey]: pdfId })
   }
   const current = library.peek()
   if (current) await commit(withCompanion(current, c, pdfId, node))
   const uploaded = node
   await localLane(async () => {
-    const latest = await idbGet<StoredCompanion<T>>(c.store, pdfId)
+    const latest = await readStored(c, pdfId)
     if (latest && JSON.stringify(latest.sidecar) !== JSON.stringify(stored.sidecar)) {
       const record: StoredCompanion<T> = { sidecar: c.merge(latest.sidecar, body), remoteId: uploaded.id, remoteVersion: uploaded.version, dirty: true }
       await idbSet(c.store, pdfId, record)

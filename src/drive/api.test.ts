@@ -148,14 +148,15 @@ describe('request shapes', () => {
     expect(node?.id).toBe('byName')
   })
 
-  test('findCompanionFile adds the marginalia tag to the tagged query', async () => {
-    const calls = mockFetch(() => json({ files: [rawFile('n', { appProperties: { marginalia: 'notes', pdf: 'pdf1' } })] }))
+  test('findCompanionFile queries by the given PDF key and adds the marginalia tag', async () => {
+    const calls = mockFetch(() => json({ files: [rawFile('n', { appProperties: { marginalia: 'notes', notesFor: 'pdf1' } })] }))
 
-    const node = await api.findCompanionFile('pdf1', 'x.marginalia-notes.json', 'folder', 'notes')
+    const node = await api.findCompanionFile('pdf1', 'x.marginalia-notes.json', 'folder', 'notes', 'notesFor')
 
     expect(calls).toHaveLength(1)
     const q = calls[0].url.searchParams.get('q')!
-    expect(q).toContain("key='pdf' and value='pdf1'")
+    expect(q).toContain("key='notesFor' and value='pdf1'")
+    expect(q).not.toContain("key='pdf'")
     expect(q).toContain("key='marginalia' and value='notes'")
     expect(node?.id).toBe('n')
   })

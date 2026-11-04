@@ -84,7 +84,7 @@ function remoteNotes(id: string, pdfId: string, parent: string, doc: NotesDoc, t
     name: `${pdfId}.marginalia-notes.json`,
     mimeType: 'application/json',
     parents: [parent],
-    appProperties: tagged ? { marginalia: 'notes', pdf: pdfId } : undefined,
+    appProperties: tagged ? { marginalia: 'notes', notesFor: pdfId } : undefined,
     content: JSON.stringify(doc),
   })
 }
@@ -559,6 +559,59 @@ describe('sidecars', () => {
     expect(stored!.sidecar).toEqual(merged)
     expect(await lib.loadSidecar('p1')).toEqual(merged)
   })
+
+  test('a stored sidecar record holding a notes document opens as an empty sidecar and is replaced on the next save', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'p1', { sidecar: withBlocks('p1', 'stray'), remoteId: 'n1', remoteVersion: '1', dirty: false })
+
+    expect(await lib.loadSidecar('p1')).toEqual(emptySidecar('p1', 'p1.pdf', 0))
+    expect(await idb.idbGet('sidecars', 'p1')).toBeUndefined()
+
+    await idb.idbSet('sidecars', 'p1', { sidecar: withBlocks('p1', 'stray'), remoteId: 'n1', remoteVersion: '1', dirty: false })
+    lib.saveSidecar('p1', withHighlights('p1', 'a'))
+    await lib.flushPendingWrites()
+    expect(await idb.idbGet<StoredSidecar>('sidecars', 'p1')).toEqual({ sidecar: withHighlights('p1', 'a'), dirty: true })
+
+    await lib.flushQueue()
+    const sidecarId = lib.library.value!.sidecars.p1.id
+    expect(drive.json<Sidecar>(sidecarId)).toEqual(withHighlights('p1', 'a'))
+    expect(await idb.idbGet<StoredSidecar>('sidecars', 'p1')).toMatchObject({ sidecar: withHighlights('p1', 'a'), dirty: false })
+  })
+
+  test('a queued sidecar record without highlights is never uploaded', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('sidecars', 'p1', { sidecar: withBlocks('p1', 'stray'), dirty: true })
+    await idb.idbSet('queue', 'p1', { queuedAt: 0 })
+
+    await lib.flushQueue()
+
+    expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(lib.syncState.value.status).toBe('idle')
+  })
+
+  test.each([
+    ['refreshSidecar', (l: Library) => l.refreshSidecar('p1')],
+    ['syncLibrary', (l: Library) => l.syncLibrary()],
+  ])('a downloaded sidecar body without highlights is never merged (%s)', async (_path, run) => {
+    paper('p1', 'root')
+    remoteSidecar('s1', 'p1', 'root', withHighlights('p1', 'theirs'))
+    await lib.setRootFolder(ROOT)
+    const local = withHighlights('p1', 'mine')
+    await idb.idbSet('sidecars', 'p1', { sidecar: local, remoteId: 's1', remoteVersion: '1', dirty: false })
+    const revision = lib.sidecarRevision.value
+    drive.update('s1', { content: JSON.stringify(withBlocks('p1', 'stray')) })
+
+    await run(lib)
+
+    expect(lib.sidecarRevision.value).toBe(revision)
+    expect(await lib.loadSidecar('p1')).toEqual(local)
+    await lib.flushQueue()
+    expect(drive.json<Sidecar>('s1')).toEqual(local)
+  })
+
 })
 
 describe('notes', () => {
@@ -590,7 +643,7 @@ describe('notes', () => {
     expect(drive.files.get(notesId)).toMatchObject({
       name: 'p1.marginalia-notes.json',
       parents: ['root'],
-      appProperties: { marginalia: 'notes', pdf: 'p1' },
+      appProperties: { marginalia: 'notes', notesFor: 'p1' },
     })
     expect(blockIds(drive.json<NotesDoc>(notesId))).toEqual(['a', 'b'])
     expect(lib.library.value!.sidecars).toEqual({})
@@ -777,6 +830,22 @@ describe('notes', () => {
     expect(await idb.idbKeys('queue')).toEqual([])
   })
 
+  test('a notes file carries notesFor and no pdf key, so a v1 sidecar lookup by the pdf key never returns it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    lib.saveNotes('p1', withBlocks('p1', 'a'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    const notesId = lib.library.value!.notes!.p1.id
+    expect(drive.files.get(notesId)!.appProperties).toEqual({ marginalia: 'notes', notesFor: 'p1' })
+    const q = "appProperties has { key='pdf' and value='p1' } and trashed = false"
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?${new URLSearchParams({ q })}`)
+    expect(((await res.json()) as { files: unknown[] }).files).toEqual([])
+    const api = await import('./api')
+    expect(await api.findSidecarFile('p1', 'p1.marginalia.json', 'root')).toBeNull()
+  })
+
   test.each([
     ['a sidecar body', '{"schema":1,"pdfId":"p1","highlights":[]}'],
     ['invalid JSON', '{"kind":"no'],
@@ -785,7 +854,7 @@ describe('notes', () => {
     await lib.setRootFolder(ROOT)
     const local = withBlocks('p1', 'mine')
     await idb.idbSet('notes', 'p1', { sidecar: local, dirty: false })
-    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', pdf: 'p1' }, content })
+    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', notesFor: 'p1' }, content })
 
     expect(await lib.refreshNotes('p1')).toBeNull()
     expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ sidecar: local, dirty: true })
@@ -801,7 +870,7 @@ describe('notes', () => {
   test('a notes file in a newer schema with no local notes creates nothing and uploads nothing', async () => {
     paper('p1', 'root')
     const newer = JSON.stringify({ ...withBlocks('p1', 'future'), schema: 2 })
-    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', pdf: 'p1' }, content: newer })
+    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', notesFor: 'p1' }, content: newer })
 
     await lib.setRootFolder(ROOT)
     expect(await lib.refreshNotes('p1')).toBeNull()
@@ -851,7 +920,7 @@ describe('notes', () => {
     expect(sessionPuts()).toHaveLength(1)
     expect(JSON.parse(sessionPuts()[0].body!)).toEqual(doc)
     const notesId = lib.library.value!.notes!.p1.id
-    expect(drive.files.get(notesId)).toMatchObject({ name: 'p1.marginalia-notes.json', appProperties: { marginalia: 'notes', pdf: 'p1' } })
+    expect(drive.files.get(notesId)).toMatchObject({ name: 'p1.marginalia-notes.json', appProperties: { marginalia: 'notes', notesFor: 'p1' } })
     expect(drive.json<NotesDoc>(notesId)).toEqual(doc)
     expect(await idb.idbKeys('queue')).toEqual([])
 

@@ -174,8 +174,12 @@ An ordered list of blocks plus an ink layer over the whole sheet.
 ### Storage and sync
 
 - A second companion file next to the PDF: `<pdf name>.marginalia-notes.json`, tagged
-  `appProperties { marginalia: "notes", pdf: <pdfFileId> }`. Images live inside it as base64,
-  so Drive holds one file per paper for notes and nothing else to manage.
+  `appProperties { marginalia: "notes", notesFor: <pdfFileId> }`. Images live inside it as base64,
+  so Drive holds one file per paper for notes and nothing else to manage. The notes file never
+  carries a `pdf` key: v1 finds a paper's sidecar by `pdf` alone, so a notes file tagged that way
+  would be read as the sidecar on a device still running v1.
+- v2 treats a stored or downloaded annotations record whose body has no `highlights` array as
+  absent: it opens as an empty sidecar, is never merged and is never uploaded.
 - The same local-first, debounce, queue, locate, merge and pull machinery as the sidecar,
   generalised by kind (parameterise `library.ts`; do not duplicate it). Its own debounce and
   queue entry, so a highlight edit never re-uploads images.

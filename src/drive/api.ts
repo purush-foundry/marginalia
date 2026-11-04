@@ -197,10 +197,16 @@ export async function updateJsonFile(id: string, body: unknown): Promise<DriveNo
   return toNode(raw)
 }
 
-/** An existing companion file of the given kind for the PDF: by its appProperties tag, else by name in the parent folder. */
-export async function findCompanionFile(pdfId: string, name: string, parentId: string, tag: '1' | 'notes'): Promise<DriveNode | null> {
+/** An existing companion file of the given kind for the PDF: by its appProperties tag and PDF key, else by name in the parent folder. */
+export async function findCompanionFile(
+  pdfId: string,
+  name: string,
+  parentId: string,
+  tag: '1' | 'notes',
+  pdfKey: 'pdf' | 'notesFor',
+): Promise<DriveNode | null> {
   const kind = tag === '1' ? '' : ` and appProperties has { key='marginalia' and value=${quote(tag)} }`
-  const tagged = await listAll(`appProperties has { key='pdf' and value=${quote(pdfId)} }${kind} and trashed = false`)
+  const tagged = await listAll(`appProperties has { key=${quote(pdfKey)} and value=${quote(pdfId)} }${kind} and trashed = false`)
   const match = tagged.find((node) => node.appProperties?.marginalia === tag)
   if (match) return match
   const [named] = await listAll(`name = ${quote(name)} and ${quote(parentId)} in parents and trashed = false`)
@@ -209,7 +215,7 @@ export async function findCompanionFile(pdfId: string, name: string, parentId: s
 
 /** An existing sidecar for the PDF: by appProperties.pdf, else by name in the parent folder. */
 export function findSidecarFile(pdfId: string, name: string, parentId: string): Promise<DriveNode | null> {
-  return findCompanionFile(pdfId, name, parentId, '1')
+  return findCompanionFile(pdfId, name, parentId, '1', 'pdf')
 }
 
 export async function getStartPageToken(): Promise<string> {

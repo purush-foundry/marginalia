@@ -18,7 +18,7 @@
 - Commit messages end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - Checks: `export PATH="$HOME/.local/node/bin:$PATH"; npx tsc -b && npx vitest run && npm run build`.
 - Shared types live in `src/types.ts`; only Task 4 edits it. Page annotations stay normalised to the unrotated page (`Box`, x/y/w/h in [0, 1]); pages are 1-based. Notes ink is in sheet units: x and y both divided by the sheet width.
-- Drive scopes exactly `https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file`. Sidecar `<pdf name without .pdf>.marginalia.json`, `appProperties { marginalia: "1", pdf }`; notes `<pdf name without .pdf>.marginalia-notes.json`, `appProperties { marginalia: "notes", pdf }`, both in the PDF's folder.
+- Drive scopes exactly `https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file`. Sidecar `<pdf name without .pdf>.marginalia.json`, `appProperties { marginalia: "1", pdf }`; notes `<pdf name without .pdf>.marginalia-notes.json`, `appProperties { marginalia: "notes", notesFor }` (never a `pdf` key, which v1 reads as the sidecar's), both in the PDF's folder.
 - Touch targets ≥ 44 px. Everything works with mouse, touch and pen. No CSS framework, no icon fonts (inline SVG), no web fonts. The notes sheet lives in the lazy reader chunk.
 - A task edits only the files its **Files** block names (plus its tests). `Toolbar.tsx` and `Reader.tsx` are edited by Task 7 only, except the line ranges Tasks 1 and 6 name. `README.md` and `docs/testing.md` are edited by Task 7 only (parallel tasks would conflict); Task 7's doc step carries every task's lines.
 
@@ -428,7 +428,7 @@ export function isNotesDoc(x: unknown): x is NotesDoc                           
   - `src/lib/order.ts`: `orderBetween(a: string | null, b: string | null): string` (a key strictly between; `null` is an open end; when `b` is not greater than `a` it is treated as `null`); `compareOrder(x: { order: string; id: string }, y: { order: string; id: string }): number` (by `order` with plain `<` on code units, then `id`).
   - `src/drive/merge.ts`: `mergeNotes(a: NotesDoc, b: NotesDoc): NotesDoc` — blocks and strokes per id with the existing `winner`/`mergeItems` rule (newest `updatedAt`, tombstone wins ties); background and `backgroundUpdatedAt` from the newer `backgroundUpdatedAt`; `pdfName` from the more recently touched doc.
   - `src/lib/idb.ts`: `StoreName` adds `'notes'` (records `{ sidecar: NotesDoc, remoteId?, remoteVersion?, dirty }` — the v1 record field name, so both stores share one shape).
-  - `src/drive/api.ts`: `findCompanionFile(pdfId: string, name: string, parentId: string, tag: '1' | 'notes'): Promise<DriveNode | null>` (the tagged query adds `appProperties has { key='marginalia' and value='<tag>' }`); `findSidecarFile(pdfId, name, parentId)` stays and calls it with `'1'`; `SIMPLE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024` — `createJsonFile`/`updateJsonFile` keep their signatures and use a resumable session (`uploadType=resumable`, metadata request, then `PUT` of the body to the `Location` URL) when the UTF-8 body exceeds it.
+  - `src/drive/api.ts`: `findCompanionFile(pdfId: string, name: string, parentId: string, tag: '1' | 'notes', pdfKey: 'pdf' | 'notesFor'): Promise<DriveNode | null>` (the tagged query is `appProperties has { key='<pdfKey>' and value='<pdfId>' }`, and for notes adds `appProperties has { key='marginalia' and value='<tag>' }`); `findSidecarFile(pdfId, name, parentId)` stays and calls it with `'1', 'pdf'`; `SIMPLE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024` — `createJsonFile`/`updateJsonFile` keep their signatures and use a resumable session (`uploadType=resumable`, metadata request, then `PUT` of the body to the `Location` URL) when the UTF-8 body exceeds it.
   - `src/drive/library.ts`: every existing export keeps its signature (`loadSidecar`, `saveSidecar`, `refreshSidecar`, `flushPendingWrites`, `flushQueue`, `syncLibrary`, `sidecarNameFor`, …; `pullSidecars` stays internal and now pulls both kinds). New: `notesNameFor(pdfName: string): string`; `loadNotes(pdfId: string): Promise<NotesDoc>` (pending edit, else local record, else `emptyNotes(pdfId, name, 0)`); `saveNotes(pdfId: string, doc: NotesDoc): void` (debounced `SIDECAR_SAVE_DEBOUNCE_MS`, its own pending entry); `refreshNotes(pdfId: string): Promise<NotesDoc | null>`. `flushPendingWrites` writes both kinds.
 
 **Library design (decided):** one internal descriptor per kind drives every function that today takes a sidecar:
@@ -438,12 +438,14 @@ interface Companion<T> {
   kind: 'annotations' | 'notes'
   store: 'sidecars' | 'notes'
   tag: '1' | 'notes'
+  pdfKey: 'pdf' | 'notesFor'                 // the appProperties key holding the PDF id: lookup, creation and index attach
   nameFor(pdfName: string): string
   queueKey(pdfId: string): string            // annotations: pdfId (v1 queue entries stay valid); notes: `notes:${pdfId}`
   map(index: LibraryIndex): Record<string, DriveNode>   // index.sidecars / index.notes ?? {}
   empty(pdfId: string, pdfName: string): T
   merge(a: T, b: T): T
-  accepts(remote: unknown): remote is T      // annotations: always true (v1 behaviour); notes: isNotesDoc
+  accepts(remote: unknown): remote is T      // annotations: has a highlights array; notes: isNotesDoc (also applied to stored records)
+  unparseableIsForeign: boolean              // annotations: false (a parse error is a failure); notes: true
   label: string                              // 'annotation' | 'notes', for syncState messages
 }
 ```
@@ -501,13 +503,13 @@ Expected: PASS.
 
 - [ ] **Step 5: Write the failing sync tests in `src/drive/library.test.ts` (and `api.test.ts`)**
 
-Add `remoteNotes(id, pdfId, parent, doc, tagged = true)` beside `remoteSidecar` (name `${pdfId}.marginalia-notes.json`, `appProperties { marginalia: 'notes', pdf }`). In `describe('notes')`:
+Add `remoteNotes(id, pdfId, parent, doc, tagged = true)` beside `remoteSidecar` (name `${pdfId}.marginalia-notes.json`, `appProperties { marginalia: 'notes', notesFor }`). In `describe('notes')`:
 
 ```ts
 test('notesNameFor swaps .pdf for .marginalia-notes.json', ...)          // 'Attention.pdf' → 'Attention.marginalia-notes.json'
 test('loadNotes returns empty notes for an unseen paper', ...)
 test('saveNotes debounces into IndexedDB and flushQueue creates the notes file, then updates it', ...)
-  // created file: name, parent, appProperties { marginalia: 'notes', pdf: 'p1' }; second save PATCHes the same id; queue empty
+  // created file: name, parent, appProperties { marginalia: 'notes', notesFor: 'p1' } and no `pdf` key; second save PATCHes the same id; queue empty
 test('the full walk maps notes files to index.notes and never to index.sidecars', ...)  // tagged and name-only
 test('refreshNotes finds an unindexed notes file by tag without matching the sidecar', ...)
 test('flushQueue merges a notes file that moved remotely before uploading', ...)

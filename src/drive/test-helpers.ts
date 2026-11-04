@@ -122,15 +122,13 @@ export class FakeDrive {
     if (path === '/drive/v3/files' && method === 'GET') {
       const q = params.get('q')!
       const parents = [...q.matchAll(/'([^']+)' in parents/g)].map((m) => m[1])
-      const tag = q.match(/appProperties has \{ key='pdf' and value='([^']+)' \}/)?.[1]
-      const kind = q.match(/appProperties has \{ key='marginalia' and value='([^']+)' \}/)?.[1]
+      const props = [...q.matchAll(/appProperties has \{ key='([^']+)' and value='([^']+)' \}/g)].map((m) => [m[1], m[2]])
       const name = q.match(/name = '([^']+)'/)?.[1]
       const files = [...this.files.values()].filter(
         (f) =>
           !f.trashed &&
           (!parents.length || f.parents.some((p) => parents.includes(p))) &&
-          (!tag || f.appProperties?.pdf === tag) &&
-          (!kind || f.appProperties?.marginalia === kind) &&
+          props.every(([key, value]) => f.appProperties?.[key] === value) &&
           (!name || f.name === name),
       )
       return json({ files: files.map((f) => this.raw(f)) })
