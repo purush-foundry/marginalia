@@ -418,6 +418,104 @@ describe('InkLayer live render', () => {
       strokeOutlinePath([...px, ...predictedPx], W * 200, false, 'fountain', { start: true, end: true }),
     )
   })
+
+  describe('draw-and-hold', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // Pen samples every `step` px along a polyline, at pressure 0.3.
+    const along = (vertices: [number, number][], step: number) => {
+      const out: { x: number; y: number; pressure: number }[] = [{ x: vertices[0][0], y: vertices[0][1], pressure: 0.3 }]
+      for (let v = 0; v + 1 < vertices.length; v++) {
+        const [[ax, ay], [bx, by]] = [vertices[v], vertices[v + 1]]
+        const n = Math.round(Math.hypot(bx - ax, by - ay) / step)
+        for (let k = 1; k <= n; k++) out.push({ x: ax + ((bx - ax) * k) / n, y: ay + ((by - ay) * k) / n, pressure: 0.3 })
+      }
+      return out
+    }
+    const draw = (text: HTMLElement, samples: { x: number; y: number; pressure: number }[]) => {
+      text.dispatchEvent(pointer('pointerdown', samples[0]))
+      text.dispatchEvent(pointer('pointermove', { ...samples.at(-1)!, coalesced: samples.slice(1) }))
+    }
+    const pressures = (points: number[]) => points.filter((_, i) => i % 3 === 2)
+    const outline = (px: number[], cssW: number) => strokeOutlinePath(px, W * cssW, false, 'fountain')
+
+    it('holding still 500 ms at the end of a stroke replaces it with the fitted shape', async () => {
+      const text = await mount({ cssW: 400, cssH: 800 })
+      draw(text, along([[20, 40], [380, 40]], 1))
+      flush()
+      expect(ctx.fill).toHaveBeenCalledTimes(2)
+      vi.advanceTimersByTime(300)
+      text.dispatchEvent(pointer('pointermove', { x: 383, y: 40, pressure: 0.3 }))
+      vi.advanceTimersByTime(199)
+      flush()
+      ctx.fill.mockClear()
+      vi.advanceTimersByTime(1)
+      flush()
+      expect(ctx.fill).toHaveBeenCalledTimes(1)
+      const live = paths.at(-1)!
+      expect(live).toBe(outline([20, 40, 0.5, 383, 40, 0.5], 400))
+      text.dispatchEvent(pointer('pointerup', { x: 383, y: 40, pressure: 0 }))
+      expect(added).toHaveLength(1)
+      expect(added[0].points).toEqual([0.05, 0.05, 0.5, 383 / 400, 0.05, 0.5])
+      await mount({ cssW: 400, cssH: 800, strokes: added })
+      expect(layer.querySelector('svg path')!.getAttribute('d')).toBe(live)
+    })
+
+    it('moving while held rescales and rotates the shape; lifting commits one stroke', async () => {
+      usePen('#2f6fed', 0.5)
+      const text = await mount()
+      draw(text, along([[20, 40], [100, 40]], 5))
+      vi.advanceTimersByTime(500)
+      text.dispatchEvent(pointer('pointermove', { x: 20, y: 200, pressure: 0.3 }))
+      flush()
+      expect(paths.at(-1)).toBe(outline([20, 40, 0.5, 20, 200, 0.5], 200))
+      text.dispatchEvent(pointer('pointerup', { x: 20, y: 200, pressure: 0 }))
+      expect(added).toHaveLength(1)
+      expect(added[0]).toMatchObject({ tool: 'pen', pen: 'fountain', color: '#2f6fed', width: W })
+      expect(added[0].points).toEqual([0.1, 0.1, 0.5, 0.1, 0.5, 0.5])
+    })
+
+    it('moving more than 4 px before 500 ms keeps drawing freehand', async () => {
+      const text = await mount()
+      draw(text, along([[20, 40], [100, 40]], 5))
+      vi.advanceTimersByTime(400)
+      text.dispatchEvent(pointer('pointermove', { x: 105, y: 40, pressure: 0.3 }))
+      vi.advanceTimersByTime(400)
+      text.dispatchEvent(pointer('pointerup', { x: 105, y: 40, pressure: 0 }))
+      expect(new Set(pressures(added[0].points))).toEqual(new Set([0.3]))
+      expect(added[0].points.at(-3)).toBe(105 / 200)
+    })
+
+    it('draw-and-hold is off when penSettings.drawAndHold is false', async () => {
+      penSettings.value = { ...DEFAULT_PEN_SETTINGS, drawAndHold: false }
+      const text = await mount()
+      draw(text, along([[20, 40], [100, 40]], 5))
+      vi.advanceTimersByTime(1000)
+      text.dispatchEvent(pointer('pointerup', { x: 100, y: 40, pressure: 0 }))
+      expect(new Set(pressures(added[0].points))).toEqual(new Set([0.3]))
+    })
+
+    it('the highlighter snaps too', async () => {
+      setTool('highlighter')
+      const text = await mount()
+      draw(text, along([[60, 40], [140, 40], [140, 120], [40, 120], [40, 40], [60, 40]], 2))
+      vi.advanceTimersByTime(500)
+      flush()
+      const rectangle = [140, 40, 140, 120, 40, 120, 40, 40, 140, 40].flatMap((v, i) =>
+        i % 2 === 0 ? [v / 200] : [v / 400, 0.5],
+      )
+      expect(paths.at(-1)).toBe(highlighterPath(rectangle, 200, 400))
+      text.dispatchEvent(pointer('pointerup', { x: 60, y: 40 }))
+      expect(added).toHaveLength(1)
+      expect(added[0].tool).toBe('highlighter')
+      expect(added[0].points).toEqual(rectangle)
+    })
+  })
 })
 
 describe('InkLayer touch', () => {

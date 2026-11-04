@@ -12,6 +12,7 @@ import {
   strokeOutlinePath,
 } from './geometry.ts'
 import { createLiveOutline, type LiveOutline } from './liveOutline.ts'
+import { adjustShape, fitShape, HOLD_MS, HOLD_SLOP_PX, type Shape } from './shapes.ts'
 import {
   A4_WIDTH_MM,
   activeColor,
@@ -82,6 +83,13 @@ interface EraseContact {
   iso: Map<string, IsoStroke>
 }
 
+// A snapped shape: the fit in CSS px, the pointer position it adjusts from, and its current normalised points.
+interface HeldShape {
+  fit: Shape
+  from: [number, number]
+  points: number[]
+}
+
 interface LiveStroke {
   pointerId: number
   pointerType: string
@@ -100,6 +108,9 @@ interface LiveStroke {
   outline: LiveOutline
   chunks: Path2D[]
   real: boolean
+  holds: boolean
+  rest: [number, number] | null
+  shape: HeldShape | null
 }
 
 type SafariTouch = Touch & { touchType?: string }
@@ -245,6 +256,7 @@ export function InkLayer(props: InkLayerProps) {
     let tapOrigin = new Map<number, [number, number]>()
     let lastTapEnd = -Infinity
     let lastTapFingers = 0
+    let holdTimer: ReturnType<typeof setTimeout> | undefined
 
     const clearCanvas = () => {
       const canvas = canvasRef.current
@@ -287,7 +299,7 @@ export function InkLayer(props: InkLayerProps) {
     const highlighterFrame = (s: LiveStroke, ctx: CanvasRenderingContext2D) => {
       const { cssW, cssH } = propsRef.current
       const stored = highlighterSamples(s)
-      const points = highlighterSettings.peek().straight ? stored : stored.concat(s.predicted)
+      const points = s.shape?.points ?? (highlighterSettings.peek().straight ? stored : stored.concat(s.predicted))
       ctx.globalAlpha = HIGHLIGHTER_ALPHA
       ctx.strokeStyle = inkDisplayColor(s.color, paperIsDark(propsRef.current))
       ctx.lineWidth = s.width * cssW
@@ -307,9 +319,9 @@ export function InkLayer(props: InkLayerProps) {
         highlighterFrame(s, s.ctx)
         return
       }
-      const stored = simplifyPoints(s.points, SIMPLIFY_PX / cssW)
+      const stored = s.shape?.points ?? simplifyPoints(s.points, SIMPLIFY_PX / cssW)
       s.real = pressureVaries(stored)
-      const { frozen, tail } = s.outline.update(cssPx(stored, cssW, cssH), cssPx(s.predicted, cssW, cssH))
+      const { frozen, tail } = s.outline.update(cssPx(stored, cssW, cssH), s.shape ? [] : cssPx(s.predicted, cssW, cssH))
       for (let i = s.chunks.length; i < frozen.length; i++) s.chunks.push(new Path2D(frozen[i]))
       s.ctx.fillStyle = inkDisplayColor(s.color, paperIsDark(propsRef.current))
       for (const chunk of s.chunks) s.ctx.fill(chunk)
@@ -343,6 +355,7 @@ export function InkLayer(props: InkLayerProps) {
 
     const discard = () => {
       if (live?.tool === 'eraser') finishErase(live.erase)
+      clearTimeout(holdTimer)
       if (frameId) cancelAnimationFrame(frameId)
       frameId = 0
       live = null
@@ -485,13 +498,54 @@ export function InkLayer(props: InkLayerProps) {
       pressureOf(s, e),
     ]
 
+    // A fresh chunked live outline for the stroke, drawn by the committed strokes' outline code.
+    const outlineOf = (stroke: () => LiveStroke) =>
+      createLiveOutline((pts, ends, length) => {
+        const s = stroke()
+        return strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, s.pen, ends, length)
+      })
+
+    // Normalised points of a shape fitted in CSS px.
+    const normalised = (shape: Shape): number[] => {
+      const { cssW, cssH } = propsRef.current
+      return shape.points.map((v, i) => (i % 3 === 0 ? clamp01(v / cssW) : i % 3 === 1 ? clamp01(v / cssH) : v))
+    }
+
+    // Replaces the live stroke by its fitted shape, if one fits, and drops the freehand chunks.
+    const snap = (s: LiveStroke) => {
+      if (live !== s) return
+      const { cssW, cssH } = propsRef.current
+      const fit = fitShape(cssPx(s.points, cssW, cssH))
+      if (!fit) return
+      const n = s.points.length
+      s.shape = { fit, from: [s.points[n - 3] * cssW, s.points[n - 2] * cssH], points: normalised(fit) }
+      s.chunks = []
+      s.outline = outlineOf(() => s)
+      schedule()
+    }
+
+    // Restarts the hold timer whenever the pointer moves more than HOLD_SLOP_PX from where it rested.
+    const watchHold = (s: LiveStroke, e: PointerEvent) => {
+      if (!s.holds || s.shape) return
+      if (s.rest && Math.hypot(e.clientX - s.rest[0], e.clientY - s.rest[1]) <= HOLD_SLOP_PX) return
+      s.rest = [e.clientX, e.clientY]
+      clearTimeout(holdTimer)
+      holdTimer = setTimeout(() => snap(s), HOLD_MS)
+    }
+
     const addSample = (s: LiveStroke, e: PointerEvent) => {
       const [x, y, pressure] = sampleOf(s, e)
       if (s.tool === 'eraser') {
         eraseAt(s, x, y)
         return
       }
-      s.points.push(x, y, pressure)
+      if (s.shape) {
+        const { cssW, cssH } = propsRef.current
+        s.shape.points = normalised(adjustShape(s.shape.fit, s.shape.from, [x * cssW, y * cssH]))
+      } else {
+        s.points.push(x, y, pressure)
+        watchHold(s, e)
+      }
       schedule()
     }
 
@@ -571,11 +625,12 @@ export function InkLayer(props: InkLayerProps) {
           iso: new Map(),
         },
         ctx: ink ? openCanvas() : null,
-        outline: createLiveOutline((pts, ends, length) =>
-          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, s.pen, ends, length),
-        ),
+        outline: outlineOf(() => s),
         chunks: [],
         real: false,
+        holds: ink !== null && penSettings.peek().drawAndHold,
+        rest: null,
+        shape: null,
       }
       canvasRef.current?.classList.toggle('mg-multiply', kind === 'highlighter' && !paperIsDark(p))
       live = s
@@ -616,7 +671,8 @@ export function InkLayer(props: InkLayerProps) {
         return
       }
       const { page, cssW, onAddStroke } = propsRef.current
-      const points = s.tool === 'highlighter' ? highlighterSamples(s) : simplifyPoints(s.points, SIMPLIFY_PX / cssW)
+      const points =
+        s.shape?.points ?? (s.tool === 'highlighter' ? highlighterSamples(s) : simplifyPoints(s.points, SIMPLIFY_PX / cssW))
       discard()
       if (points.length === 0) return
       const t = now()
