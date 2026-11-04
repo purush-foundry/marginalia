@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LIBRARY_SYNC_INTERVAL_MS, PDF_CACHE_LIMIT_BYTES, SIDECAR_SAVE_DEBOUNCE_MS } from '../config'
 import { FIRST_PAGE_ID, convertV1, emptyNotebook, isNotebookDoc, type ImageObject, type NotesDocV2, type TextObject } from '../notes/model'
 import { FOLDER_MIME, PDF_MIME, emptyNotes, emptySidecar, type AreaHighlight, type NotesDoc, type Sidecar, type TextBlock } from '../types'
+import { FakeIndexedDb } from '../lib/test-idb'
 import { FakeDrive, driveError, signIn } from './test-helpers'
 
 type Library = typeof import('./library')
@@ -642,7 +643,7 @@ describe('notes', () => {
 
     lib.saveNotebook('p1', withTexts('p1', 'a'))
     lib.saveNotebook('p1', withTexts('p1', 'a', 'b'))
-    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(await idb.idbGet('notebooks', 'p1')).toBeUndefined()
     expect(textIds(await lib.loadNotebook('p1'))).toEqual(['a', 'b'])
     await vi.advanceTimersByTimeAsync(SIDECAR_SAVE_DEBOUNCE_MS)
     await lib.flushQueue()
@@ -656,7 +657,7 @@ describe('notes', () => {
     })
     expect(textIds(drive.json<NotesDocV2>(notesId))).toEqual(['a', 'b'])
     expect(lib.library.value!.sidecars).toEqual({})
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false, remoteVersion: '1' })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ dirty: false, remoteVersion: '1' })
     expect(await idb.idbKeys('queue')).toEqual([])
 
     lib.saveNotebook('p1', withTexts('p1', 'a', 'b', 'c'))
@@ -666,7 +667,7 @@ describe('notes', () => {
     expect(drive.calls.filter((c) => c.method === 'POST')).toHaveLength(1)
     expect(drive.calls.filter((c) => c.method === 'PATCH').map((c) => c.url.pathname)).toEqual([`/upload/drive/v3/files/${notesId}`])
     expect(textIds(drive.json<NotesDocV2>(notesId))).toEqual(['a', 'b', 'c'])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
     expect(await idb.idbKeys('queue')).toEqual([])
   })
 
@@ -736,7 +737,7 @@ describe('notes', () => {
     await lib.flushQueue()
 
     expect(textIds(drive.json<NotesDocV2>('n1'))).toEqual(['a', 'local', 'remote'])
-    const stored = await idb.idbGet<StoredNotes>('notes', 'p1')
+    const stored = await idb.idbGet<StoredNotes>('notebooks', 'p1')
     expect(textIds(stored!.sidecar)).toEqual(['a', 'local', 'remote'])
     expect(stored).toMatchObject({ dirty: false, remoteVersion: '3' })
   })
@@ -750,7 +751,7 @@ describe('notes', () => {
     lib.saveNotebook('p1', withTexts('p1', 'a'))
     await lib.flushPendingWrites()
 
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: true })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ dirty: true })
     expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
     expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
 
@@ -759,7 +760,7 @@ describe('notes', () => {
 
     expect(textIds(drive.json<NotesDocV2>(lib.library.value!.notes!.p1.id))).toEqual(['a'])
     expect(await idb.idbKeys('queue')).toEqual([])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ dirty: false })
   })
 
   test('a sidecar edit never re-uploads the notes file', async () => {
@@ -787,7 +788,7 @@ describe('notes', () => {
     remoteNotes('n1', 'p1', 'root', withTexts('p1', 'a'))
     await lib.setRootFolder(ROOT)
     expect(textIds(await lib.loadNotebook('p1'))).toEqual(['a'])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: false })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: false })
 
     const theirs = withTexts('p1', 'a', 'b')
     theirs.pages = [{ ...theirs.pages[0], template: 'grid', updatedAt: 4 }]
@@ -808,7 +809,7 @@ describe('notes', () => {
     await lib.setRootFolder(ROOT)
 
     expect((await lib.loadSidecar('p1')).highlights.map((h) => h.id)).toEqual(['h'])
-    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(await idb.idbGet('notebooks', 'p1')).toBeUndefined()
     expect(lib.syncState.value.message).toContain('1 notes download(s) failed')
   })
 
@@ -818,7 +819,7 @@ describe('notes', () => {
     drive.failWhen.push((call) => (call.method === 'POST' ? driveError(500, 'backendError') : undefined))
     await idb.idbSet('sidecars', 'p1', { sidecar: withHighlights('p1', 'a'), dirty: true })
     await idb.idbSet('queue', 'p1', { queuedAt: 0 })
-    await idb.idbSet('notes', 'p1', { sidecar: withTexts('p1', 'a'), dirty: true })
+    await idb.idbSet('notebooks', 'p1', { sidecar: withTexts('p1', 'a'), dirty: true })
     await idb.idbSet('queue', 'notes:p1', { queuedAt: 0 })
 
     await lib.flushQueue()
@@ -864,11 +865,11 @@ describe('notes', () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
     const local = withTexts('p1', 'mine')
-    await idb.idbSet('notes', 'p1', { sidecar: local, dirty: false })
+    await idb.idbSet('notebooks', 'p1', { sidecar: local, dirty: false })
     drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', notesFor: 'p1' }, content })
 
     expect(await lib.refreshNotebook('p1')).toBeNull()
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ sidecar: local, dirty: true })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ sidecar: local, dirty: true })
     expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
 
     await lib.flushQueue()
@@ -887,7 +888,7 @@ describe('notes', () => {
     expect(await lib.refreshNotebook('p1')).toBeNull()
     await lib.flushQueue()
 
-    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(await idb.idbGet('notebooks', 'p1')).toBeUndefined()
     expect(await idb.idbKeys('queue')).toEqual([])
     expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
     expect(drive.files.get('n1')!.content).toBe(newer)
@@ -909,7 +910,7 @@ describe('notes', () => {
     expect(drive.files.get('n1')!.content).toBe(newer)
     expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
     expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
-    const stored = await idb.idbGet<StoredNotes>('notes', 'p1')
+    const stored = await idb.idbGet<StoredNotes>('notebooks', 'p1')
     expect(stored).toMatchObject({ dirty: true, remoteVersion: '1' })
     expect(textIds(stored!.sidecar)).toEqual(['a', 'mine'])
     expect(lib.syncState.value.status).toBe('idle')
@@ -953,11 +954,11 @@ describe('notes', () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
     const v1 = { ...withBlocks('p1', 'a', 'b'), background: 'grid' as const }
-    await idb.idbSet('notes', 'p1', { sidecar: v1, dirty: false })
+    await idb.idbSet('notebooks', 'p1', { sidecar: v1, dirty: false })
 
     expect(await lib.loadNotebook('p1')).toEqual(convertV1(v1))
     expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ sidecar: convertV1(v1), dirty: true })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ sidecar: convertV1(v1), dirty: true })
 
     await lib.flushQueue()
 
@@ -965,18 +966,18 @@ describe('notes', () => {
     expect(isNotebookDoc(uploaded)).toBe(true)
     expect(uploaded).toEqual(convertV1(v1))
     expect(await idb.idbKeys('queue')).toEqual([])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ sidecar: convertV1(v1), dirty: false })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ sidecar: convertV1(v1), dirty: false })
   })
 
   test('a schema-1 remote is converted, merged and uploaded as schema 2', async () => {
     paper('p1', 'root')
     const v1 = withBlocks('p1', 'a', 'b')
     remoteNotes('n1', 'p1', 'root', v1)
-    await idb.idbSet('notes', 'p1', { sidecar: { ...withTexts('p1'), texts: [note('mine', 9)] }, dirty: false })
+    await idb.idbSet('notebooks', 'p1', { sidecar: { ...withTexts('p1'), texts: [note('mine', 9)] }, dirty: false })
 
     await lib.setRootFolder(ROOT)
 
-    const stored = await idb.idbGet<StoredNotes>('notes', 'p1')
+    const stored = await idb.idbGet<StoredNotes>('notebooks', 'p1')
     expect(stored).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: true })
     expect(textIds(stored!.sidecar)).toEqual(['a', 'b', 'mine'])
     expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
@@ -988,13 +989,13 @@ describe('notes', () => {
     expect(textIds(uploaded)).toEqual(['a', 'b', 'mine'])
     expect(uploaded.pages.map((p) => p.id)).toEqual([FIRST_PAGE_ID])
     expect(await idb.idbKeys('queue')).toEqual([])
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
   })
 
   test('a schema-2 remote merges into local notes', async () => {
     paper('p1', 'root')
     await lib.setRootFolder(ROOT)
-    await idb.idbSet('notes', 'p1', { sidecar: withTexts('p1', 'mine'), dirty: true })
+    await idb.idbSet('notebooks', 'p1', { sidecar: withTexts('p1', 'mine'), dirty: true })
     await idb.idbSet('queue', 'notes:p1', { queuedAt: 0 })
     const theirs = { ...withTexts('p1'), texts: [note('theirs', 7)] }
     remoteNotes('n1', 'p1', 'root', theirs)
@@ -1003,7 +1004,7 @@ describe('notes', () => {
 
     expect(textIds(merged!)).toEqual(['mine', 'theirs'])
     expect(isNotebookDoc(merged)).toBe(true)
-    expect(await idb.idbGet<StoredNotes>('notes', 'p1')).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: true })
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toMatchObject({ remoteId: 'n1', remoteVersion: '1', dirty: true })
     await lib.flushQueue()
     expect(textIds(drive.json<NotesDocV2>('n1'))).toEqual(['mine', 'theirs'])
   })
@@ -1020,7 +1021,7 @@ describe('notes', () => {
     remote.texts = remote.texts.map((t) => (t.id === 't1' ? { ...t, text: 'edited elsewhere', updatedAt: 50 } : t))
     drive.update('n1', { content: JSON.stringify(remote) })
     const local: NotesDoc = { ...base, blocks: [...base.blocks, { ...block('local', 40), order: 'z' }] }
-    await idb.idbSet('notes', 'p1', { sidecar: local, remoteId: 'n1', remoteVersion: '1', dirty: true })
+    await idb.idbSet('notebooks', 'p1', { sidecar: local, remoteId: 'n1', remoteVersion: '1', dirty: true })
     await idb.idbSet('queue', 'notes:p1', { queuedAt: 0 })
 
     await lib.flushQueue()
@@ -1034,6 +1035,27 @@ describe('notes', () => {
     expect(uploaded.strokes.map((s) => s.id)).toEqual(['s1'])
     expect(await idb.idbKeys('queue')).toEqual([])
     expect(await lib.loadNotebook('p1')).toEqual(uploaded)
+  })
+})
+
+describe('notebooks beside an older client on the same device', () => {
+  test('loadNotebook reads the copy upgraded into notebooks and never what an older client writes to notes', async () => {
+    const fake = new FakeIndexedDb()
+    const mine = withTexts('p1', 'mine')
+    fake.seed('marginalia', 2, { files: {}, sidecars: {}, settings: {}, meta: {}, queue: { 'notes:p1': { queuedAt: 1 } }, notes: { p1: { sidecar: mine, dirty: true } } })
+    vi.stubGlobal('indexedDB', fake)
+    vi.resetModules()
+    lib = await import('./library')
+    idb = await import('../lib/idb')
+
+    expect(await lib.loadNotebook('p1')).toEqual(mine)
+
+    fake.databases.get('marginalia')!.data.get('notes')!.set('p1', { sidecar: withBlocks('p1', 'theirs'), dirty: false })
+    expect(await lib.loadNotebook('p1')).toEqual(mine)
+    fake.databases.get('marginalia')!.data.get('notes')!.delete('p1')
+    expect(await lib.loadNotebook('p1')).toEqual(mine)
+    expect(await idb.idbGet<StoredNotes>('notebooks', 'p1')).toEqual({ sidecar: mine, dirty: true })
+    expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
   })
 })
 

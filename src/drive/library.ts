@@ -62,7 +62,8 @@ interface StoredCompanion<T> {
 /** One kind of per-PDF companion file and how it is named, stored, indexed, merged, validated and upgraded. */
 interface Companion<T> {
   kind: 'annotations' | 'notes'
-  store: 'sidecars' | 'notes'
+  store: 'sidecars' | 'notebooks'
+  indexKey: 'sidecars' | 'notes'
   tag: '1' | 'notes'
   pdfKey: 'pdf' | 'notesFor'
   nameFor(pdfName: string): string
@@ -118,6 +119,7 @@ function isSidecarDoc(x: unknown): x is Sidecar {
 const ANNOTATIONS: Companion<Sidecar> = {
   kind: 'annotations',
   store: 'sidecars',
+  indexKey: 'sidecars',
   tag: '1',
   pdfKey: 'pdf',
   nameFor: sidecarNameFor,
@@ -134,7 +136,8 @@ const ANNOTATIONS: Companion<Sidecar> = {
 
 const NOTEBOOK: Companion<NotesDocV2> = {
   kind: 'notes',
-  store: 'notes',
+  store: 'notebooks',
+  indexKey: 'notes',
   tag: 'notes',
   pdfKey: 'notesFor',
   nameFor: notesNameFor,
@@ -212,7 +215,7 @@ function attachCompanion(index: LibraryIndex, node: DriveNode): void {
       : Object.values(index.papers).find(
           (p) => c.nameFor(p.name) === node.name && p.parents.some((id) => node.parents.includes(id)),
         )?.id
-  if (pdfId) (index[c.store] ??= {})[pdfId] = node
+  if (pdfId) (index[c.indexKey] ??= {})[pdfId] = node
 }
 
 // The home picture slot of a file directly in the root folder, if its name is one.
@@ -670,7 +673,7 @@ function parentOf(index: LibraryIndex, paper: DriveNode): string | undefined {
 
 // The index with `node` recorded as the paper's companion file of the kind.
 function withCompanion(index: LibraryIndex, c: Companion<unknown>, pdfId: string, node: DriveNode): LibraryIndex {
-  return { ...index, [c.store]: { ...c.map(index), [pdfId]: node } }
+  return { ...index, [c.indexKey]: { ...c.map(index), [pdfId]: node } }
 }
 
 // The paper's companion node of the kind from the index, else found in Drive and recorded in the index.
