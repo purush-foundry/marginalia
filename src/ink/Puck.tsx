@@ -14,6 +14,7 @@ const DRAG_PX = 8
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
 interface Gesture {
+  pointerId: number
   startY: number
   startFraction: number
   dragging: boolean
@@ -66,13 +67,14 @@ export function Puck({ visible }: { visible: boolean }) {
 
   const onDown = (e: PointerEvent) => {
     e.stopPropagation()
+    if (!e.isPrimary || e.button !== 0 || gesture.current) return
     try {
       buttonRef.current?.setPointerCapture(e.pointerId)
     } catch {
       // The pointer can no longer be captured.
     }
     measure()
-    gesture.current = { startY: e.clientY, startFraction: settings.value.puckY, dragging: false, long: false }
+    gesture.current = { pointerId: e.pointerId, startY: e.clientY, startFraction: settings.value.puckY, dragging: false, long: false }
     clearTimer()
     timer.current = setTimeout(() => {
       timer.current = null
@@ -84,7 +86,7 @@ export function Puck({ visible }: { visible: boolean }) {
   const onMove = (e: PointerEvent) => {
     e.stopPropagation()
     const g = gesture.current
-    if (!g) return
+    if (!g || e.pointerId !== g.pointerId) return
     const dy = e.clientY - g.startY
     if (!g.dragging && Math.abs(dy) > DRAG_PX) {
       g.dragging = true
@@ -96,9 +98,9 @@ export function Puck({ visible }: { visible: boolean }) {
   const onUp = (e: PointerEvent) => {
     e.stopPropagation()
     const g = gesture.current
+    if (!g || e.pointerId !== g.pointerId) return
     gesture.current = null
     clearTimer()
-    if (!g) return
     if (g.dragging) {
       const y = clamp(g.startFraction + (e.clientY - g.startY) / (hostH || 1), 0, 1)
       setDragY(null)
@@ -110,10 +112,13 @@ export function Puck({ visible }: { visible: boolean }) {
 
   const onCancel = (e: PointerEvent) => {
     e.stopPropagation()
+    if (gesture.current && e.pointerId !== gesture.current.pointerId) return
     gesture.current = null
     clearTimer()
     setDragY(null)
   }
+
+  const popStyle = top + SIZE / 2 > hostH / 2 ? { bottom: `${hostH - top - SIZE}px` } : { top: `${top}px` }
 
   return (
     <>
@@ -133,7 +138,7 @@ export function Puck({ visible }: { visible: boolean }) {
         <Icon name={penTool.value} />
       </button>
       {open && (
-        <div ref={popRef} class="mg-puck-pop" role="dialog" aria-label="Pen palette" style={{ top: `${top}px` }}>
+        <div ref={popRef} class="mg-puck-pop" role="dialog" aria-label="Pen palette" style={popStyle}>
           <PenStrip withSelect layout="stack" />
         </div>
       )}

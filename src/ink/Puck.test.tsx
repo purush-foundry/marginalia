@@ -12,10 +12,10 @@ host.getBoundingClientRect = () => new DOMRect(0, 0, 400, 1000)
 const puck = () => host.querySelector<HTMLButtonElement>('button.mg-puck')!
 const palette = () => host.querySelector('[aria-label="Pen palette"]')
 
-function fire(target: Element, type: string, init: { y?: number; pointerType?: string } = {}) {
+function fire(target: Element, type: string, init: { y?: number; pointerType?: string; pointerId?: number; button?: number; isPrimary?: boolean } = {}) {
   act(() => {
     target.dispatchEvent(
-      new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: init.pointerType ?? 'pen', clientX: 390, clientY: init.y ?? 600 }),
+      new PointerEvent(type, { bubbles: true, pointerId: init.pointerId ?? 1, isPrimary: init.isPrimary ?? true, button: init.button ?? 0, pointerType: init.pointerType ?? 'pen', clientX: 390, clientY: init.y ?? 600 }),
     )
   })
 }
@@ -104,6 +104,43 @@ describe('Puck', () => {
     expect(settings.value.puckY).toBe(0.6)
     expect(puck().style.top).toBe(`${600 - 22}px`)
     expect(penTool.value).toBe('pen')
+  })
+
+  it('ignores a right-button press', () => {
+    vi.useFakeTimers()
+    fire(puck(), 'pointerdown', { button: 2 })
+    act(() => void vi.advanceTimersByTime(500))
+    fire(puck(), 'pointerup', { button: 2 })
+    expect(palette()).toBeNull()
+    expect(penTool.value).toBe('pen')
+  })
+
+  it('ignores a second pointer landing mid-drag', () => {
+    vi.useFakeTimers()
+    fire(puck(), 'pointerdown', { y: 600 })
+    fire(puck(), 'pointermove', { y: 300 })
+    fire(puck(), 'pointerdown', { pointerId: 2, isPrimary: false, y: 100 })
+    fire(puck(), 'pointerup', { pointerId: 2, isPrimary: false, y: 100 })
+    act(() => void vi.advanceTimersByTime(500))
+    expect(palette()).toBeNull()
+    fire(puck(), 'pointerup', { y: 300 })
+    expect(settings.value.puckY).toBe(0.3)
+    expect(penTool.value).toBe('pen')
+  })
+
+  it('keeps the palette inside the host when the puck is at the bottom or top', () => {
+    const open = () => {
+      vi.useFakeTimers()
+      fire(puck(), 'pointerdown', { y: 600 })
+      act(() => void vi.advanceTimersByTime(350))
+      fire(puck(), 'pointerup', { y: 600 })
+    }
+    settings.value = { ...settings.value, puckY: 1 }
+    act(() => render(<Puck visible />, host))
+    open()
+    const pop = host.querySelector<HTMLElement>('.mg-puck-pop')!
+    expect(pop.style.top).toBe('')
+    expect(parseFloat(pop.style.bottom)).toBeGreaterThanOrEqual(8)
   })
 
   it('keeps the puck inside the host', () => {
