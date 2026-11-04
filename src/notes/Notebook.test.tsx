@@ -302,15 +302,30 @@ test('pinch zooms around the pinch centre between fit-width and 400 %', async ()
   expect(await pinch(s, 250, 300, 100, 300)).toBe('scale(3)')
   expect($('.mg-nb-pages').style.transform).toBe('')
   expect(box(page('page-1')).slice(2)).toEqual([2520, 3564])
-  expect([s.scrollLeft, s.scrollTop]).toEqual([500, 600])
+  expect([s.scrollLeft, s.scrollTop]).toEqual([468, 568])
 
   await pinch(s, 250, 300, 100, 1000)
   expect(box(page('page-1'))[2]).toBe(3360)
-  expect([s.scrollLeft, s.scrollTop]).toEqual([750, 900])
+  expect(s.scrollLeft).toBeCloseTo(702)
+  expect(s.scrollTop).toBeCloseTo(852)
 
   await pinch(s, 250, 300, 300, 30)
   expect(box(page('page-1'))[2]).toBe(840)
-  expect([s.scrollLeft, s.scrollTop]).toEqual([0, 0])
+  expect(s.scrollLeft).toBeCloseTo(0)
+  expect(s.scrollTop).toBeCloseTo(0)
+})
+
+test('a pinch on a later page keeps the point under the fingers still', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4, PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await scrollTo(2424 + 500)
+  const anchor = { x: 250, y: 300 }
+  const before = page('page-3').getBoundingClientRect()
+  const local = { x: anchor.x - before.left, y: anchor.y - before.top }
+  await pinch(scroller(), anchor.x, anchor.y, 100, 250)
+  const after = page('page-3').getBoundingClientRect()
+  expect(after.width).toBe(2100)
+  expect(Math.abs(after.left + local.x * 2.5 - anchor.x)).toBeLessThan(1)
+  expect(Math.abs(after.top + local.y * 2.5 - anchor.y)).toBeLessThan(1)
 })
 
 test('a two-finger pinch while the pen is down neither zooms nor ends the stroke', async () => {
@@ -349,7 +364,7 @@ test('a finger double-tap toggles fit-width and 200 % at the tap', async () => {
   clock += 200
   await tapAt(s, 310, 410)
   expect(box(page('page-1'))[2]).toBe(1680)
-  expect([s.scrollLeft, s.scrollTop]).toEqual([310, 410])
+  expect([s.scrollLeft, s.scrollTop]).toEqual([294, 394])
 
   clock += 400
   await tapAt(s, 310, 410)
@@ -384,8 +399,8 @@ test('Ctrl-wheel zooms at the cursor; a plain wheel does not zoom', async () => 
   })
   expect(zoom.defaultPrevented).toBe(true)
   expect(box(page('page-1'))[2]).toBeCloseTo(840 * Math.E)
-  expect(s.scrollLeft).toBeCloseTo(300 * Math.E - 300)
-  expect(s.scrollTop).toBeCloseTo(400 * Math.E - 400)
+  expect(s.scrollLeft).toBeCloseTo(16 + 284 * Math.E - 300)
+  expect(s.scrollTop).toBeCloseTo(16 + 384 * Math.E - 400)
 
   await act(() => {
     wheel({ metaKey: true, deltaY: 1000 })

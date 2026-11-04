@@ -63,6 +63,17 @@ function layoutPages(pages: NotePage[], paneW: number, zoom: number): Layout {
   return { pages: boxes, width, height: boxes.length ? top : 0 }
 }
 
+// Scroll that keeps the page point under `anchor` still when the layout goes from `before` (zoom `from`) to `after` (zoom `to`).
+function anchoredScroll(scroll: Scroll, anchor: Point, before: Layout, after: Layout, from: number, to: number): Scroll {
+  const y = scroll.top + anchor.y
+  const away = (b: PageBox) => Math.max(b.top - y, y - b.top - b.h, 0)
+  const box = before.pages.reduce<PageBox | undefined>((best, b) => (!best || away(b) < away(best) ? b : best), undefined)
+  const next = box && after.pages.find((b) => b.page.id === box.page.id)
+  if (!box || !next) return zoomScroll(scroll, anchor, from, to)
+  const local = zoomScroll({ left: scroll.left - box.left, top: scroll.top - box.top }, anchor, from, to)
+  return { left: next.left + local.left, top: next.top + local.top }
+}
+
 // Copy of flat [x, y, pressure] points with every y multiplied by k.
 function scaleY(points: number[], k: number): number[] {
   const out = points.slice()
@@ -226,7 +237,9 @@ export function Notebook({ store, onJumpToPage, handle }: NotebookProps) {
       const to = clampZoom(target)
       if (to === from) return
       const scroll = base ?? pendingScroll.current ?? { left: scroller.scrollLeft, top: scroller.scrollTop }
-      pendingScroll.current = zoomScroll(scroll, anchor, from, to)
+      const pages = store.pages.value
+      const paneW = paneRef.current.w
+      pendingScroll.current = anchoredScroll(scroll, anchor, layoutPages(pages, paneW, from), layoutPages(pages, paneW, to), from, to)
       zoomRef.current = to
       setZoom(to)
     }
