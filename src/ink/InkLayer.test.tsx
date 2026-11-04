@@ -1,7 +1,8 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { InkStroke } from '../types.ts'
+import { createAnnotationStore } from '../annot/store.ts'
+import { emptySidecar, type InkStroke } from '../types.ts'
 import { highlighterPath, inkOutlinePath, polylineLength, strokeOutlinePath } from './geometry.ts'
 import { INK_VIEWPORT_ATTR, InkLayer, StrokeSvg, type InkLayerProps } from './InkLayer.tsx'
 import {
@@ -787,56 +788,115 @@ describe('InkLayer eraser', () => {
     expect(xs(pieces[1]).at(-1)).toBe(0.9)
   })
 
+  // Thirty-one eraser samples 3 px apart along the line from x 30 to 120 px: a pointerdown and five moves of six coalesced samples.
+  async function dragAlongLine(text: HTMLElement, beforeLift: () => void = () => {}) {
+    await act(() => {
+      text.dispatchEvent(pointer('pointerdown', { x: 30, y: 200 }))
+      for (let move = 0; move < 5; move++) {
+        const coalesced = Array.from({ length: 6 }, (_, k) => ({ x: 30 + 3 * (move * 6 + k + 1), y: 200 }))
+        text.dispatchEvent(pointer('pointermove', { ...coalesced[5], coalesced }))
+      }
+    })
+    beforeLift()
+    await act(() => {
+      text.dispatchEvent(pointer('pointerup', { x: 120, y: 200 }))
+    })
+  }
+
   it('dragging the segment eraser along a stroke keeps splitting the pieces it made', async () => {
     setTool('eraser')
     useEraser({ style: 'segment', sizeMm: 4 })
     const text = await mount({ strokes: [line], onReplaceStroke })
-    // Five moves of six coalesced samples, 3 px apart, from x 30 to 120 px.
-    text.dispatchEvent(pointer('pointerdown', { x: 30, y: 200 }))
-    for (let move = 0; move < 5; move++) {
-      const coalesced = Array.from({ length: 6 }, (_, k) => ({ x: 30 + 3 * (move * 6 + k + 1), y: 200 }))
-      text.dispatchEvent(pointer('pointermove', { ...coalesced[5], coalesced }))
-    }
-    text.dispatchEvent(pointer('pointerup', { x: 120, y: 200 }))
+    const original = inkOutlinePath(line.points, 0.004, 200, 400, 'brush')
+    let drawnMidDrag: string[] = []
+    await dragAlongLine(text, () => {
+      expect(replaced).toEqual([])
+      drawnMidDrag = [...layer.querySelectorAll('svg.ink-pen path')].map((e) => e.getAttribute('d')!)
+    })
 
-    expect(replaced).toHaveLength(31)
-    expect(replaced[0][0]).toBe('line')
-    const made = new Set<string>()
-    const split = new Set<string>()
-    for (const [i, [id, pieces]] of replaced.entries()) {
-      if (i > 0) expect(made.has(id)).toBe(true)
-      expect(split.has(id)).toBe(false)
-      split.add(id)
-      for (const p of pieces) {
-        expect(p.points.length).toBeGreaterThanOrEqual(6)
-        made.add(p.id)
-      }
-    }
-    const alive = [...made].filter((id) => !split.has(id))
-    const pieces = replaced.flatMap(([, ps]) => ps).filter((p) => alive.includes(p.id))
+    expect(drawnMidDrag).toHaveLength(2)
+    expect(drawnMidDrag).not.toContain(original)
+    expect(erased).toEqual([])
+    expect(replaced).toHaveLength(1)
+    const [id, pieces] = replaced[0]
+    expect(id).toBe('line')
+    for (const p of pieces) expect(p.points.length).toBeGreaterThanOrEqual(6)
     expect(pieces.map((p) => [xs(p)[0], xs(p).at(-1)])).toEqual([
       [0.1, expect.closeTo(0.15 - mmToFraction(2, 210) - 0.002)],
       [expect.closeTo(0.6 + mmToFraction(2, 210) + 0.002), 0.9],
     ])
   })
 
-  it('a store that updates the strokes mid-drag still splits each piece once', async () => {
+  it('after a drag the layer shows the page strokes again until the store replaces them', async () => {
     setTool('eraser')
     useEraser({ style: 'segment', sizeMm: 4 })
-    let current: InkStroke[] = [line]
-    const update = (id: string, pieces: InkStroke[]) => {
-      replaced.push([id, pieces])
-      current = [...current.map((s) => (s.id === id ? { ...s, deleted: true } : s)), ...pieces]
-      render(page({ strokes: current, onReplaceStroke: update }), host)
-    }
-    const text = await mount({ strokes: current, onReplaceStroke: update })
-    text.dispatchEvent(pointer('pointerdown', { x: 40, y: 200 }))
-    text.dispatchEvent(pointer('pointermove', { x: 80, y: 200, coalesced: [{ x: 60, y: 200 }, { x: 80, y: 200 }] }))
-    text.dispatchEvent(pointer('pointerup', { x: 80, y: 200 }))
-    const ids = replaced.map(([id]) => id)
-    expect(ids[0]).toBe('line')
-    expect(new Set(ids).size).toBe(ids.length)
-    expect(current.filter((s) => !s.deleted)).toHaveLength(4)
+    const text = await mount({ strokes: [line], onReplaceStroke })
+    await dragAlongLine(text)
+    expect(layer.querySelectorAll('svg.ink-pen path')).toHaveLength(1)
+  })
+
+  it('undo once restores a stroke after a 31-sample drag', async () => {
+    const store = createAnnotationStore(emptySidecar('pdf', 'a.pdf', 1), () => {}, { documentUndo: false })
+    store.addStroke(line)
+    setTool('eraser')
+    useEraser({ style: 'segment', sizeMm: 4 })
+    const text = await mount({ strokes: store.inks.value, onReplaceStroke: store.replaceStroke, onEraseStroke: store.removeStroke })
+    await dragAlongLine(text)
+    expect(store.inks.value).toHaveLength(2)
+    store.undo()
+    expect(store.inks.value.map((s) => s.id)).toEqual(['line'])
+    expect(store.inks.value[0].points).toEqual(line.points)
+  })
+
+  it('a drag over two strokes yields one replace for each', async () => {
+    const lower: InkStroke = { ...line, id: 'lower', points: line.points.map((v, i) => (i % 3 === 1 ? 0.52 : v)) }
+    setTool('eraser')
+    useEraser({ style: 'segment', sizeMm: 4 })
+    const text = await mount({ strokes: [line, lower], onReplaceStroke })
+    await act(() => {
+      text.dispatchEvent(pointer('pointerdown', { x: 100, y: 180 }))
+      text.dispatchEvent(pointer('pointermove', { x: 100, y: 220, coalesced: [{ x: 100, y: 200 }, { x: 100, y: 208 }, { x: 100, y: 220 }] }))
+      text.dispatchEvent(pointer('pointerup', { x: 100, y: 220 }))
+    })
+    expect(replaced.map(([id, pieces]) => [id, pieces.length])).toEqual([
+      ['line', 2],
+      ['lower', 2],
+    ])
+  })
+
+  it('a stroke the segment eraser removes completely is erased, not replaced', async () => {
+    const dot: InkStroke = { ...line, id: 'dot', points: [0.5, 0.5, 0.5, 0.501, 0.5, 0.5] }
+    setTool('eraser')
+    useEraser({ style: 'segment', sizeMm: 8 })
+    const text = await mount({ strokes: [dot], onReplaceStroke })
+    await act(() => stroke(text, 'pen', [100, 200], [101, 200]))
+    expect(replaced).toEqual([])
+    expect(erased).toEqual(['dot'])
+  })
+
+  it('a cancelled segment drag still hands its pieces to the store', async () => {
+    setTool('eraser')
+    useEraser({ style: 'segment' })
+    const text = await mount({ strokes: [line], onReplaceStroke })
+    await act(() => {
+      text.dispatchEvent(pointer('pointerdown', { x: 100, y: 200 }))
+      text.dispatchEvent(pointer('pointercancel', { x: 100, y: 200 }))
+    })
+    expect(replaced.map(([id, pieces]) => [id, pieces.length])).toEqual([['line', 2]])
+  })
+
+  it('erases a stroke crossed between two samples 60 px apart', async () => {
+    const thin: InkStroke = { ...base, id: 'thin', width: 0.001, points: [0.5, 0.25, 0.5, 0.5, 0.75, 0.5] }
+    setTool('eraser')
+    let text = await mount({ strokes: [thin], onReplaceStroke })
+    stroke(text, 'mouse', [70, 200], [130, 200])
+    expect(erased).toEqual(['thin'])
+
+    clock += 1000
+    useEraser({ style: 'segment' })
+    text = await mount({ strokes: [{ ...thin }], onReplaceStroke })
+    await act(() => stroke(text, 'mouse', [70, 200], [130, 200]))
+    expect(replaced.map(([id, pieces]) => [id, pieces.length])).toEqual([['thin', 2]])
   })
 
   it('without onReplaceStroke the segment eraser removes whole strokes', async () => {

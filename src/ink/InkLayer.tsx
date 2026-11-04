@@ -1,5 +1,5 @@
 import type { JSX } from 'preact'
-import { useEffect, useMemo, useRef } from 'preact/hooks'
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
 import { splitStrokeAt } from './erase.ts'
@@ -59,13 +59,24 @@ const HIGHLIGHTER_ALPHA = 0.4
 const TAP_MAX_MS = 250
 const TAP_SLOP_PX = 12
 const DOUBLE_TAP_GAP_MS = 300
+// Most eraser circles tested along the path between two samples; a longer jump spaces them wider.
+const MAX_ERASE_STEPS = 64
 
-// One eraser contact: strokes it removed or split, pieces it made, and isotropic points per stroke id.
+// Isotropic points of a stroke and their bounding box [minX, minY, maxX, maxY].
+interface IsoStroke {
+  points: number[]
+  box: [number, number, number, number]
+}
+
+// One eraser contact: its last centre, strokes it removed or split, working pieces and their page strokes, isotropic copies.
 interface EraseContact {
   settings: EraserSettings
+  last: [number, number] | null
   gone: Set<string>
   made: Map<string, InkStroke>
-  iso: Map<string, number[]>
+  origin: Map<string, string>
+  split: Set<string>
+  iso: Map<string, IsoStroke>
 }
 
 interface LiveStroke {
@@ -125,6 +136,17 @@ function widthUnits(points: number[], aspect: number): number[] {
   const out = points.slice()
   for (let i = 1; i < out.length; i += 3) out[i] *= aspect
   return out
+}
+
+function isoStroke(points: number[]): IsoStroke {
+  const box: IsoStroke['box'] = [Infinity, Infinity, -Infinity, -Infinity]
+  for (let i = 0; i + 1 < points.length; i += 3) {
+    box[0] = Math.min(box[0], points[i])
+    box[1] = Math.min(box[1], points[i + 1])
+    box[2] = Math.max(box[2], points[i])
+    box[3] = Math.max(box[3], points[i + 1])
+  }
+  return { points, box }
 }
 
 // First and last samples only.
@@ -201,6 +223,8 @@ export function InkLayer(props: InkLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cursorRef = useRef<HTMLDivElement>(null)
   const dotRef = useRef<HTMLDivElement>(null)
+  const pending = useRef<EraseContact | null>(null)
+  const [, setDrawn] = useState(0)
   const propsRef = useRef(props)
   propsRef.current = props
 
@@ -210,6 +234,7 @@ export function InkLayer(props: InkLayerProps) {
     const parent = root?.parentElement
     if (!root || !parent) return
     let live: LiveStroke | null = null
+    let disposed = false
     let frameId = 0
     let tapStart = 0
     let tapValid = false
@@ -292,7 +317,25 @@ export function InkLayer(props: InkLayerProps) {
       if (!frameId) frameId = requestAnimationFrame(frame)
     }
 
+    const redraw = () => {
+      if (!disposed) setDrawn((n) => n + 1)
+    }
+
+    // Hands each page stroke the segment eraser split during the contact to the store: its final pieces, or an erase.
+    const finishErase = (c: EraseContact) => {
+      if (pending.current !== c) return
+      const { onReplaceStroke, onEraseStroke } = propsRef.current
+      for (const id of c.split) {
+        const pieces = [...c.made.values()].filter((piece) => c.origin.get(piece.id) === id)
+        if (pieces.length && onReplaceStroke) onReplaceStroke(id, pieces)
+        else onEraseStroke(id)
+      }
+      pending.current = null
+      redraw()
+    }
+
     const discard = () => {
+      if (live?.tool === 'eraser') finishErase(live.erase)
       if (frameId) cancelAnimationFrame(frameId)
       frameId = 0
       live = null
@@ -350,51 +393,73 @@ export function InkLayer(props: InkLayerProps) {
       return false
     }
 
-    // Live strokes this contact may still erase: the page's, with the ones it split swapped for their pieces.
+    // Live strokes this contact may still erase: the page's, with the ones it split swapped for their working pieces.
     const erasable = (c: EraseContact): InkStroke[] => {
-      const fresh = propsRef.current.strokes.filter((st) => !st.deleted && !c.gone.has(st.id) && !c.made.has(st.id))
+      const fresh = propsRef.current.strokes.filter((st) => !st.deleted && !c.gone.has(st.id))
       return [...fresh, ...c.made.values()]
     }
 
-    const removed = (c: EraseContact, id: string) => {
-      c.gone.add(id)
-      c.made.delete(id)
-    }
-
-    // Erases what the eraser circle at normalised (x, y) touches: whole strokes, or the part inside it for the segment style.
-    const eraseAt = (s: LiveStroke, x: number, y: number) => {
-      const c = s.erase
+    // Erases what one eraser circle at isotropic (cx, cy) touches; true when it split a stroke.
+    const eraseCircle = (c: EraseContact, cx: number, cy: number, aspect: number, reach: number): boolean => {
       const p = propsRef.current
-      const aspect = p.cssH / p.cssW
-      const { style, sizeMm, erasePen, eraseHighlighter } = c.settings
-      const reach = mmToFraction(sizeMm / 2, pageMm(p))
-      const split = style === 'segment' ? p.onReplaceStroke : undefined
+      const { style, erasePen, eraseHighlighter } = c.settings
+      const segment = style === 'segment' && p.onReplaceStroke !== undefined
+      let didSplit = false
       for (const stroke of erasable(c)) {
         if (!(stroke.tool === 'highlighter' ? eraseHighlighter : erasePen)) continue
         const radius = reach + stroke.width / 2
         let iso = c.iso.get(stroke.id)
         if (!iso) {
-          iso = widthUnits(stroke.points, aspect)
+          iso = isoStroke(widthUnits(stroke.points, aspect))
           c.iso.set(stroke.id, iso)
         }
-        if (!split) {
-          if (!strokeHitsPoint(iso, x, y * aspect, radius)) continue
-          removed(c, stroke.id)
+        const [x0, y0, x1, y1] = iso.box
+        if (cx < x0 - radius || cx > x1 + radius || cy < y0 - radius || cy > y1 + radius) continue
+        if (!segment) {
+          if (!strokeHitsPoint(iso.points, cx, cy, radius)) continue
+          c.gone.add(stroke.id)
           p.onEraseStroke(stroke.id)
           continue
         }
-        const kept = splitStrokeAt(iso, x, y * aspect, radius)
+        const kept = splitStrokeAt(iso.points, cx, cy, radius)
         if (!kept) continue
+        const source = c.origin.get(stroke.id) ?? stroke.id
         const t = now()
-        const pieces = kept.map((points) => {
+        for (const points of kept) {
           const back = widthUnits(points, 1 / aspect)
           const piece: InkStroke = { ...stroke, id: newId(), points: back, createdAt: t, updatedAt: t }
-          c.iso.set(piece.id, points)
+          c.iso.set(piece.id, isoStroke(points))
           c.made.set(piece.id, piece)
-          return piece
-        })
-        removed(c, stroke.id)
-        split(stroke.id, pieces)
+          c.origin.set(piece.id, source)
+        }
+        c.gone.add(stroke.id)
+        c.made.delete(stroke.id)
+        c.split.add(source)
+        didSplit = true
+      }
+      return didSplit
+    }
+
+    // Erases along the path from the previous sample to normalised (x, y), in circles no farther apart than the eraser's reach.
+    const eraseAt = (s: LiveStroke, x: number, y: number) => {
+      const c = s.erase
+      const p = propsRef.current
+      const aspect = p.cssH / p.cssW
+      const reach = mmToFraction(c.settings.sizeMm / 2, pageMm(p))
+      const to: [number, number] = [x, y * aspect]
+      const from = c.last ?? to
+      c.last = to
+      const gap = Math.hypot(to[0] - from[0], to[1] - from[1])
+      const steps = Math.min(MAX_ERASE_STEPS, Math.max(1, Math.ceil(gap / reach)))
+      let didSplit = false
+      for (let k = 1; k <= steps; k++) {
+        const cx = from[0] + ((to[0] - from[0]) * k) / steps
+        const cy = from[1] + ((to[1] - from[1]) * k) / steps
+        if (eraseCircle(c, cx, cy, aspect, reach)) didSplit = true
+      }
+      if (didSplit) {
+        pending.current = c
+        redraw()
       }
     }
 
@@ -488,7 +553,15 @@ export function InkLayer(props: InkLayerProps) {
         top: rect.top,
         w: rect.width || cssW,
         h: rect.height || cssH,
-        erase: { settings: eraserSettings.peek(), gone: new Set(), made: new Map(), iso: new Map() },
+        erase: {
+          settings: eraserSettings.peek(),
+          last: null,
+          gone: new Set(),
+          made: new Map(),
+          origin: new Map(),
+          split: new Set(),
+          iso: new Map(),
+        },
         ctx: ink ? openCanvas() : null,
         outline: createLiveOutline((pts, ends, length) =>
           strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, s.pen, ends, length),
@@ -620,6 +693,7 @@ export function InkLayer(props: InkLayerProps) {
     parent.addEventListener('touchcancel', onTouchCancel, capture)
     parent.addEventListener('pointerleave', hideDot)
     return () => {
+      disposed = true
       if (penActivity.down && penActivity.downOn === parent) {
         penActivity.down = false
         penActivity.downOn = null
@@ -640,6 +714,8 @@ export function InkLayer(props: InkLayerProps) {
 
   const current = tool.value
   const dark = props.paperDark ?? nightInk.value
+  const erasing = pending.current
+  const shown = erasing ? [...strokes.filter((st) => !erasing.gone.has(st.id)), ...erasing.made.values()] : strokes
   return (
     <div
       ref={rootRef}
@@ -649,7 +725,7 @@ export function InkLayer(props: InkLayerProps) {
       data-finger-draws={fingerDraws.value ? '' : undefined}
       style={{ width: `${cssW}px`, height: `${cssH}px` }}
     >
-      {props.showStrokes !== false && <StrokeSvg strokes={strokes} cssW={cssW} cssH={cssH} paperDark={dark} />}
+      {props.showStrokes !== false && <StrokeSvg strokes={shown} cssW={cssW} cssH={cssH} paperDark={dark} />}
       <canvas ref={canvasRef} width={0} height={0} />
       <div ref={cursorRef} class="ink-eraser-cursor" hidden />
       <div ref={dotRef} class="ink-hover-dot" hidden />
