@@ -96,12 +96,15 @@ device checklist.
 - **Hero band** at the top of the library (and behind onboarding): on phones about a third of
   the viewport, on wide screens 240–320 px tall, fading into the surface colour at its lower
   edge. The library list sits below the band on the plain surface, unchanged.
-- **The owner's picture.** The band shows an image the owner drops into the root papers folder
-  in Drive, named `marginalia-home` with extension png, jpg, jpeg or webp (root folder only,
-  first match). `syncLibrary` records it in the index; the app downloads it on demand, caches
-  the bytes in IndexedDB, re-downloads when the Drive version changes, and shows it with
-  `object-fit: cover` and `filter: grayscale(1)` (night mode also dims it slightly). One drop
-  in Drive, every device. No settings picker.
+- **The owner's pictures.** The band shows an image the owner drops into the root papers
+  folder in Drive (root folder only), with extension png, jpg, jpeg or webp, named
+  `marginalia-home-landscape` or `marginalia-home-portrait`; the app picks by the viewport's
+  orientation at the time (wider than tall → landscape) and switches when the device rotates.
+  If only one of the two exists it is used for both orientations; a plain `marginalia-home`
+  file is the generic fallback for either. `syncLibrary` records them in the index; the app
+  downloads on demand, caches the bytes in IndexedDB, re-downloads when the Drive version
+  changes, and shows the picture with `object-fit: cover` and `filter: grayscale(1)` (night
+  mode also dims it slightly). One drop in Drive, every device. No settings picker.
 - **Fallback drawing.** When no such file exists, the band shows a small built-in grayscale
   woodblock-style drawing (a great wave, sun, clouds, cranes, a distant mountain; inline SVG,
   about 7 KB, no text). Night mode inverts it through CSS. It is already drawn; no further art
