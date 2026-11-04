@@ -38,6 +38,8 @@ function withBlocks(pdfId: string, ...ids: string[]): NotesDoc {
   return { ...emptyNotes(pdfId, `${pdfId}.pdf`, 0), blocks: ids.map((id, i) => block(id, i + 1)) }
 }
 
+const blockIds = (doc: NotesDoc) => doc.blocks.map((b) => b.id).sort()
+
 let drive: FakeDrive
 let lib: Library
 let idb: Idb
@@ -181,6 +183,35 @@ describe('library mirror', () => {
     } finally {
       vi.doUnmock('../lib/idb')
     }
+  })
+
+  test('the first sync after upgrading from a v1 index walks once to find existing notes files and home pictures', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    drive.add({ id: 'art', name: 'marginalia-home.png', mimeType: 'image/png', parents: ['root'] })
+    const p1 = { id: 'p1', name: 'p1.pdf', mimeType: PDF_MIME, parents: ['root'], modifiedTime: '2026-01-01T00:00:00Z', version: '1', size: 4 }
+    await idb.idbSet('meta', 'library', {
+      rootId: 'root',
+      rootName: 'Papers',
+      folders: { root: { ...ROOT } },
+      papers: { p1 },
+      sidecars: {},
+      syncedAt: 1,
+      changesToken: String(drive.changeLog.length),
+    })
+    await lib.loadLibrary()
+
+    await lib.syncLibrary()
+
+    const index = lib.library.value!
+    expect(index.notes!.p1.id).toBe('n1')
+    expect(index.homeArt!.generic!.id).toBe('art')
+    expect(blockIds(await lib.loadNotes('p1'))).toEqual(['a'])
+
+    const lists = () => drive.calls.filter((c) => c.url.pathname === '/drive/v3/files').length
+    const before = lists()
+    await lib.syncLibrary()
+    expect(lists()).toBe(before)
   })
 
   test('syncLibrary never throws and reports offline when the network fails', async () => {
@@ -531,8 +562,6 @@ describe('sidecars', () => {
 })
 
 describe('notes', () => {
-  const blockIds = (doc: NotesDoc) => doc.blocks.map((b) => b.id).sort()
-
   test('notesNameFor swaps .pdf for .marginalia-notes.json', () => {
     expect(lib.notesNameFor('Attention.pdf')).toBe('Attention.marginalia-notes.json')
     expect(lib.notesNameFor('scan.PDF')).toBe('scan.marginalia-notes.json')
@@ -767,6 +796,43 @@ describe('notes', () => {
     expect(drive.json<NotesDoc>('n1')).toEqual(local)
     expect(await idb.idbKeys('queue')).toEqual([])
     expect(await lib.loadNotes('p1')).toEqual(local)
+  })
+
+  test('a notes file in a newer schema with no local notes creates nothing and uploads nothing', async () => {
+    paper('p1', 'root')
+    const newer = JSON.stringify({ ...withBlocks('p1', 'future'), schema: 2 })
+    drive.add({ id: 'n1', name: 'p1.marginalia-notes.json', mimeType: 'application/json', parents: ['root'], appProperties: { marginalia: 'notes', pdf: 'p1' }, content: newer })
+
+    await lib.setRootFolder(ROOT)
+    expect(await lib.refreshNotes('p1')).toBeNull()
+    await lib.flushQueue()
+
+    expect(await idb.idbGet('notes', 'p1')).toBeUndefined()
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
+    expect(drive.files.get('n1')!.content).toBe(newer)
+    expect(lib.syncState.value.status).toBe('idle')
+  })
+
+  test('a notes file in a newer schema is never overwritten by dirty local notes, which stay queued', async () => {
+    paper('p1', 'root')
+    remoteNotes('n1', 'p1', 'root', withBlocks('p1', 'a'))
+    await lib.setRootFolder(ROOT)
+    const newer = JSON.stringify({ ...withBlocks('p1', 'a', 'future'), schema: 2 })
+    drive.update('n1', { content: newer })
+
+    lib.saveNotes('p1', withBlocks('p1', 'a', 'mine'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+    await lib.syncLibrary()
+
+    expect(drive.files.get('n1')!.content).toBe(newer)
+    expect(drive.calls.filter((c) => c.method !== 'GET')).toEqual([])
+    expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
+    const stored = await idb.idbGet<StoredNotes>('notes', 'p1')
+    expect(stored).toMatchObject({ dirty: true, remoteVersion: '1' })
+    expect(blockIds(stored!.sidecar)).toEqual(['a', 'mine'])
+    expect(lib.syncState.value.status).toBe('idle')
   })
 
   test('notes over the simple-upload limit go up through a resumable session', async () => {

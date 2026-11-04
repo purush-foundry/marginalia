@@ -70,8 +70,12 @@ interface Companion<T> {
   empty(pdfId: string, pdfName: string): T
   merge(a: T, b: T): T
   accepts(remote: unknown): remote is T
+  newer(remote: unknown): boolean
   label: string
 }
+
+/** A downloaded companion file: a document to merge, a foreign file to replace, or a newer-schema document to leave alone. */
+type Download<T> = { status: 'ok'; doc: T } | { status: 'foreign' } | { status: 'newer' }
 
 interface SyncState {
   status: 'idle' | 'syncing' | 'offline' | 'error'
@@ -96,6 +100,13 @@ export function notesNameFor(pdfName: string): string {
 
 const NOTES_QUEUE_PREFIX = 'notes:'
 
+// True for a notes document written by a client with a newer schema.
+function isNewerNotes(remote: unknown): boolean {
+  if (typeof remote !== 'object' || remote === null) return false
+  const { kind, schema } = remote as { kind?: unknown; schema?: unknown }
+  return kind === 'notes' && typeof schema === 'number' && schema > 1
+}
+
 const ANNOTATIONS: Companion<Sidecar> = {
   kind: 'annotations',
   store: 'sidecars',
@@ -106,6 +117,7 @@ const ANNOTATIONS: Companion<Sidecar> = {
   empty: (pdfId, pdfName) => emptySidecar(pdfId, pdfName, 0),
   merge: mergeSidecars,
   accepts: (_remote: unknown): _remote is Sidecar => true,
+  newer: () => false,
   label: 'annotation',
 }
 
@@ -119,6 +131,7 @@ const NOTES: Companion<NotesDoc> = {
   empty: (pdfId, pdfName) => emptyNotes(pdfId, pdfName, 0),
   merge: mergeNotes,
   accepts: isNotesDoc,
+  newer: isNewerNotes,
   label: 'notes',
 }
 
@@ -324,11 +337,12 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
   return next
 }
 
+// Applies changes since the token; walks in full when there is no token, the token is rejected, or the index predates notes files.
 async function refreshIndex(): Promise<void> {
   const index = library.peek()
   if (!index) return
   let next: LibraryIndex
-  if (index.changesToken) {
+  if (index.changesToken && index.notes) {
     try {
       next = await applyChanges(index, index.changesToken)
     } catch (err) {
@@ -625,32 +639,34 @@ async function locate<T>(c: Companion<T>, pdfId: string): Promise<DriveNode | un
   return found
 }
 
-// Downloads a companion file; null when the kind does not accept its content.
-async function download<T>(c: Companion<T>, id: string): Promise<T | null> {
+// Downloads a companion file and sorts it into a document of the kind, a newer-schema document or a foreign file.
+async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
   let remote: unknown
   try {
     remote = await downloadJson<unknown>(id)
   } catch (err) {
-    // Unparseable content is unaccepted for a kind that validates; a kind that accepts anything keeps the error.
-    if (err instanceof SyntaxError && !c.accepts(undefined)) return null
+    // Unparseable content is foreign for a kind that validates; a kind that accepts anything keeps the error.
+    if (err instanceof SyntaxError && !c.accepts(undefined)) return { status: 'foreign' }
     throw err
   }
-  return c.accepts(remote) ? remote : null
+  if (c.newer(remote)) return { status: 'newer' }
+  return c.accepts(remote) ? { status: 'ok', doc: remote } : { status: 'foreign' }
 }
 
-// Merges the remote file into the local record and returns the result; an unaccepted remote leaves the local document dirty and queued, and returns null.
+// Merges the remote file into the local record and returns the result; a foreign remote leaves the local document dirty and queued, a newer-schema one leaves it untouched; both return null.
 async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveNode): Promise<T | null> {
   const remote = await download(c, remoteNode.id)
+  if (remote.status === 'newer') return null
   return localLane(async () => {
     const latest = await idbGet<StoredCompanion<T>>(c.store, pdfId)
     const seen = { remoteId: remoteNode.id, remoteVersion: remoteNode.version }
-    if (remote === null) {
+    if (remote.status === 'foreign') {
       const record: StoredCompanion<T> = { sidecar: latest?.sidecar ?? emptyFor(c, pdfId), ...seen, dirty: true }
       await idbSet(c.store, pdfId, record)
       await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
       return null
     }
-    const doc = latest ? c.merge(latest.sidecar, remote) : remote
+    const doc = latest ? c.merge(latest.sidecar, remote.doc) : remote.doc
     const record: StoredCompanion<T> = { sidecar: doc, ...seen, dirty: latest?.dirty ?? false }
     await idbSet(c.store, pdfId, record)
     return doc
@@ -724,7 +740,7 @@ async function pullSidecars(): Promise<void> {
   if (failed.size) syncState.value = { status: 'error', message: failureMessage(failed, 'download'), at: Date.now() }
 }
 
-// Uploads one queued companion file, merging first if the remote moved, and records the new remote version.
+// Uploads one queued companion file, merging first if the remote moved, and records the new remote version; leaves it queued when the remote has a newer schema.
 async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
   const key = c.queueKey(pdfId)
   const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
@@ -743,7 +759,8 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
       const remote = await getNode(known.id)
       if (remoteMoved(stored, remote)) {
         const theirs = await download(c, known.id)
-        if (theirs !== null) body = c.merge(body, theirs)
+        if (theirs.status === 'newer') return
+        if (theirs.status === 'ok') body = c.merge(body, theirs.doc)
       }
       node = await updateJsonFile(known.id, body)
     } catch (err) {
