@@ -57,14 +57,26 @@ export interface TextBlockViewProps {
   onSelectImage(id: string): void
 }
 
-/** Plain-text paragraph; its DOM text follows the store only while it is not focused. */
+/** Plain-text paragraph; its DOM text follows the store whenever the store differs from what the block last sent. */
 export function TextBlockView({ block, title, store, onFocusBlock, onSelectImage }: TextBlockViewProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const lastSent = useRef<string | null>(null)
 
   useLayoutEffect(() => {
     const el = ref.current
-    if (el && document.activeElement !== el && el.textContent !== block.text) el.textContent = block.text
+    if (!el || block.text === lastSent.current) return
+    lastSent.current = block.text
+    if (el.textContent === block.text) return
+    const focused = document.activeElement === el
+    const caret = focused ? caretOffset(el) : 0
+    el.textContent = block.text
+    if (focused) placeCaret(el, Math.min(caret, block.text.length))
   }, [block.text])
+
+  const send = (text: string) => {
+    lastSent.current = text
+    store.updateText(block.id, text)
+  }
 
   const onKeyDown = (e: KeyboardEvent) => {
     const el = ref.current
@@ -74,11 +86,9 @@ export function TextBlockView({ block, title, store, onFocusBlock, onSelectImage
       e.preventDefault()
       if (sel && !sel.isCollapsed) {
         sel.deleteFromDocument()
-        store.updateText(block.id, el.textContent ?? '')
+        send(el.textContent ?? '')
       }
-      const offset = caretOffset(el)
-      const next = store.splitText(block.id, offset)
-      el.textContent = (el.textContent ?? '').slice(0, offset)
+      const next = store.splitText(block.id, caretOffset(el))
       onFocusBlock(next.id, 0)
       return
     }
@@ -95,13 +105,6 @@ export function TextBlockView({ block, title, store, onFocusBlock, onSelectImage
     }
   }
 
-  // Shows the store's latest text once editing ends.
-  const onBlur = () => {
-    const el = ref.current
-    const latest = store.doc.value.blocks.find((b) => b.id === block.id)
-    if (el && latest?.kind === 'text' && !latest.deleted && el.textContent !== latest.text) el.textContent = latest.text
-  }
-
   return (
     <div
       ref={ref}
@@ -109,8 +112,7 @@ export function TextBlockView({ block, title, store, onFocusBlock, onSelectImage
       data-id={block.id}
       contenteditable="plaintext-only"
       onKeyDown={onKeyDown}
-      onInput={() => store.updateText(block.id, ref.current?.textContent ?? '')}
-      onBlur={onBlur}
+      onInput={() => send(ref.current?.textContent ?? '')}
     />
   )
 }

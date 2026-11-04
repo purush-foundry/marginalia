@@ -60,7 +60,8 @@ export function createNotesStore(initial: NotesDoc, persist: (doc: NotesDoc) => 
   let typing: string | null = null
 
   const blocks = computed(() => state.value.blocks.filter((b) => !b.deleted).sort(compareOrder))
-  const strokes = computed(() => state.value.strokes.filter((s) => !s.deleted))
+  const allStrokes = computed(() => state.value.strokes)
+  const strokes = computed(() => allStrokes.value.filter((s) => !s.deleted))
 
   function commit(next: NotesDoc): void {
     state.value = next

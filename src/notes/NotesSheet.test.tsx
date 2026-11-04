@@ -334,6 +334,84 @@ test('the sheet grows to the lowest stroke plus one pane height', async () => {
   expect($('.mg-notes-sheet').style.height).toBe(`${3 * 400 + 900}px`)
 })
 
+test('ink keeps its pixel positions when the sheet grows', async () => {
+  store.addStroke({ id: 's1', kind: 'ink', color: '#000', width: 0.004, points: [0.1, 0.2, 0.5, 0.5, 1, 0.5], createdAt: 1, updatedAt: 1 })
+  await mount()
+  const sheet = $('.mg-notes-sheet')
+  const pathOf = (id: number) => host.querySelectorAll('.ink-layer path')[id].getAttribute('d')
+  const before = pathOf(0)
+  expect(sheet.style.height).toBe('1300px')
+  await act(() => store.addStroke({ id: 's2', kind: 'ink', color: '#000', width: 0.004, points: [0.1, 4, 0.5], createdAt: 2, updatedAt: 2 }))
+  expect(sheet.style.height).toBe(`${4 * 400 + 900}px`)
+  expect(host.querySelectorAll('.ink-layer path')).toHaveLength(2)
+  expect(pathOf(0)).toBe(before)
+})
+
+test('a drag-selection that ends outside a text block keeps the selection', async () => {
+  store.addTextBlock('first block')
+  store.addTextBlock('second block')
+  await mount()
+  const [first, second] = textEls()
+  first.focus()
+  const sel = document.getSelection()!
+  sel.setBaseAndExtent(first.firstChild!, 2, second.firstChild!, 3)
+  await act(() => {
+    pointer(first, 'pointerdown', 10, 10)
+    pointer($('.mg-notes-blocks'), 'pointerup', 10, 200)
+    $('.mg-notes-blocks').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  })
+  expect(sel.isCollapsed).toBe(false)
+  expect(sel.anchorOffset).toBe(2)
+  expect(sel.focusOffset).toBe(3)
+  expect(texts()).toEqual(['first block', 'second block'])
+  expect(document.activeElement).toBe(first)
+})
+
+test('undo while a text block is focused shows at once and keeps focus', async () => {
+  store.addTextBlock('Hello')
+  await mount()
+  const el = textEls()[0]
+  await act(() => {
+    caretAt(el, 5)
+    el.textContent = 'Hello!'
+    document.getSelection()!.collapse(el.firstChild, 6)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(texts()).toEqual(['Hello!'])
+  expect(el.textContent).toBe('Hello!')
+  await act(() => store.undo())
+  expect(el.textContent).toBe('Hello')
+  expect(document.activeElement).toBe(el)
+  expect(document.getSelection()!.focusOffset).toBe(5)
+  await act(() => store.redo())
+  expect(el.textContent).toBe('Hello!')
+  expect(document.activeElement).toBe(el)
+})
+
+test('typing after an undo while focused records a fresh step', async () => {
+  store.addTextBlock('')
+  await mount()
+  const el = textEls()[0]
+  const type = (text: string) =>
+    act(() => {
+      el.textContent = text
+      document.getSelection()!.collapse(el.firstChild ?? el, text.length)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  await act(() => caretAt(el, 0))
+  await type('H')
+  await type('Hey')
+  await act(() => store.undo())
+  expect(el.textContent).toBe('')
+  expect(store.canRedo.value).toBe(true)
+  await type('x')
+  expect(texts()).toEqual(['x'])
+  expect(store.canRedo.value).toBe(false)
+  await act(() => store.undo())
+  expect(el.textContent).toBe('')
+  expect(document.activeElement).toBe(el)
+})
+
 test('typing keeps the caret above the keyboard', async () => {
   store.addTextBlock('Hello')
   setViewport({ height: 400, offsetTop: 0 })

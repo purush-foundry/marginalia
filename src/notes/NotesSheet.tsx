@@ -58,7 +58,7 @@ export function NotesSheet({ store, onJumpToPage, handle }: NotesSheetProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<{ id: string; caret: number } | null>(null)
   const pickAfter = useRef<string | undefined>(undefined)
-  const armed = useRef(false)
+  const downTarget = useRef<EventTarget | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [size, setSize] = useState<SheetSize>({ width: 0, pane: 0, content: 0 })
@@ -219,10 +219,11 @@ export function NotesSheet({ store, onJumpToPage, handle }: NotesSheetProps) {
     setSelected(id)
   }
 
-  // Routes a tap on the sheet: an image selects it; empty space puts the caret at the end of the notes.
+  // Routes a tap that went down and up on one element: an image selects it; empty space puts the caret at the end of the notes.
   const onSheetClick = (e: MouseEvent) => {
-    if (!armed.current) return
-    armed.current = false
+    const down = downTarget.current
+    downTarget.current = null
+    if (down !== e.target || !document.getSelection()?.isCollapsed) return
     const target = e.target as Element
     if (target.closest('button, .mg-note-handle')) return
     const figure = target.closest<HTMLElement>('.mg-note-image')
@@ -294,8 +295,8 @@ export function NotesSheet({ store, onJumpToPage, handle }: NotesSheetProps) {
         ref={sheetRef}
         class="mg-notes-sheet"
         style={{ height: `${height}px`, '--sheet-w': size.width > 0 ? `${size.width}px` : undefined }}
-        onPointerDown={() => (armed.current = true)}
-        onPointerCancel={() => (armed.current = false)}
+        onPointerDown={(e) => (downTarget.current = e.target)}
+        onPointerCancel={() => (downTarget.current = null)}
         onClick={onSheetClick}
       >
         {empty && <p class="mg-notes-empty">Write or type your notes</p>}

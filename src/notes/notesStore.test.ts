@@ -165,3 +165,15 @@ test('ignores the document marginalia:undo event', () => {
   expect(texts(store)).toEqual(['a'])
   expect(store.canUndo.value).toBe(true)
 })
+
+test('strokes keep their identity across text edits', () => {
+  const { store } = make()
+  const a = store.addTextBlock('')
+  store.addStroke(stroke('s1'))
+  const before = store.strokes.value
+  store.updateText(a.id, 'typed')
+  store.addTextBlock('more')
+  expect(store.strokes.value).toBe(before)
+  store.addStroke(stroke('s2'))
+  expect(store.strokes.value).not.toBe(before)
+})
