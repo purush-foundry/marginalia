@@ -1,16 +1,18 @@
 import { describe, expect, test } from 'vitest'
+import { polylineLength } from './geometry.ts'
 import { createLiveOutline, LIVE_CHUNK_OVERLAP_PX, LIVE_CHUNK_SAMPLES } from './liveOutline.ts'
 
 interface Call {
   points: number[]
   ends: { start: boolean; end: boolean }
+  strokeLength: number
 }
 
 // A live outline whose outline function records its calls and returns `${samples}:${start}:${end}`.
 function spied() {
   const calls: Call[] = []
-  const live = createLiveOutline((points, ends) => {
-    calls.push({ points: points.slice(), ends })
+  const live = createLiveOutline((points, ends, strokeLength) => {
+    calls.push({ points: points.slice(), ends, strokeLength })
     return `${points.length / 3}:${ends.start}:${ends.end}`
   })
   return { live, calls }
@@ -79,6 +81,16 @@ describe('createLiveOutline', () => {
       const firstX = pieces[i + 1][0]
       const shared = pieces[i].filter((_, k) => k % 3 === 0 && pieces[i][k] >= firstX).length * 3
       expect(arcLength(pieces[i].slice(pieces[i].length - shared))).toBeGreaterThanOrEqual(LIVE_CHUNK_OVERLAP_PX)
+    }
+  })
+
+  test('every piece is outlined with the whole stroke\'s length so far, predicted samples excluded', () => {
+    const { live, calls } = spied()
+    const stroke = straight(700)
+    for (let n = 3; n <= stroke.length; n += 3) {
+      const before = calls.length
+      live.update(stroke.slice(0, n), [5000, 10, 0.9])
+      for (const c of calls.slice(before)) expect(c.strokeLength).toBe(polylineLength(stroke.slice(0, n)))
     }
   })
 

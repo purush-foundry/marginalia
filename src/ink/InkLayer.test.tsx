@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InkStroke } from '../types.ts'
-import { inkOutlinePath, strokeOutlinePath } from './geometry.ts'
+import { inkOutlinePath, polylineLength, strokeOutlinePath } from './geometry.ts'
 import { INK_VIEWPORT_ATTR, InkLayer, type InkLayerProps } from './InkLayer.tsx'
 import { fingerDraws, mouseDraws, nightInk, penActivity, penColor, penTool, penWidth } from './tools.ts'
 
@@ -288,6 +288,25 @@ describe('InkLayer live render', () => {
     expect(added[0].points).toHaveLength(3000)
     await mount({ strokes: added })
     expect(layer.querySelector('svg path')!.getAttribute('d')).toBe(inkOutlinePath(added[0].points, 0.004, 200, 400))
+  })
+
+  it('the last live frame tapers the tail with the whole stroke\'s length, as the committed outline does', async () => {
+    const samples = Array.from({ length: 890 }, (_, i) => ({ x: 5 + (i % 190), y: 10 + 20 * Math.floor(i / 190) }))
+    const text = await mount({ cssW: 256, cssH: 512 })
+    text.dispatchEvent(pointer('pointerdown', samples[0]))
+    text.dispatchEvent(pointer('pointermove', { ...samples[889], coalesced: samples.slice(1) }))
+    flush()
+    expect(ctx.fill).toHaveBeenCalledTimes(4)
+    const tail = paths.at(-1)!
+    text.dispatchEvent(pointer('pointerup', samples[889]))
+    const stored = added[0].points
+    const px = stored.map((v, i) => (i % 3 === 0 ? v * 256 : i % 3 === 1 ? v * 512 : v))
+    const tailPx = px.slice(882 * 3)
+    const ends = { start: false, end: true }
+    expect(tail).toBe(strokeOutlinePath(tailPx, 0.004 * 256, false, 'fountain', ends, polylineLength(px)))
+    expect(tail).not.toBe(strokeOutlinePath(tailPx, 0.004 * 256, false, 'fountain', ends))
+    await mount({ cssW: 256, cssH: 512, strokes: added })
+    expect(layer.querySelector('svg path')!.getAttribute('d')).toBe(inkOutlinePath(stored, 0.004, 256, 512))
   })
 
   it('sizes the live canvas to the visible part of the page at the device pixel ratio', async () => {

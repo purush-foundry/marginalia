@@ -1,5 +1,12 @@
 import { describe, expect, it, test } from 'vitest'
-import { inkOutlinePath, type PenStyle, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import {
+  inkOutlinePath,
+  type PenStyle,
+  polylineLength,
+  simplifyPoints,
+  strokeHitsPoint,
+  strokeOutlinePath,
+} from './geometry.ts'
 import { slowCurveSamples, turning } from './testStrokes.ts'
 
 function pathNumbers(d: string): number[] {
@@ -180,6 +187,25 @@ describe('pen styles', () => {
     const fountain = inkArea(strokeOutlinePath(flatLine(0.5, 15), 3.2, true, 'fountain'))
     const ball = inkArea(strokeOutlinePath(flatLine(0.5, 15), 3.2, true, 'ball'))
     expect(fountain / ball).toBeGreaterThanOrEqual(0.9)
+  })
+
+  test('a 40 px brush stroke at size 3 keeps a taper capped at a quarter of its length', () => {
+    const d = strokeOutlinePath(flatLine(0.5, 40), 3, true, 'brush')
+    const mid = heightAt(d, 20)
+    expect(heightAt(d, 38)).toBeLessThan(0.6 * mid)
+    expect(heightAt(d, 35)).toBeGreaterThan(0.8 * mid)
+    expect(heightAt(strokeOutlinePath(flatLine(0.5, 200), 3, true, 'brush'), 195)).toBeLessThan(0.7 * mid)
+  })
+
+  test('a piece of a long stroke given the whole length tapers its end like the whole stroke', () => {
+    const whole = flatLine(0.5, 600)
+    const committed = strokeOutlinePath(whole, 3.2, true, 'fountain')
+    const piece = (length?: number) =>
+      strokeOutlinePath(whole.slice(-15), 3.2, true, 'fountain', { start: false, end: true }, length)
+    for (const x of [596, 598, 599]) {
+      expect(heightAt(piece(polylineLength(whole)), x)).toBeCloseTo(heightAt(committed, x), 1)
+    }
+    expect(heightAt(piece(), 599)).toBeGreaterThan(heightAt(committed, 599) + 1)
   })
 
   test('the fountain pen keeps the v2 ink area of the slow curve within 7 %', () => {

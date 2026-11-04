@@ -111,10 +111,10 @@ export function smoothStrokePoints(points: number[]): number[][] {
   return blur(resample(pts, RESAMPLE_PX), SMOOTH_SIGMA_PX / RESAMPLE_PX)
 }
 
-// Length of the polyline through the points.
-function arcLength(pts: number[][]): number {
+// Length of the polyline through flat [x, y, pressure, ...] samples.
+export function polylineLength(points: number[]): number {
   let total = 0
-  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  for (let i = 3; i + 1 < points.length; i += 3) total += Math.hypot(points[i] - points[i - 3], points[i + 1] - points[i - 2])
   return total
 }
 
@@ -124,19 +124,18 @@ function taperLength(multiple: number, widthPx: number, strokeLength: number): n
   return taper < TAPER_MIN_SIZES * widthPx ? 0 : taper
 }
 
-// Outline of a freehand stroke as a closed SVG path, in the same units as the points.
+// Outline of a freehand stroke as a closed SVG path, in the same units as the points; tapers are sized from strokeLength.
 export function strokeOutlinePath(
   points: number[],
   widthPx: number,
   pressureIsReal: boolean,
   pen: PenStyle = 'fountain',
   ends: { start: boolean; end: boolean } = { start: true, end: true },
+  strokeLength: number = polylineLength(points),
 ): string {
   if (points.length < 3) return ''
   const { thinning, startTaper, endTaper } = PEN_STYLES[pen]
-  const smoothed = smoothStrokePoints(points)
-  const length = arcLength(smoothed)
-  const outline = getStroke(smoothed, {
+  const outline = getStroke(smoothStrokePoints(points), {
     size: widthPx * SIZE_SCALE,
     thinning,
     smoothing: 0.65,
@@ -144,8 +143,8 @@ export function strokeOutlinePath(
     last: true,
     easing: (t) => t,
     simulatePressure: !pressureIsReal,
-    start: { cap: true, taper: ends.start ? taperLength(startTaper, widthPx, length) : 0 },
-    end: { cap: true, taper: ends.end ? taperLength(endTaper, widthPx, length) : 0 },
+    start: { cap: true, taper: ends.start ? taperLength(startTaper, widthPx, strokeLength) : 0 },
+    end: { cap: true, taper: ends.end ? taperLength(endTaper, widthPx, strokeLength) : 0 },
   })
   if (outline.length < 2) return ''
   const [x0, y0] = outline[0]

@@ -286,8 +286,8 @@ export function InkLayer(props: InkLayerProps) {
         h: rect.height || cssH,
         erased: new Set(),
         ctx: tool === 'pen' ? openCanvas() : null,
-        outline: createLiveOutline((pts, ends) =>
-          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, 'fountain', ends),
+        outline: createLiveOutline((pts, ends, length) =>
+          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, 'fountain', ends, length),
         ),
         chunks: [],
         real: false,
