@@ -69,6 +69,31 @@ describe('Puck', () => {
     expect(palette()).toBeNull()
   })
 
+  it('a tap on the puck while the palette is open closes it without toggling the tool', () => {
+    vi.useFakeTimers()
+    fire(puck(), 'pointerdown')
+    act(() => void vi.advanceTimersByTime(350))
+    fire(puck(), 'pointerup')
+    expect(palette()).not.toBeNull()
+    tap()
+    expect(palette()).toBeNull()
+    expect(penTool.value).toBe('pen')
+    tap()
+    expect(penTool.value).toBe('eraser')
+  })
+
+  it('a long-press on the puck while the palette is open keeps it open', () => {
+    vi.useFakeTimers()
+    fire(puck(), 'pointerdown')
+    act(() => void vi.advanceTimersByTime(350))
+    fire(puck(), 'pointerup')
+    fire(puck(), 'pointerdown')
+    act(() => void vi.advanceTimersByTime(350))
+    fire(puck(), 'pointerup')
+    expect(palette()).not.toBeNull()
+    expect(penTool.value).toBe('pen')
+  })
+
   it('choosing in the palette keeps it open', () => {
     vi.useFakeTimers()
     fire(puck(), 'pointerdown')

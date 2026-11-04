@@ -1,4 +1,4 @@
-// Floating round control that flips the Pencil between pen and eraser and opens the pen palette on long-press.
+// Floating round control that flips the Pencil between pen and eraser, opens the pen palette on long-press and closes it on a tap.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { Icon } from '../app/icons.tsx'
 import { saveSettings, settings } from '../app/settings.ts'
@@ -19,6 +19,7 @@ interface Gesture {
   startFraction: number
   dragging: boolean
   long: boolean
+  wasOpen: boolean
 }
 
 export function Puck({ visible }: { visible: boolean }) {
@@ -74,7 +75,7 @@ export function Puck({ visible }: { visible: boolean }) {
       // The pointer can no longer be captured.
     }
     measure()
-    gesture.current = { pointerId: e.pointerId, startY: e.clientY, startFraction: settings.value.puckY, dragging: false, long: false }
+    gesture.current = { pointerId: e.pointerId, startY: e.clientY, startFraction: settings.value.puckY, dragging: false, long: false, wasOpen: open }
     clearTimer()
     timer.current = setTimeout(() => {
       timer.current = null
@@ -105,6 +106,8 @@ export function Puck({ visible }: { visible: boolean }) {
       const y = clamp(g.startFraction + (e.clientY - g.startY) / (hostH || 1), 0, 1)
       setDragY(null)
       saveSettings({ puckY: y }).catch(console.error)
+    } else if (g.wasOpen && !g.long) {
+      setOpen(false)
     } else if (!g.long) {
       penTool.value = penTool.value === 'pen' ? 'eraser' : 'pen'
     }
