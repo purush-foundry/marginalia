@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { Icon } from '../app/icons.tsx'
 import { showToast } from '../app/ui.ts'
 import { InkLayer, StrokeSvg } from '../ink/InkLayer.tsx'
-import { fingerDraws, MM_PER_PT, penActivity, setTool, tool, type Tool } from '../ink/tools.ts'
+import { fingerDraws, inkDisplayColor, MM_PER_PT, penActivity, setTool, tool, type Tool } from '../ink/tools.ts'
 import { now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
 import { ImageTooLargeError, prepareImage } from './images.ts'
@@ -163,7 +163,7 @@ function PageView({ box, content, store, onJumpToPage }: PageViewProps) {
               <div
                 key={t.id}
                 class="mg-nb-text"
-                style={{ left: px(t.box.x * w), top: px(t.box.y * w), width: px(t.box.w * w), fontSize: px(TEXT_PT[t.size] * ptPx), color: t.color }}
+                style={{ left: px(t.box.x * w), top: px(t.box.y * w), width: px(t.box.w * w), fontSize: px(TEXT_PT[t.size] * ptPx), color: inkDisplayColor(t.color, dark) }}
               >
                 {t.text}
               </div>

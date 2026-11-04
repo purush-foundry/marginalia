@@ -488,6 +488,17 @@ test('converted text and images show on their pages; the p.N chip jumps to the p
   expect(scroller().scrollTop).toBe(1220 + 84 - 16)
 })
 
+test('black text on a dark page shows in the pale night ink', async () => {
+  await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
+  await act(() => {
+    store.setPageStyle('page-2', { color: 'dark' }, false)
+    store.addText({ page: 'page-1', box: { x: 0.1, y: 0.2, w: 0.6 }, text: 'day', size: 'm', color: '#1c1c1a' })
+    store.addText({ page: 'page-2', box: { x: 0.1, y: 0.2, w: 0.6 }, text: 'night', size: 'm', color: '#1c1c1a' })
+  })
+  expect(page('page-1').querySelector<HTMLElement>('.mg-nb-text')!.style.color).toBe('#1c1c1a')
+  expect(page('page-2').querySelector<HTMLElement>('.mg-nb-text')!.style.color).toBe('#e8e6e1')
+})
+
 test('Image adds the picked image centred on the current page at half its width', async () => {
   await mount(notebook([PAGE_SIZES.a4, PAGE_SIZES.a4]))
   await scrollTo(1220)
