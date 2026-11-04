@@ -86,9 +86,31 @@ The layout and the split are remembered per device. The notebook loads the first
   Ruled wide, Grid, Dots), colour (White · Yellow · Dark), size (A4 · Letter · Standard) and
   orientation, or all pages with **Apply to all pages**.
 - **Zoom:** pinch, or double-tap to switch between fit-width and 200 %; Ctrl-wheel on the laptop.
-- **Images:** paste, drop, **Image**, or **To notes** from a Snip; they land on the current page.
-- **Tools:** the bar has Lasso · Pen · Highlighter · Eraser; ink is stored per page in the
-  page's own width, and a stroke drawn after an image sits above it.
+- **Bar:** Lasso · Pen · Highlighter · Eraser · Text · Image · Add Page · Thumbnails · Template.
+  Ink is stored per page in the page's own width, and strokes, text boxes and images share one
+  stacking order per page: whatever you add last sits on top.
+- **Lasso:** draw a loop round what you want (or a rectangle, with **Rectangular** on in the tool
+  menu); it takes every stroke mostly inside the loop and every text box or image whose centre is
+  inside, and a tap on a text box or image selects just that one. The selection gets a dashed frame
+  and a menu: **Cut · Copy · Duplicate · Delete · Recolor · Front · Back**, plus **Paste** once
+  something is copied. Drag inside the frame to move it, onto another page too; drag a corner to
+  scale it. ⌘C, ⌘X and Delete work on the laptop, and ⌘V pastes where the pointer last was on a
+  page, or in the middle of the page you are looking at. Esc, a tap outside or another tool clears
+  the selection. Copy and paste stay inside the app.
+- **Text boxes:** pick **Text** and tap a page to drop a box 60 % of the page wide and type; the
+  tool stays on Text so the next tap makes another box, and a box you leave empty disappears. Sizes
+  **S · M · L** (10 / 13 / 18 pt) and the colour come from the tool menu. Double-tap a box with the
+  Text tool to edit it again. With the Lasso, drag a selected box to move it and pull its side
+  handles to change its width; the text reflows.
+- **Images:** paste, drop, **Image**, or **To notes** from a Snip; they land on the current page at
+  half its width. They are objects like text boxes: the Lasso selects, moves and scales them, and
+  a Snip keeps its **p.N** chip.
+- **Shapes:** with the Pen or Highlighter, finish a stroke and hold still for half a second; it
+  snaps to a line, rectangle, ellipse, triangle or arrow, and moving before you lift turns and
+  resizes it. Turn **Draw and hold** off in the Pen's tool menu to keep strokes as drawn.
+- **Thumbnails:** shows the pages as a column on the left (a sheet along the bottom on a phone).
+  Tap a page to go there; long-press it for **Delete** and **Duplicate**, or long-press and drag to
+  move it.
 - **v2 notes:** notes from v2 convert into pages the first time they open, the text stacked from
   the top of page 1 and the ink kept where it was drawn.
 
@@ -98,13 +120,15 @@ that lists each page's text and `(image, p.N)` lines.
 ### Tool menu
 
 A round pill floats over the pane you are working in, on every device. Tap it to flip between Pen
-and Eraser; long-press it to expand the tools (Lasso, Pen, Highlighter, Eraser) and their colour
-and thickness slots. Tap a slot to pick it and tap the selected slot again to edit it; drag the
+and Eraser; long-press it to expand the tools (Lasso, Pen, Highlighter, Eraser, and Text over the
+notebook) and their colour and thickness slots. Tap a slot to pick it and tap the selected slot again to edit it; drag the
 pill to any edge to dock it there, and it stays there after a relaunch. The Pencil always uses the
 selected tool and a finger never draws unless **Draw with finger** is on in Settings. On the
 laptop the mouse draws under Pen, Highlighter and Eraser; **Lasso** or **Esc** stops it, and a
-paper always opens in Lasso so a mouse drag selects text. The keys **L**, **P**, **H** and **E**
-pick Lasso, Pen, Highlighter and Eraser outside text fields. In night mode Black ink shows pale so
+paper always opens in Lasso so a mouse drag selects text. The keys **L**, **P**, **H**, **E** and
+**T** pick Lasso, Pen, Highlighter, Eraser and Text outside text fields. On a paper page the Lasso
+selects ink only: a drag that starts on the text still selects text, and the menu has no Front or
+Back. In night mode Black ink shows pale so
 it stays visible; it is still stored as Black.
 
 ### Pens
@@ -185,4 +209,5 @@ GitHub Pages serves at `https://purush-foundry.github.io/marginalia/`. Open apps
 - Pages with a `/Rotate` entry render unrotated.
 - iOS needs 18 or later.
 - Apple Pencil Pro squeeze and double-tap do not reach web apps; use the tool menu.
-- Notebook text cannot be edited yet; text converted from v2 notes shows as read-only boxes.
+- Copy and paste in the notebook use an in-app clipboard; nothing goes to or comes from the
+  system clipboard except pasted images.

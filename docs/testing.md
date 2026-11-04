@@ -141,6 +141,47 @@ What v3 added:
 - `src/app/Toolbar.test.tsx` — no Draw button on any device.
 - `src/pdf/Viewer.test.tsx` — the scroller is the ink viewport.
 
+v3 Phase B added:
+
+- `src/ink/lasso.test.ts` — a stroke is selected at 60 % of its samples inside the loop and not at
+  50 %; objects by box centre; rectangle loops with reversed corners; selection bounds.
+- `src/notes/Lasso.test.tsx` — the dashed loop, the frame and the object menu above it (below it
+  near the page top); Recolor swatches; move with a preview and one commit, and a jittered tap
+  that does not move; corner scaling; rectangle mode; Esc and taps outside; ⌘C, ⌘X, Delete and
+  Backspace, left alone in text fields and over a native text selection; ink only with text spans
+  passed through; a finger taps but only draws the loop with Draw with finger, palm rejection and
+  two-finger taps.
+- `src/notes/clipboard.test.ts` — copied items are relative to the selection's top-left with its
+  extent, and the page is left as it was.
+- `src/notes/notebookStore.test.ts` — move (onto another page too), scale, recolor, front, back,
+  remove, duplicate and paste are one undo step each; `src/annot/store.test.ts` — the paper ink's
+  `updateStrokes`, `addStrokes` and `removeStrokes` likewise.
+- `src/notes/TextBox.test.tsx` — a 60 % box at the tap, kept on the page; point size from the page
+  width; typing, Enter, Esc and blur; external text updates keep the caret; side handles change the
+  width with one commit; drag and double-tap to edit.
+- `src/notes/ImageObject.test.tsx` — corner handles scale about the opposite corner with the aspect
+  kept and a minimum width; drag moves; a tap selects and a pen press on an unselected image is not
+  swallowed; the p.N chip.
+- `src/ink/shapes.test.ts` — ellipse, rectangle, triangle (with overshoot), line and arrow fits; a
+  scribble and short strokes fit nothing; `adjustShape` rotates and scales about the anchor.
+  `src/ink/InkLayer.test.tsx` — a 500 ms hold snaps the live stroke, moving while held turns and
+  scales it, a move restarts the timer, Draw and hold off keeps freehand, the highlighter snaps too.
+- `src/notes/Thumbnails.test.tsx` — paper colour, ink and object boxes; a tap jumps; a long-press
+  menu duplicates and deletes; long-press-drag reorders before or after a page; the sheet's close
+  button.
+- `src/notes/Notebook.test.tsx` — the bar order; the Text tool drops a 60 % box at the tap, edits
+  it and stays on Text, a tap while editing only finishes the edit, an empty box is removed; a lasso
+  move across a page boundary re-parents the selection to the page under the pointer, and undo puts
+  it back; ⌘V pastes at the pointer, else centred on the current page, never in a text field or after
+  a press in the other pane; Thumbnails opens a column beside the pages, a thumbnail tap scrolls to
+  its page, and the phone sheet closes after the tap; a Lasso tap selects a text box (with its side
+  handles) or an image, the Pen does not select images, and a double-tap on text does not zoom.
+- `src/ink/ToolMenu.test.tsx` — the Text panel's colours, Add colour and S · M · L; the Pen's Draw
+  and hold; the Lasso's Rectangular.
+- `src/app/Reader.test.tsx` — a lasso on a PDF page selects ink only, moves it in page units, copies
+  it into the notebook clipboard and deletes it with undo, while presses on text and links pass
+  through; T picks Text, the notes pane's tool menu offers it, and Esc while typing keeps it.
+
 ## Checked in headless Chrome (not on a device)
 
 Against `dist/` served under `/marginalia/`, with a seeded library and cached `attention.pdf`:
@@ -254,6 +295,17 @@ Not yet run; do these before calling v1 done.
 - [ ] A v2 notes file opens as pages on every device, without duplicates.
 - [ ] The pill docks to each edge and stays there after relaunch.
 - [ ] A three-finger double tap redoes.
-- [ ] Typed notes are read-only until Phase B.
 
-The lasso, text boxes, shapes and page thumbnails arrive with Phase B.
+### v3 Phase B
+
+- [ ] Lasso with the Pencil on a notebook page: the loop, the frame, and the object menu near the
+      top of a page (it should flip below the selection on page 1's top edge).
+- [ ] Moving a selection across a page boundary lands it under the Pencil on the next page.
+- [ ] A text box above the keyboard on the iPhone and on the iPad: tapping with Text opens the
+      keyboard at once and typing keeps the caret in view.
+- [ ] Draw-and-hold at 500 ms for each shape: line, rectangle, ellipse, triangle and arrow, with
+      the Pen and the Highlighter; moving while held turns and scales it; the switch turns it off.
+- [ ] Thumbnails: reorder by long-press-drag on the iPad and in the phone's bottom sheet.
+- [ ] Pencil hover dot on an M2 iPad Pro or with a Pencil Pro; note whether Safari sends hover.
+- [ ] Lasso on a PDF page: a Pencil drag on the text still selects text, a drag in the margin
+      selects ink.

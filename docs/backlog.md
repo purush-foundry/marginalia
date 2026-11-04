@@ -124,3 +124,19 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 - `notesLayout`/`splitRatio` from storage are not sanitised.
 - `Reader.tsx` is ~850 lines; `Divider`, `useMedia`, `clampSplit` could move out.
 - `height: 100dvh` on the shell overrides the already-correct `inset: 0`.
+
+### Notebook and lasso (v3 Phase B integration)
+
+- Under the Lasso a text box cannot be edited: the second tap of a double-tap lands on the
+  selection frame. Editing needs the Text tool (or a finger double-tap under an ink tool). An
+  **Edit** item in the object menu for a single text box would fix it.
+- On a paper page under the Lasso, a pen or mouse tap on an area highlight away from the text
+  no longer opens its bar; the lasso takes the press. Text highlights still open (the press lands
+  on a text span).
+- ⌘V prefers the in-app clipboard once something has been copied in the notebook, so an image
+  copied from another app afterwards pastes only through **Image** or drop.
+- A selection dropped on a page of a different width keeps its page-width coordinates, so it
+  lands shifted by the width ratio.
+- The keyboard on a Text-tool tap opens from a focus in the render after the tap; check on iOS
+  (`docs/testing.md`, v3 Phase B) and move the focus into the tap handler if it does not open.
+- `Notebook.tsx` is ~860 lines and `Reader.tsx` ~960; the lasso wiring, text placement, paste and `PaperLasso` could move out.
