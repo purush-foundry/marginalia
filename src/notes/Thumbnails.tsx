@@ -1,9 +1,11 @@
 // Page thumbnail strip: tap jumps, long-press opens Delete and Duplicate, long-press then drag reorders.
 import type { JSX } from 'preact'
+import { memo } from 'preact/compat'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { Icon } from '../app/icons.tsx'
 import { inkOutlinePath } from '../ink/geometry.ts'
-import type { NotePage, PageContent, PaperColor } from './model.ts'
+import { inkDisplayColor } from '../ink/tools.ts'
+import type { NotebookStroke, NotePage, PageContent, PaperColor } from './model.ts'
 import type { NotebookStore } from './notebookStore.ts'
 import './thumbnails.css'
 
@@ -12,6 +14,7 @@ export const THUMB_LONG_PRESS_MS = 500
 const DRAG_PX = 8
 const PAPER: Record<PaperColor, string> = { white: '#ffffff', yellow: '#fbf3d0', dark: '#1f1f21' }
 const TEXT_LINE_H: Record<'s' | 'm' | 'l', number> = { s: 0.03, m: 0.045, l: 0.07 }
+const outlines = new WeakMap<NotebookStroke, string>()
 const EMPTY: PageContent = { strokes: [], texts: [], images: [] }
 
 export interface ThumbnailsProps {
@@ -31,18 +34,28 @@ interface Gesture {
   dragging: boolean
 }
 
+// Outline of a stroke at thumbnail scale, computed once per stroke object.
+function outlineOf(s: NotebookStroke): string {
+  let d = outlines.get(s)
+  if (d === undefined) {
+    d = inkOutlinePath(s.points, s.width, THUMB_W, THUMB_W, s.pen)
+    outlines.set(s, d)
+  }
+  return d
+}
+
 // Page drawn as paper, ink paths and object boxes, all scaled to THUMB_W.
-function Thumb({ page, content }: { page: NotePage; content: PageContent }) {
+const Thumb = memo(function Thumb({ page, content }: { page: NotePage; content: PageContent }) {
   const h = (THUMB_W * page.size.h) / page.size.w
-  const ink = page.color === 'dark' ? '#f2f2f2' : undefined
+  const dark = page.color === 'dark'
   return (
     <svg class="mg-thumb-svg" width={THUMB_W} height={h} viewBox={`0 0 ${THUMB_W} ${h}`} aria-hidden="true">
       <rect width={THUMB_W} height={h} fill={PAPER[page.color]} />
       {content.strokes.map((s) => (
         <path
           key={s.id}
-          d={inkOutlinePath(s.points, s.width, THUMB_W, THUMB_W, s.pen)}
-          fill={ink ?? s.color}
+          d={outlineOf(s)}
+          fill={inkDisplayColor(s.color, dark)}
           opacity={s.tool === 'highlighter' ? 0.4 : undefined}
         />
       ))}
@@ -68,7 +81,7 @@ function Thumb({ page, content }: { page: NotePage; content: PageContent }) {
       ))}
     </svg>
   )
-}
+})
 
 export function Thumbnails({ store, current, layout, onJump, onClose }: ThumbnailsProps): JSX.Element {
   const pages = store.pages.value
@@ -78,7 +91,8 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const swallowClick = useRef(false)
   const [menu, setMenu] = useState<string | null>(null)
-  const [drag, setDrag] = useState<{ from: string; over: string } | null>(null)
+  const [drag, setDrag] = useState<{ from: string; over: string; before: boolean } | null>(null)
+  const lastDrag = useRef('')
 
   const clearTimer = () => {
     if (timer.current !== null) clearTimeout(timer.current)
@@ -100,20 +114,25 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     }
   }, [menu])
 
-  // Page whose thumbnail is nearest the point.
-  const pageAt = (x: number, y: number, fallback: string): string => {
+  // Page nearest the point and whether the point is before that thumbnail's centre.
+  const dropAt = (x: number, y: number, fallback: string): { over: string; before: boolean } => {
     const cells = navRef.current?.querySelectorAll<HTMLElement>('.mg-thumb') ?? []
-    let best = fallback
+    const row = layout === 'sheet'
+    let over = fallback
+    let before = false
     let bestD = Infinity
     cells.forEach((el) => {
       const r = el.getBoundingClientRect()
-      const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2))
+      const cx = r.left + r.width / 2
+      const cy = r.top + r.height / 2
+      const d = Math.hypot(x - cx, y - cy)
       if (d < bestD) {
         bestD = d
-        best = el.dataset.page ?? fallback
+        over = el.dataset.page ?? fallback
+        before = row ? x < cx : y < cy
       }
     })
-    return best
+    return { over, before }
   }
 
   const onDown = (e: PointerEvent, id: string) => {
@@ -145,7 +164,11 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     if (!g.dragging && !far) return
     g.dragging = true
     setMenu(null)
-    setDrag({ from: g.id, over: pageAt(e.clientX, e.clientY, g.id) })
+    const t = dropAt(e.clientX, e.clientY, g.id)
+    const key = `${t.over}:${t.before}`
+    if (key === lastDrag.current) return
+    lastDrag.current = key
+    setDrag({ from: g.id, ...t })
   }
 
   const onUp = (e: PointerEvent) => {
@@ -157,14 +180,19 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
     swallowClick.current = true
     setDrag(null)
     if (!g.dragging) return
-    const over = pageAt(e.clientX, e.clientY, g.id)
-    if (over !== g.id) store.movePage(g.id, over)
+    lastDrag.current = ''
+    const { over, before } = dropAt(e.clientX, e.clientY, g.id)
+    if (over === g.id) return
+    const rest = pages.map((p) => p.id).filter((id) => id !== g.id)
+    const at = rest.indexOf(over)
+    store.movePage(g.id, before ? (rest[at - 1] ?? null) : over)
   }
 
   const onCancel = (e: PointerEvent) => {
     if (gesture.current && e.pointerId !== gesture.current.pointerId) return
     gesture.current = null
     clearTimer()
+    lastDrag.current = ''
     setDrag(null)
   }
 
@@ -191,7 +219,7 @@ export function Thumbnails({ store, current, layout, onJump, onClose }: Thumbnai
               class="mg-thumb"
               data-page={p.id}
               data-dragging={drag?.from === p.id ? '' : undefined}
-              data-over={drag && drag.over === p.id && drag.from !== p.id ? '' : undefined}
+              data-over={drag && drag.over === p.id && drag.from !== p.id ? (drag.before ? 'before' : 'after') : undefined}
               aria-label={`Page ${i + 1}`}
               aria-current={p.id === current ? 'page' : undefined}
               onPointerDown={(e) => onDown(e, p.id)}

@@ -81,6 +81,14 @@
   outline: 2px dashed var(--accent, currentColor);
 }
 
+.mg-thumbs[data-layout='column'] .mg-thumb[data-over='before'] {
+  box-shadow: 0 -4px 0 var(--accent, currentColor);
+}
+
+.mg-thumbs[data-layout='column'] .mg-thumb[data-over='after'] {
+  box-shadow: 0 4px 0 var(--accent, currentColor);
+}
+
 .mg-thumb-box {
   fill: rgba(128, 128, 128, 0.25);
   stroke: rgba(128, 128, 128, 0.7);

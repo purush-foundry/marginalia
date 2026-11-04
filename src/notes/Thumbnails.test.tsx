@@ -2,10 +2,24 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { inkOutlinePath } from '../ink/geometry.ts'
+import { inkDisplayColor } from '../ink/tools.ts'
 import { orderBetween } from '../lib/order.ts'
 import { emptyNotebook, PAGE_SIZES, type NotesDocV2 } from './model.ts'
 import { createNotebookStore, type NotebookStore } from './notebookStore.ts'
 import { THUMB_LONG_PRESS_MS, THUMB_W, Thumbnails } from './Thumbnails.tsx'
+
+const outlines = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('../ink/geometry.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../ink/geometry.ts')>()
+  return {
+    ...real,
+    inkOutlinePath: (...args: Parameters<typeof real.inkOutlinePath>) => {
+      outlines.count++
+      return real.inkOutlinePath(...args)
+    },
+  }
+})
 
 let host: HTMLElement
 let store: NotebookStore
@@ -27,6 +41,7 @@ function notebook(n: number): NotesDocV2 {
 beforeEach(() => {
   vi.useFakeTimers()
   onJump.mockClear()
+  outlines.count = 0
   onClose.mockClear()
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -110,9 +125,9 @@ test('long-press-drag reorders pages', async () => {
   await mount()
   await act(() => { ptr('pointerdown', thumb('page-1'), 0) })
   await hold()
-  await act(() => { ptr('pointermove', thumb('page-1'), 210) })
+  await act(() => { ptr('pointermove', thumb('page-1'), 260) })
   expect(host.querySelector('[role="menu"]')).toBeNull()
-  await act(() => { ptr('pointerup', thumb('page-1'), 210) })
+  await act(() => { ptr('pointerup', thumb('page-1'), 260) })
   expect(ids()).toEqual(['page-2', 'page-3', 'page-1'])
   expect(onJump).not.toHaveBeenCalled()
 })
@@ -135,4 +150,46 @@ test('the sheet layout is a bottom sheet with a close button', async () => {
 test('the column layout has no close button', async () => {
   await mount(2, 'column')
   expect(host.querySelector('.mg-thumbs-close')).toBeNull()
+})
+
+test('a page dropped above the first thumbnail becomes first', async () => {
+  await mount()
+  await act(() => { ptr('pointerdown', thumb('page-3'), 200) })
+  await hold()
+  await act(() => { ptr('pointermove', thumb('page-3'), 10) })
+  await act(() => { ptr('pointerup', thumb('page-3'), 10) })
+  expect(ids()).toEqual(['page-3', 'page-1', 'page-2'])
+})
+
+test('dropping on the upper half of a thumbnail places the page before it', async () => {
+  await mount()
+  await act(() => { ptr('pointerdown', thumb('page-3'), 200) })
+  await hold()
+  await act(() => { ptr('pointermove', thumb('page-3'), 110) })
+  await act(() => { ptr('pointerup', thumb('page-3'), 110) })
+  expect(ids()).toEqual(['page-1', 'page-3', 'page-2'])
+})
+
+test('ink on a dark page keeps its colour except black, which turns pale', async () => {
+  await mount(1, 'column', 'page-1')
+  store.setPageStyle('page-1', { color: 'dark' }, false)
+  const pts = [0.1, 0.1, 0.5, 0.4, 0.3, 0.5]
+  store.addStroke({ id: 'k', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#1c1c1a', width: 0.004, points: pts, createdAt: 1, updatedAt: 1 })
+  store.addStroke({ id: 'r', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#d32f2f', width: 0.004, points: pts, createdAt: 1, updatedAt: 1 })
+  await act(() => {})
+  const fills = Array.from(thumb('page-1').querySelectorAll('path')).map((p) => p.getAttribute('fill'))
+  expect(fills).toEqual(['#e8e6e1', '#d32f2f'])
+  expect(fills[0]).toBe(inkDisplayColor('#1c1c1a', true))
+})
+
+test('a drag over one thumbnail outlines each stroke once', async () => {
+  await mount()
+  store.addStroke({ id: 's1', page: 'page-1', tool: 'pen', pen: 'fountain', color: '#112233', width: 0.004, points: [0.1, 0.1, 0.5, 0.4, 0.3, 0.5], createdAt: 1, updatedAt: 1 })
+  await act(() => {})
+  const before = outlines.count
+  await act(() => { ptr('pointerdown', thumb('page-1'), 0) })
+  await hold()
+  for (let i = 0; i < 10; i++) await act(() => { ptr('pointermove', thumb('page-1'), 120 + i) })
+  expect(outlines.count).toBe(before)
+  expect(before).toBe(1)
 })
