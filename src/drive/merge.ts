@@ -15,12 +15,18 @@ function winner<T extends Versioned>(x: T, y: T): T {
   return x
 }
 
-// Unions two item lists by id, ordered by createdAt then id.
-function mergeItems<T extends Versioned>(a: T[], b: T[]): T[] {
+// Like winner, but a tie between versions with the same tombstone state goes to the greater JSON, so both merge orders agree.
+function orderFreeWinner<T extends Versioned>(x: T, y: T): T {
+  if (x.updatedAt !== y.updatedAt || !x.deleted !== !y.deleted) return winner(x, y)
+  return JSON.stringify(y) > JSON.stringify(x) ? y : x
+}
+
+// Unions two item lists by id, ordered by createdAt then id; `pick` chooses between two versions of one id.
+function mergeItems<T extends Versioned>(a: T[], b: T[], pick: (x: T, y: T) => T = winner): T[] {
   const byId = new Map<string, T>()
   for (const item of [...a, ...b]) {
     const seen = byId.get(item.id)
-    byId.set(item.id, seen ? winner(seen, item) : item)
+    byId.set(item.id, seen ? pick(seen, item) : item)
   }
   return [...byId.values()].sort((x, y) => x.createdAt - y.createdAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
 }
@@ -53,7 +59,7 @@ function notebookTouched(n: NotesDocV2): number {
   return Math.max(0, ...[...n.pages, ...n.strokes, ...n.texts, ...n.images].map((i) => i.updatedAt))
 }
 
-/** Pages, strokes, texts and images per id, newest updatedAt wins, tombstones win ties; pdfId and pdfName from the more recently touched doc. */
+/** Pages, strokes, texts and images per id, newest updatedAt wins, tombstones win ties, other ties go to the greater JSON; pdfId and pdfName from the more recently touched doc. */
 export function mergeNotebooks(a: NotesDocV2, b: NotesDocV2): NotesDocV2 {
   const newer = notebookTouched(b) > notebookTouched(a) ? b : a
   return {
@@ -61,9 +67,9 @@ export function mergeNotebooks(a: NotesDocV2, b: NotesDocV2): NotesDocV2 {
     kind: 'notes',
     pdfId: newer.pdfId,
     pdfName: newer.pdfName,
-    pages: mergeItems(a.pages, b.pages),
-    strokes: mergeItems(a.strokes, b.strokes),
-    texts: mergeItems(a.texts, b.texts),
-    images: mergeItems(a.images, b.images),
+    pages: mergeItems(a.pages, b.pages, orderFreeWinner),
+    strokes: mergeItems(a.strokes, b.strokes, orderFreeWinner),
+    texts: mergeItems(a.texts, b.texts, orderFreeWinner),
+    images: mergeItems(a.images, b.images, orderFreeWinner),
   }
 }

@@ -147,4 +147,25 @@ describe('mergeNotebooks', () => {
       expect(merged.texts[1]).toEqual(b.texts[1])
     }
   })
+
+  test('two conversions that differ by one block in the middle merge the same in either order', () => {
+    const block = (id: string, order: string, t: number) => ({ kind: 'text' as const, id, order, text: `${id} `.repeat(200), createdAt: t, updatedAt: t })
+    const base: NotesDoc = {
+      ...emptyNotes('pdf1', 'paper.pdf', 0),
+      blocks: [block('t1', 'a', 1), block('t3', 'c', 3), block('t4', 'd', 4), block('gone', 'e', 5)],
+      strokes: [{ kind: 'ink', id: 's1', color: '#000', width: 0.004, points: [0.1, 0.2, 0.5], createdAt: 6, updatedAt: 6 }],
+    }
+    base.blocks[3] = { ...base.blocks[3], deleted: true }
+    const a = convertV1(base)
+    const b = convertV1({ ...base, blocks: [...base.blocks, block('t2', 'b', 2)] })
+    expect(a.texts.find((t) => t.id === 't3')!.box).not.toEqual(b.texts.find((t) => t.id === 't3')!.box)
+
+    expect(mergeNotebooks(a, b)).toEqual(mergeNotebooks(b, a))
+    expect(mergeNotebooks(a, b).texts.map((t) => t.id)).toEqual(['t1', 't2', 't3', 't4', 'gone'])
+
+    const live = { ...a, strokes: [{ ...a.strokes[0], updatedAt: 9 }] }
+    const dead = { ...a, strokes: [{ ...a.strokes[0], updatedAt: 9, deleted: true }] }
+    expect(mergeNotebooks(live, dead).strokes[0].deleted).toBe(true)
+    expect(mergeNotebooks(dead, live).strokes[0].deleted).toBe(true)
+  })
 })

@@ -54,6 +54,19 @@ test('deletePage tombstones the page and hides its items; undo restores both', (
   expect(store.content.value.get(second.id)!.texts.map((x) => x.id)).toEqual([t.id])
 })
 
+test('deletePage leaves the only live page in place', () => {
+  const { store, persist } = make()
+  const second = store.addPage()
+  store.deletePage(second.id)
+  persist.mockClear()
+
+  store.deletePage('page-1')
+  expect(pageIds(store)).toEqual(['page-1'])
+  expect(persist).not.toHaveBeenCalled()
+  store.undo()
+  expect(pageIds(store)).toEqual(['page-1', second.id])
+})
+
 test('movePage reorders pages by order key', () => {
   const { store } = make()
   const b = store.addPage()

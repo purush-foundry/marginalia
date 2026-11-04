@@ -18,6 +18,7 @@ export interface NotebookStore {
   canRedo: ReadonlySignal<boolean>
   /** Adds a page after `after` (undefined: last; null: first) styled like the page it follows (the first page when null). */
   addPage(after?: string | null, style?: Partial<PageStyle>): NotePage
+  /** Tombstones a page unless it is the only live page. */
   deletePage(id: string): void
   /** Copies the page's style and live items with new ids into a page right after it. */
   duplicatePage(id: string): NotePage
@@ -206,7 +207,9 @@ export function createNotebookStore(initial: NotesDocV2, persist: (doc: NotesDoc
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
     addPage: (after, style) => change([{ collection: 'pages', item: pageItem(after, style) }])[0] as NotePage,
-    deletePage: (id) => tombstone('pages', id),
+    deletePage(id) {
+      if (pages.value.some((p) => p.id !== id)) tombstone('pages', id)
+    },
     duplicatePage(id) {
       const c = content.value.get(id)
       if (!c) throw new Error(`No page ${id}`)
