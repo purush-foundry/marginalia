@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { notesToMarkdown, sidecarToMarkdown } from './markdown'
+import { emptyNotebook, type ImageObject, type NotePage, type NotesDocV2, type TextObject } from '../notes/model'
+import { notebookToMarkdown, notesToMarkdown, sidecarToMarkdown } from './markdown'
 import { emptyNotes, emptySidecar, type NoteBlock } from '../types'
 
 const b = { x: 0.1, y: 0.1, w: 0.2, h: 0.02 }
@@ -97,5 +98,41 @@ describe('notesToMarkdown', () => {
     doc.blocks = [text('1', 'a', ''), text('2', 'b', '  '), image('3', 'c', 2)]
     doc.blocks[2].deleted = true
     expect(notesToMarkdown(doc)).toBe('')
+  })
+})
+
+describe('notebookToMarkdown', () => {
+  const page = (id: string, order: string, deleted?: boolean): NotePage => ({
+    id, order, size: { w: 210, h: 297 }, template: 'blank', color: 'white', createdAt: 1, updatedAt: 1, ...(deleted ? { deleted } : {}),
+  })
+  const text = (id: string, onPage: string, t: string, y: number, x = 0.1): TextObject => ({
+    id, page: onPage, box: { x, y, w: 0.5 }, text: t, size: 'm', color: '#000', z: 'V', createdAt: 1, updatedAt: 1,
+  })
+  const image = (id: string, onPage: string, y: number, pdfPage?: number): ImageObject => ({
+    id, page: onPage, box: { x: 0.1, y, w: 0.5 }, src: 'x', aspect: 1, z: 'V', createdAt: 1, updatedAt: 1, ...(pdfPage ? { pdfPage } : {}),
+  })
+  const notebook = (patch: Partial<NotesDocV2>): NotesDocV2 => ({ ...emptyNotebook('p', 'paper.pdf', 1), ...patch })
+
+  it('notebookToMarkdown lists text and images per page in page order, top to bottom', () => {
+    const doc = notebook({
+      pages: [page('P3', 'c'), page('P2', 'b', true), page('P1', 'a')],
+      texts: [text('t3', 'P3', 'Third', 0.1), text('t1', 'P1', 'First', 0.1), text('gone', 'P2', 'Hidden page', 0.1), text('e', 'P1', '  ', 0.5)],
+      images: [image('i1', 'P1', 0.3, 3)],
+    })
+    expect(notebookToMarkdown(doc)).toBe('## Notes\n\n### Page 1\n\nFirst\n\n(image, p.3)\n\n### Page 2\n\nThird\n')
+  })
+
+  it('notebookToMarkdown skips empty pages but counts them, and orders by x on one line', () => {
+    const doc = notebook({
+      pages: [page('P1', 'a'), page('P2', 'b'), page('P3', 'c')],
+      texts: [text('right', 'P3', 'Right', 0.2, 0.6), text('left', 'P3', 'Left', 0.2, 0.1), { ...text('dead', 'P1', 'Dead', 0.1), deleted: true }],
+      images: [image('plain', 'P3', 0.4)],
+    })
+    expect(notebookToMarkdown(doc)).toBe('## Notes\n\n### Page 3\n\nLeft\n\nRight\n\n(image)\n')
+  })
+
+  it('notebookToMarkdown is empty when there is no text or image', () => {
+    expect(notebookToMarkdown(notebook({}))).toBe('')
+    expect(notebookToMarkdown(notebook({ texts: [text('e', 'page-1', '', 0.1)], images: [{ ...image('i', 'page-1', 0.2), deleted: true }] }))).toBe('')
   })
 })

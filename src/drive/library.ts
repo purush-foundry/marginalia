@@ -9,10 +9,10 @@ import {
   SIDECAR_SUFFIX,
 } from '../config'
 import { idbDel, idbGet, idbGetAll, idbKeys, idbSet } from '../lib/idb'
+import { convertV1, emptyNotebook, isNotebookDoc, type NotesDocV2 } from '../notes/model'
 import {
   FOLDER_MIME,
   PDF_MIME,
-  emptyNotes,
   emptySidecar,
   isNotesDoc,
   type DriveNode,
@@ -34,7 +34,7 @@ import {
   updateJsonFile,
 } from './api'
 import { getAccessToken } from './auth'
-import { mergeNotes, mergeSidecars } from './merge'
+import { mergeNotebooks, mergeSidecars } from './merge'
 
 interface CachedFile {
   version: string
@@ -59,7 +59,7 @@ interface StoredCompanion<T> {
   dirty: boolean
 }
 
-/** One kind of per-PDF companion file and how it is named, stored, indexed, merged and validated. */
+/** One kind of per-PDF companion file and how it is named, stored, indexed, merged, validated and upgraded. */
 interface Companion<T> {
   kind: 'annotations' | 'notes'
   store: 'sidecars' | 'notes'
@@ -70,14 +70,15 @@ interface Companion<T> {
   map(index: LibraryIndex): Record<string, DriveNode>
   empty(pdfId: string, pdfName: string): T
   merge(a: T, b: T): T
-  accepts(remote: unknown): remote is T
+  accepts(remote: unknown): boolean
+  upgrade(doc: unknown): T
   unparseableIsForeign: boolean
   newer(remote: unknown): boolean
   label: string
 }
 
 /** A downloaded companion file: a document to merge, a foreign file to replace, or a newer-schema document to leave alone. */
-type Download<T> = { status: 'ok'; doc: T } | { status: 'foreign' } | { status: 'newer' }
+type Download<T> = { status: 'ok'; doc: T; upgraded: boolean } | { status: 'foreign' } | { status: 'newer' }
 
 interface SyncState {
   status: 'idle' | 'syncing' | 'offline' | 'error'
@@ -106,7 +107,7 @@ const NOTES_QUEUE_PREFIX = 'notes:'
 function isNewerNotes(remote: unknown): boolean {
   if (typeof remote !== 'object' || remote === null) return false
   const { kind, schema } = remote as { kind?: unknown; schema?: unknown }
-  return kind === 'notes' && typeof schema === 'number' && schema > 1
+  return kind === 'notes' && typeof schema === 'number' && schema > 2
 }
 
 // True for an annotations document: an object with a highlights array.
@@ -125,12 +126,13 @@ const ANNOTATIONS: Companion<Sidecar> = {
   empty: (pdfId, pdfName) => emptySidecar(pdfId, pdfName, 0),
   merge: mergeSidecars,
   accepts: isSidecarDoc,
+  upgrade: (doc) => doc as Sidecar,
   unparseableIsForeign: false,
   newer: () => false,
   label: 'annotation',
 }
 
-const NOTES: Companion<NotesDoc> = {
+const NOTEBOOK: Companion<NotesDocV2> = {
   kind: 'notes',
   store: 'notes',
   tag: 'notes',
@@ -138,19 +140,20 @@ const NOTES: Companion<NotesDoc> = {
   nameFor: notesNameFor,
   queueKey: (pdfId) => NOTES_QUEUE_PREFIX + pdfId,
   map: (index) => index.notes ?? {},
-  empty: (pdfId, pdfName) => emptyNotes(pdfId, pdfName, 0),
-  merge: mergeNotes,
-  accepts: isNotesDoc,
+  empty: (pdfId, pdfName) => emptyNotebook(pdfId, pdfName, 0),
+  merge: mergeNotebooks,
+  accepts: (x) => isNotesDoc(x) || isNotebookDoc(x),
+  upgrade: (x) => (isNotebookDoc(x) ? x : convertV1(x as NotesDoc)),
   unparseableIsForeign: true,
   newer: isNewerNotes,
   label: 'notes',
 }
 
-const COMPANIONS: readonly Companion<unknown>[] = [ANNOTATIONS, NOTES]
+const COMPANIONS: readonly Companion<unknown>[] = [ANNOTATIONS, NOTEBOOK]
 
 // The companion kind and PDF id a queue key stands for.
 function fromQueueKey(key: string): [Companion<unknown>, string] {
-  return key.startsWith(NOTES_QUEUE_PREFIX) ? [NOTES, key.slice(NOTES_QUEUE_PREFIX.length)] : [ANNOTATIONS, key]
+  return key.startsWith(NOTES_QUEUE_PREFIX) ? [NOTEBOOK, key.slice(NOTES_QUEUE_PREFIX.length)] : [ANNOTATIONS, key]
 }
 
 interface PendingSave {
@@ -543,10 +546,27 @@ function emptyFor<T>(c: Companion<T>, pdfId: string): T {
   return c.empty(pdfId, library.peek()?.papers[pdfId]?.name ?? '')
 }
 
-// The stored record of the kind, or undefined when there is none or its document is not of the kind.
+// The stored record of the kind with its document upgraded and whether upgrading changed it; undefined when there is none or it is not of the kind.
+async function readUpgraded<T>(c: Companion<T>, pdfId: string): Promise<{ stored: StoredCompanion<T>; upgraded: boolean } | undefined> {
+  const stored = await idbGet<StoredCompanion<unknown>>(c.store, pdfId)
+  if (!stored || !c.accepts(stored.sidecar)) return undefined
+  const sidecar = c.upgrade(stored.sidecar)
+  return { stored: { ...stored, sidecar }, upgraded: sidecar !== stored.sidecar }
+}
+
+// The stored record of the kind with its document upgraded, or undefined when there is none or its document is not of the kind.
 async function readStored<T>(c: Companion<T>, pdfId: string): Promise<StoredCompanion<T> | undefined> {
-  const stored = await idbGet<StoredCompanion<T>>(c.store, pdfId)
-  return stored && c.accepts(stored.sidecar) ? stored : undefined
+  return (await readUpgraded(c, pdfId))?.stored
+}
+
+// Stores the upgraded document of a record that upgrading changed, dirty and queued for upload.
+function keepUpgraded<T>(c: Companion<T>, pdfId: string): Promise<void> {
+  return localLane(async () => {
+    const latest = await readUpgraded(c, pdfId)
+    if (!latest?.upgraded) return
+    await idbSet(c.store, pdfId, { ...latest.stored, dirty: true })
+    await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
+  })
 }
 
 // Deletes the stored record of the kind when its document is not of the kind.
@@ -557,12 +577,13 @@ function dropInvalid<T>(c: Companion<T>, pdfId: string): Promise<void> {
   })
 }
 
-// The latest local document of the kind: the pending edit, else the valid stored record, else an empty one.
+// The latest local document of the kind: the pending edit, else the valid stored record (stored back when upgraded), else an empty one.
 async function load<T>(c: Companion<T>, pdfId: string): Promise<T> {
   const pending = pendingSaves.get(c.queueKey(pdfId))
   if (pending) return pending.doc as T
-  const stored = await readStored(c, pdfId)
-  if (stored) return stored.sidecar
+  const found = await readUpgraded(c, pdfId)
+  if (found?.upgraded) await keepUpgraded(c, pdfId)
+  if (found) return found.stored.sidecar
   await dropInvalid(c, pdfId)
   return emptyFor(c, pdfId)
 }
@@ -572,9 +593,14 @@ export function loadSidecar(pdfId: string): Promise<Sidecar> {
   return load(ANNOTATIONS, pdfId)
 }
 
-/** The latest local notes (including an unsaved debounced edit), or empty notes. */
-export function loadNotes(pdfId: string): Promise<NotesDoc> {
-  return load(NOTES, pdfId)
+/** The latest local notebook (including an unsaved debounced edit), converted from schema 1 when needed, or an empty notebook. */
+export function loadNotebook(pdfId: string): Promise<NotesDocV2> {
+  return load(NOTEBOOK, pdfId)
+}
+
+/** Retired v2 call: always rejects. */
+export function loadNotes(_pdfId: string): Promise<NotesDoc> {
+  return Promise.reject(new Error('Notes moved to the notebook'))
 }
 
 async function persist<T>(c: Companion<T>, pdfId: string, doc: T): Promise<void> {
@@ -632,10 +658,13 @@ export function saveSidecar(pdfId: string, sidecar: Sidecar): void {
   save(ANNOTATIONS, pdfId, sidecar)
 }
 
-/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS with its own pending entry and queue key: merges into the local notes, marks them dirty and queues an upload. */
-export function saveNotes(pdfId: string, doc: NotesDoc): void {
-  save(NOTES, pdfId, doc)
+/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS with its own pending entry and queue key: merges into the local notebook, marks it dirty and queues an upload. */
+export function saveNotebook(pdfId: string, doc: NotesDocV2): void {
+  save(NOTEBOOK, pdfId, doc)
 }
+
+/** Retired v2 call: does nothing. */
+export function saveNotes(_pdfId: string, _doc: NotesDoc): void {}
 
 /** Writes every debounced sidecar and notes edit to IndexedDB and the upload queue immediately. */
 export async function flushPendingWrites(): Promise<void> {
@@ -666,7 +695,7 @@ async function locate<T>(c: Companion<T>, pdfId: string): Promise<DriveNode | un
   return found
 }
 
-// Downloads a companion file and sorts it into a document of the kind, a newer-schema document or a foreign file.
+// Downloads a companion file and sorts it into an upgraded document of the kind, a newer-schema document or a foreign file.
 async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
   let remote: unknown
   try {
@@ -676,10 +705,12 @@ async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
     throw err
   }
   if (c.newer(remote)) return { status: 'newer' }
-  return c.accepts(remote) ? { status: 'ok', doc: remote } : { status: 'foreign' }
+  if (!c.accepts(remote)) return { status: 'foreign' }
+  const doc = c.upgrade(remote)
+  return { status: 'ok', doc, upgraded: doc !== remote }
 }
 
-// Merges the remote file into the local record and returns the result; a foreign remote leaves the local document dirty and queued, a newer-schema one leaves it untouched; both return null.
+// Merges the remote file into the local record and returns the result, dirty and queued when the remote was upgraded; a foreign remote leaves the local document dirty and queued, a newer-schema one leaves it untouched; both return null.
 async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveNode): Promise<T | null> {
   const remote = await download(c, remoteNode.id)
   if (remote.status === 'newer') return null
@@ -693,8 +724,9 @@ async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveN
       return null
     }
     const doc = latest ? c.merge(latest.sidecar, remote.doc) : remote.doc
-    const record: StoredCompanion<T> = { sidecar: doc, ...seen, dirty: latest?.dirty ?? false }
+    const record: StoredCompanion<T> = { sidecar: doc, ...seen, dirty: remote.upgraded || (latest?.dirty ?? false) }
     await idbSet(c.store, pdfId, record)
+    if (remote.upgraded) await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
     return doc
   })
 }
@@ -717,9 +749,14 @@ export function refreshSidecar(pdfId: string): Promise<Sidecar | null> {
   return refresh(ANNOTATIONS, pdfId)
 }
 
-/** If the remote notes file's version differs from the one last merged: download, merge, store and return the notes; else null, also when the remote is not a notes document. */
-export function refreshNotes(pdfId: string): Promise<NotesDoc | null> {
-  return refresh(NOTES, pdfId)
+/** If the remote notes file's version differs from the one last merged: download, convert from schema 1 when needed, merge, store and return the notebook; else null, also when the remote is not a notes document. */
+export function refreshNotebook(pdfId: string): Promise<NotesDocV2 | null> {
+  return refresh(NOTEBOOK, pdfId)
+}
+
+/** Retired v2 call: always resolves null. */
+export function refreshNotes(_pdfId: string): Promise<NotesDoc | null> {
+  return Promise.resolve(null)
 }
 
 // One message for the per-kind failure counts, joined with ' · '.

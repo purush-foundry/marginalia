@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { emptyNotes, emptySidecar, type AreaHighlight, type NoteStroke, type NotesDoc, type Sidecar, type TextBlock } from '../types'
-import { mergeNotes, mergeSidecars } from './merge'
+import { convertV1, emptyNotebook, type NotePage, type NotebookStroke, type NotesDocV2, type TextObject } from '../notes/model'
+import { emptyNotes, emptySidecar, type AreaHighlight, type NotesDoc, type Sidecar } from '../types'
+import { mergeNotebooks, mergeSidecars } from './merge'
 
 function hl(id: string, updatedAt: number, extra: Partial<AreaHighlight> = {}): AreaHighlight {
   return {
@@ -84,52 +85,66 @@ describe('mergeSidecars', () => {
   })
 })
 
-function text(id: string, updatedAt: number, extra: Partial<TextBlock> = {}): TextBlock {
-  return { kind: 'text', id, createdAt: 1, updatedAt, order: 'V', text: id, ...extra }
-}
+describe('mergeNotebooks', () => {
+  const page = (id: string, updatedAt: number, extra: Partial<NotePage> = {}): NotePage =>
+    ({ id, createdAt: 1, updatedAt, order: 'V', size: { w: 210, h: 297 }, template: 'blank', color: 'white', ...extra })
+  const ink = (id: string, updatedAt: number, extra: Partial<NotebookStroke> = {}): NotebookStroke =>
+    ({ id, createdAt: 1, updatedAt, page: 'p', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [], z: 'V', ...extra })
+  const text = (id: string, updatedAt: number, extra: Partial<TextObject> = {}): TextObject =>
+    ({ id, createdAt: 1, updatedAt, page: 'p', box: { x: 0, y: 0, w: 0.5 }, text: id, size: 'm', color: '#000', z: 'V', ...extra })
+  const notebook = (patch: Partial<NotesDocV2>): NotesDocV2 => ({ ...emptyNotebook('pdf1', 'paper.pdf', 0), pages: [], ...patch })
 
-function stroke(id: string, updatedAt: number, extra: Partial<NoteStroke> = {}): NoteStroke {
-  return { kind: 'ink', id, createdAt: 1, updatedAt, color: '#000', width: 0.01, points: [0, 0, 0.5], ...extra }
-}
+  test('mergeNotebooks merges pages, strokes, texts and images by id with tombstones', () => {
+    const image = { id: 'img', createdAt: 1, page: 'p', box: { x: 0, y: 0, w: 0.5 }, src: 'x', aspect: 1, z: 'W' }
+    const a = notebook({
+      pdfName: 'old.pdf',
+      pages: [page('p', 5, { template: 'grid' }), page('onlyA', 2)],
+      strokes: [ink('s', 3)],
+      texts: [text('t', 10, { text: 'old' })],
+      images: [{ ...image, updatedAt: 4 }],
+    })
+    const b = notebook({
+      pdfName: 'renamed.pdf',
+      pages: [page('p', 6, { template: 'dots' }), page('onlyB', 2)],
+      strokes: [ink('s', 4, { deleted: true })],
+      texts: [text('t', 20, { text: 'new' })],
+      images: [{ ...image, updatedAt: 4, deleted: true }],
+    })
 
-function notes(patch: Partial<NotesDoc>): NotesDoc {
-  return { ...emptyNotes('pdf1', 'paper.pdf', 0), ...patch }
-}
-
-describe('mergeNotes', () => {
-  test('mergeNotes keeps the newest block and stroke per id and honours tombstones', () => {
-    const a = notes({ blocks: [text('x', 10, { text: 'old' }), text('gone', 5)], strokes: [stroke('s', 3)] })
-    const b = notes({ blocks: [text('x', 20, { text: 'new' }), text('gone', 5, { deleted: true })], strokes: [stroke('s', 4, { deleted: true })] })
-
-    for (const merged of [mergeNotes(a, b), mergeNotes(b, a)]) {
-      const byId = Object.fromEntries(merged.blocks.map((block) => [block.id, block]))
-      expect((byId.x as TextBlock).text).toBe('new')
-      expect(byId.gone.deleted).toBe(true)
-      expect(merged.strokes).toHaveLength(1)
-      expect(merged.strokes[0].deleted).toBe(true)
+    for (const merged of [mergeNotebooks(a, b), mergeNotebooks(b, a)]) {
+      expect(merged.pages.map((p) => p.id).sort()).toEqual(['onlyA', 'onlyB', 'p'])
+      expect(merged.pages.find((p) => p.id === 'p')!.template).toBe('dots')
+      expect(merged.strokes).toEqual([ink('s', 4, { deleted: true })])
+      expect(merged.texts).toEqual([text('t', 20, { text: 'new' })])
+      expect(merged.images).toEqual([{ ...image, updatedAt: 4, deleted: true }])
+      expect(merged).toMatchObject({ schema: 2, kind: 'notes', pdfId: 'pdf1', pdfName: 'renamed.pdf' })
     }
   })
 
-  test('mergeNotes keeps blocks two devices inserted concurrently, even with the same order key', () => {
-    const a = notes({ blocks: [text('mine', 7, { order: 'k' })] })
-    const b = notes({ blocks: [text('theirs', 8, { order: 'k' })] })
+  test('two devices converting the same schema-1 notes merge without duplicate pages or items', () => {
+    const v1: NotesDoc = {
+      ...emptyNotes('pdf1', 'paper.pdf', 0),
+      background: 'grid',
+      blocks: [
+        { kind: 'text', id: 't1', order: 'a', text: 'Title', createdAt: 1, updatedAt: 1 },
+        { kind: 'text', id: 't2', order: 'b', text: 'Body', createdAt: 2, updatedAt: 2 },
+        { kind: 'image', id: 'i1', order: 'c', src: 'x', w: 0.8, aspect: 0.5, page: 3, createdAt: 3, updatedAt: 3 },
+        { kind: 'text', id: 't3', order: 'd', text: '', createdAt: 4, updatedAt: 4 },
+      ],
+      strokes: [0.25, 1.6, 1.4].map((y, i) => ({
+        kind: 'ink' as const, id: `s${i + 1}`, color: '#000', width: 0.004, points: [0.1, y - 0.05, 0.5, 0.2, y + 0.05, 0.5], createdAt: 5 + i, updatedAt: 5 + i,
+      })),
+    }
+    const a = convertV1(v1)
+    const b = convertV1(v1)
+    b.texts = b.texts.map((t) => (t.id === 't2' ? { ...t, text: 'Body, edited', updatedAt: 50 } : t))
 
-    expect(mergeNotes(a, b).blocks.map((block) => block.id).sort()).toEqual(['mine', 'theirs'])
-  })
-
-  test('mergeNotes takes the newer background', () => {
-    const a = notes({ background: 'grid', backgroundUpdatedAt: 5 })
-    const b = notes({ background: 'dots', backgroundUpdatedAt: 9 })
-
-    expect(mergeNotes(a, b)).toMatchObject({ background: 'dots', backgroundUpdatedAt: 9 })
-    expect(mergeNotes(b, a)).toMatchObject({ background: 'dots', backgroundUpdatedAt: 9 })
-  })
-
-  test('mergeNotes takes pdfName from the more recently touched doc', () => {
-    const a = notes({ pdfName: 'old.pdf', blocks: [text('x', 3)] })
-    const b = notes({ pdfName: 'renamed.pdf', blocks: [text('y', 6)] })
-
-    expect(mergeNotes(a, b).pdfName).toBe('renamed.pdf')
-    expect(mergeNotes(b, a).pdfName).toBe('renamed.pdf')
+    for (const merged of [mergeNotebooks(a, b), mergeNotebooks(b, a)]) {
+      expect(merged.pages.map((p) => p.id)).toEqual(['page-1', 'page-2'])
+      expect(merged.strokes.map((s) => s.id)).toEqual(['s1', 's2', 's3'])
+      expect(merged.texts.map((t) => t.id)).toEqual(['t1', 't2'])
+      expect(merged.images.map((i) => i.id)).toEqual(['i1'])
+      expect(merged.texts[1]).toEqual(b.texts[1])
+    }
   })
 })

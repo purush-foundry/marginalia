@@ -1,4 +1,5 @@
-import type { NotesDoc, Sidecar } from '../types'
+import type { NotesDocV2 } from '../notes/model'
+import type { Sidecar } from '../types'
 
 interface Versioned {
   id: string
@@ -47,23 +48,22 @@ export function mergeSidecars(a: Sidecar, b: Sidecar): Sidecar {
   return merged
 }
 
-// Latest change time anywhere in the notes.
-function notesTouched(n: NotesDoc): number {
-  return Math.max(n.backgroundUpdatedAt, ...[...n.blocks, ...n.strokes].map((i) => i.updatedAt))
+// Latest change time anywhere in the notebook.
+function notebookTouched(n: NotesDocV2): number {
+  return Math.max(0, ...[...n.pages, ...n.strokes, ...n.texts, ...n.images].map((i) => i.updatedAt))
 }
 
-/** Blocks and strokes per id, newest updatedAt wins, tombstones win ties; background newest wins; pdfName from the more recently touched doc. */
-export function mergeNotes(a: NotesDoc, b: NotesDoc): NotesDoc {
-  const newer = notesTouched(b) > notesTouched(a) ? b : a
-  const background = b.backgroundUpdatedAt > a.backgroundUpdatedAt ? b : a
+/** Pages, strokes, texts and images per id, newest updatedAt wins, tombstones win ties; pdfId and pdfName from the more recently touched doc. */
+export function mergeNotebooks(a: NotesDocV2, b: NotesDocV2): NotesDocV2 {
+  const newer = notebookTouched(b) > notebookTouched(a) ? b : a
   return {
-    schema: 1,
+    schema: 2,
     kind: 'notes',
     pdfId: newer.pdfId,
     pdfName: newer.pdfName,
-    blocks: mergeItems(a.blocks, b.blocks),
+    pages: mergeItems(a.pages, b.pages),
     strokes: mergeItems(a.strokes, b.strokes),
-    background: background.background,
-    backgroundUpdatedAt: background.backgroundUpdatedAt,
+    texts: mergeItems(a.texts, b.texts),
+    images: mergeItems(a.images, b.images),
   }
 }

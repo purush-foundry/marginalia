@@ -1,5 +1,6 @@
 import { sortHighlights } from '../annot/store'
 import { compareOrder } from '../lib/order'
+import type { NotesDocV2 } from '../notes/model'
 import type { Box, HighlightColor, NotesDoc, Sidecar } from '../types'
 
 export interface ExportOptions {
@@ -48,4 +49,21 @@ export function notesToMarkdown(doc: NotesDoc): string {
     else if (b.text.trim()) lines.push(b.text)
   }
   return lines.length ? ['## Notes', ...lines].join('\n\n') + '\n' : ''
+}
+
+/** A `## Notes` section with a `### Page N` per live page holding text or images, each listed top to bottom; empty when there is nothing to list. */
+export function notebookToMarkdown(doc: NotesDocV2): string {
+  const entries = [
+    ...doc.texts.filter((t) => t.text.trim()).map((t) => ({ item: t, line: t.text })),
+    ...doc.images.map((m) => ({ item: m, line: m.pdfPage ? `(image, p.${m.pdfPage})` : '(image)' })),
+  ].filter((e) => !e.item.deleted)
+  const out: string[] = []
+  doc.pages.filter((p) => !p.deleted).sort(compareOrder).forEach((page, i) => {
+    const lines = entries
+      .filter((e) => e.item.page === page.id)
+      .sort((a, b) => a.item.box.y - b.item.box.y || a.item.box.x - b.item.box.x)
+      .map((e) => e.line)
+    if (lines.length) out.push(`### Page ${i + 1}`, ...lines)
+  })
+  return out.length ? ['## Notes', ...out].join('\n\n') + '\n' : ''
 }
