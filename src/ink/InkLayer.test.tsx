@@ -24,8 +24,8 @@ import {
   type EraserSettings,
 } from './tools.ts'
 
-// Default pen width: 0.35 mm on a 210 mm page.
-const W = mmToFraction(0.35, 210)
+// Default pen width: 0.5 mm on a 210 mm page.
+const W = mmToFraction(0.5, 210)
 
 // Puts one colour and one width in the pen palette and selects them.
 function usePen(color: string, widthMm: number) {
@@ -619,17 +619,17 @@ describe('InkLayer pen and highlighter strokes', () => {
     palettes.value = { ...DEFAULT_PALETTES, pen: { ...DEFAULT_PALETTES.pen, widthIndex: 2 } }
     const text = await mount({ pageWidthMm: 210 })
     stroke(text, 'pen', [20, 40], [100, 200])
-    expect(added[0]).toMatchObject({ tool: 'pen', pen: 'brush', width: 0.5 / 210, color: '#1c1c1a' })
+    expect(added[0]).toMatchObject({ tool: 'pen', pen: 'brush', width: 0.7 / 210, color: '#1c1c1a' })
     await mount({ strokes: added })
     expect(layer.querySelector('svg.ink-pen path')!.getAttribute('d')).toBe(
-      inkOutlinePath(added[0].points, 0.5 / 210, 200, 400, 'brush'),
+      inkOutlinePath(added[0].points, 0.7 / 210, 200, 400, 'brush'),
     )
   })
 
   it('a pen stroke on a narrower page is wider as a fraction of it', async () => {
     const text = await mount({ pageWidthMm: 105 })
     stroke(text, 'pen', [20, 40], [100, 200])
-    expect(added[0].width).toBe(0.35 / 105)
+    expect(added[0].width).toBe(0.5 / 105)
   })
 
   it('a stroke without a pen style renders as fountain', async () => {

@@ -624,7 +624,7 @@ test('ink on a notebook page uses the page width in mm and dark paper puts the h
     pen(p1, 'pointermove', 216, 216)
     pen(p1, 'pointerup', 216, 216)
   })
-  expect(store.doc.value.strokes[0].width).toBeCloseTo(0.35 / 160.5)
+  expect(store.doc.value.strokes[0].width).toBeCloseTo(0.5 / 160.5, 10)
   setTool('highlighter')
   await act(() => {
     pen(p1, 'pointerdown', 116, 316)

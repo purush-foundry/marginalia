@@ -109,8 +109,8 @@ it stays visible; it is still stored as Black.
 
 ### Pens
 
-- **Pen types:** Ball, Fountain and Brush. Widths are in millimetres of the page, 0.25 / 0.35 /
-  0.5 by default, so a line is the same thickness on a paper page and a notebook page.
+- **Pen types:** Ball, Fountain and Brush. Widths are in millimetres of the page, 0.3 / 0.5 / 0.7
+  by default with 0.5 selected, so a line is the same thickness on a paper page and a notebook page.
 - **Highlighter:** 3 / 5 / 8 mm by default; it sits under the ink on dark paper and in night mode,
   and **Draw straight line** keeps only its ends.
 - **Eraser:** **Stroke** removes whole strokes and **Segment** cuts out only what it passes over;

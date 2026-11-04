@@ -762,7 +762,7 @@ describe('Reader tools', () => {
         mouse('pointermove', 200, 150)
         mouse('pointerup', 200, 150)
       })
-      expect(lastSaved().inks.at(-1)!.width).toBeCloseTo(0.35 / (612 * 0.3528))
+      expect(lastSaved().inks.at(-1)!.width).toBeCloseTo(0.5 / (612 * 0.3528), 10)
     } finally {
       act(() => render(null, page))
       page.remove()

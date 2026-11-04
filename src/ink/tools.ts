@@ -55,7 +55,7 @@ export type TextSize = 's' | 'm' | 'l'
 export const DEFAULT_PALETTES: Record<PaletteTool, ToolPalette> = {
   pen: {
     colors: ['#1c1c1a', '#2f6fed', '#d33a2c'],
-    widthsMm: [0.25, 0.35, 0.5],
+    widthsMm: [0.3, 0.5, 0.7],
     colorIndex: 0,
     widthIndex: 1,
   },

@@ -14,7 +14,7 @@ describe('tool model', () => {
     expect(t.previousTool.value).toBe('pen')
     expect(t.palettes.value.pen).toEqual({
       colors: ['#1c1c1a', '#2f6fed', '#d33a2c'],
-      widthsMm: [0.25, 0.35, 0.5],
+      widthsMm: [0.3, 0.5, 0.7],
       colorIndex: 0,
       widthIndex: 1,
     })
@@ -39,7 +39,7 @@ describe('tool model', () => {
     })
     expect(t.lassoSettings.value).toEqual({ rect: false })
     expect(t.textSize.value).toBe('m')
-    expect(t.activeWidthMm('pen')).toBe(0.35)
+    expect(t.activeWidthMm('pen')).toBe(0.5)
     expect(t.activeColor('highlighter')).toBe('#ffe066')
   })
 
@@ -68,7 +68,7 @@ describe('tool model', () => {
     expect(t.activeColor('pen')).toBe('#2f6fed')
     t.selectWidth('pen', 1)
     t.moveWidthSlot('pen', 2, 0)
-    expect(t.activeWidthMm('pen')).toBe(0.35)
+    expect(t.activeWidthMm('pen')).toBe(0.5)
   })
 
   test('palette operations replace the value instead of mutating it', () => {
