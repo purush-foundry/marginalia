@@ -58,8 +58,9 @@ What v2 added:
 - `src/app/index-html.test.ts` — no status-bar-style meta; `viewport-fit=cover` stays.
 - `src/lib/order.test.ts` — order keys sort as strings, appends and prepends stay ordered, inserts
   between neighbours stay distinct, equal keys break by id.
-- `src/drive/merge.test.ts` — notes merge per block and stroke by id with tombstones, keeps
-  concurrent inserts, takes the newer background and name.
+- ~~`src/drive/merge.test.ts` — notes merge per block and stroke by id with tombstones, keeps
+  concurrent inserts, takes the newer background and name.~~ Superseded in v3: schema-1 notes are
+  converted, then merged as notebooks (below).
 - `src/drive/library.test.ts` — notes files: create, locate by tag, merge before upload, offline
   queue, isolation from the sidecar, a sidecar edit never re-uploads the notes, a foreign or
   newer-schema file is never overwritten, a large file goes up resumably; a notes file carries
@@ -73,17 +74,19 @@ What v2 added:
 - `src/app/ui.test.ts` — Copy image writes a PNG `ClipboardItem` or downloads it.
 - `src/app/Toolbar.test.tsx` — Snip arms with the "Drag a box" hint; the Paper · Both · Notes
   control from 700 px; below it Back alone in the lead and a Notes toggle, with eight controls
-  before Copy as Markdown; no pen strip on touch; Undo acts on the given history.
-- `src/app/Reader.test.tsx` — the notes file is read only when the sheet is shown; Both from
-  700 px, and a stored Both on a narrow window shows the paper and keeps the setting; at 390 px the
+  before Copy as Markdown; no Draw button on any device; Undo acts on the given history.
+- `src/app/Reader.test.tsx` — ~~the notes file is read only when the sheet is shown~~ (superseded
+  in v3); Both from 700 px, and a stored Both on a narrow window shows the paper and keeps the setting; at 390 px the
   toolbar has the Notes toggle and no title, at 1024 px the title and the radiogroup, and the
-  toggle switches both ways; the divider is a 44 px target and stores the split; To notes adds the crop linked to its page and shows the sheet; Undo, ⌘Z and
+  toggle switches both ways; the divider is a 44 px target and stores the split; ~~To notes adds the crop linked to its page and shows the sheet~~ (superseded in v3); Undo, ⌘Z and
   the document undo events act on the pane touched last; Copy as Markdown appends the Notes
   section; closing after a notes edit queues the notes and flushes; Notes and back returns the
-  paper to where it was; a p.N chip in Notes shows the paper; the puck sits over the active pane.
+  paper to where it was; a p.N chip in Notes shows the paper; ~~the puck sits over the active
+  pane~~ (superseded in v3 by the tool menu).
 - `src/annot/store.test.ts` — `documentUndo: false` ignores the document undo and redo events.
-- `src/export/markdown.test.ts` — the Notes section lists text blocks in order and images as
-  `(image, p.N)`, and is empty when there is nothing to list.
+- ~~`src/export/markdown.test.ts` — the Notes section lists text blocks in order and images as
+  `(image, p.N)`, and is empty when there is nothing to list.~~ Superseded in v3 by
+  `notebookToMarkdown` (below).
 
 What v3 added:
 
@@ -112,16 +115,21 @@ What v3 added:
 - `src/notes/notebookStore.test.ts` — pages, strokes, text and images with undo, the only live
   page is never deleted, Add Page copies the style, remote replace clears history.
 - `src/drive/merge.test.ts` — notebooks merge pages, strokes, text and images by id; two devices
-  converting the same v1 notes merge without duplicates.
+  converting the same v1 notes merge without duplicates; equal-time ties agree in either order
+  and a large notebook with snips merges with its stored copy without stringifying points or src.
+- `src/lib/idb.test.ts` — the version-3 upgrade copies every `notes` record into `notebooks` and
+  leaves `notes` in place; a new database has no `notes` store.
 - `src/drive/library.test.ts` — schema 1 and 2 notes files load, a schema-1 file converts and the
-  conversion is uploaded, and queued edits from a v2 client merge into a schema-2 remote.
+  conversion is uploaded, and queued edits from a v2 client merge into a schema-2 remote;
+  notebooks are read from `notebooks`, never from what a v2 window writes to `notes`.
 - `src/export/markdown.test.ts` — the Notes section lists each live page's text and images top to
   bottom, skipping empty pages but counting them.
 - `src/notes/viewport.test.ts` — zoom clamps, page widths and the scroll that keeps a point still.
 - `src/notes/paper.test.tsx` — ruled, grid and dot templates at their spacing, and the rule
   colour on dark paper.
 - `src/notes/Notebook.test.tsx` — pages stack and centre; templates and colours; Add Page; the
-  Template sheet; ink in page-width units and millimetres; pinch, double-tap and Ctrl-wheel zoom;
+  Template sheet; ink in page-width units and millimetres; pinch, double-tap and Ctrl-wheel zoom,
+  which scales live and commits one zoom when the wheel stops; black text pale on dark paper;
   pull-to-add; a pinch while the pen is down does nothing; images, text and the p.N chip, which a
   pen tap opens without drawing; strokes above or below images by z; the tool row; segment-eraser
   pieces shown during the drag; a stroke on one page does not re-outline another.
@@ -206,23 +214,25 @@ Not yet run; do these before calling v1 done.
 - [ ] Remove the home-screen app and add it again; the top of the screen is solid with no blur on
       iPhone and iPad, and nothing sits under the status bar.
 - [ ] Pencil strokes look the same before and after lift at every width and colour.
-- [ ] Pencil strokes are as sharp while drawing as after lift on an iPad landscape page and on a
-      long notes sheet; if the live stroke is soft, report it.
-- [ ] Black ink is visible at night, pale on the dark page and on the dark notes sheet, while
-      drawing and after lift; the puck ring and the Black swatch show it pale too.
+- [ ] Pencil strokes are as sharp while drawing as after lift on an iPad landscape page; if the
+      live stroke is soft, report it. (The long notes sheet is gone in v3.)
+- [ ] Black ink is visible at night, pale on the dark page, while drawing and after lift. (The
+      dark notes sheet and the puck ring are gone in v3.)
 - [ ] The app fills the screen with no gap at the bottom on iPhone and iPad after re-adding the
       home-screen app.
-- [ ] The puck flips Pen ⇄ Eraser with a Pencil tap and opens the palette on long-press, drags
-      along the edge, and stays put after relaunch.
+- ~~The puck flips Pen ⇄ Eraser with a Pencil tap and opens the palette on long-press, drags
+  along the edge, and stays put after relaunch.~~ Superseded in v3 by the tool menu pill.
 - [ ] Snip works with the Pencil in the Pen tool, with a finger, and with the palm resting.
 - [ ] Copy image pastes into Notes and Messages.
-- [ ] To notes lands the crop on the sheet, and its p.N chip scrolls the paper.
+- ~~To notes lands the crop on the sheet, and its p.N chip scrolls the paper.~~ Superseded in v3:
+  the crop lands on a notebook page.
 - [ ] Both on iPad landscape with the divider; Both hidden on iPhone, where the toolbar shows the
       Notes toggle and Night, Sidebar and Threads without scrolling.
-- [ ] Tapping empty sheet space raises the keyboard on iPhone and iPad.
-- [ ] Typing near the bottom of the sheet keeps the caret above the keyboard.
-- [ ] A note typed on the iPad appears on the laptop after sync.
-- [ ] A sheet with five snips still syncs (resumable upload; confirm the upload finishes and the
+- ~~Tapping empty sheet space raises the keyboard on iPhone and iPad.~~
+- ~~Typing near the bottom of the sheet keeps the caret above the keyboard.~~
+- ~~A note typed on the iPad appears on the laptop after sync.~~ The three above are superseded
+  in v3: there is no sheet, and typing returns with text boxes in Phase B.
+- [ ] A notebook with five snips still syncs (resumable upload; confirm the upload finishes and the
       file appears in Drive).
 - [ ] The home pictures from Drive appear on every device in grayscale, the iPad switches between
       the landscape and portrait pictures on rotation, and the drawing comes back when the files
@@ -244,5 +254,6 @@ Not yet run; do these before calling v1 done.
 - [ ] A v2 notes file opens as pages on every device, without duplicates.
 - [ ] The pill docks to each edge and stays there after relaunch.
 - [ ] A three-finger double tap redoes.
+- [ ] Typed notes are read-only until Phase B.
 
 The lasso, text boxes, shapes and page thumbnails arrive with Phase B.
