@@ -1,7 +1,7 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_SETTINGS, settings } from '../app/settings.ts'
+import { DEFAULT_SETTINGS, settings, type DockEdge } from '../app/settings.ts'
 import { hslToHex } from './color.ts'
 import { TOOL_MENU_LONG_PRESS_MS, ToolMenu } from './ToolMenu.tsx'
 import {
@@ -23,7 +23,7 @@ import {
 
 const host = document.createElement('div')
 host.style.position = 'relative'
-host.getBoundingClientRect = () => new DOMRect(0, 0, 400, 1000)
+const hostSize = (w: number, h: number) => (host.getBoundingClientRect = () => new DOMRect(0, 0, w, h))
 
 const root = () => host.querySelector<HTMLElement>('.mg-toolmenu')!
 const main = () => host.querySelector<HTMLButtonElement>('button.mg-toolmenu-main')!
@@ -72,8 +72,45 @@ const expand = () => {
 }
 const select = (t: Tool) => act(() => setTool(t))
 
+// Host-coordinate extent of an element on one axis, resolved through inline offsets up to the host.
+function span(el: HTMLElement, axis: 'x' | 'y', hostLen: number): [number, number] {
+  const [lo, hi, len, max] =
+    axis === 'x' ? (['left', 'right', 'width', 'maxWidth'] as const) : (['top', 'bottom', 'height', 'maxHeight'] as const)
+  const parent = el.parentElement === host ? [0, hostLen] : span(el.parentElement!, axis, hostLen)
+  const size = el.classList.contains('mg-toolmenu') ? 44 : parseFloat(el.style[len] || el.style[max])
+  if (el.style[lo]) {
+    const start = parent[0] + parseFloat(el.style[lo])
+    return [start, start + size]
+  }
+  const end = parent[1] - parseFloat(el.style[hi])
+  return [end - size, end]
+}
+function expectInside(label: string, w: number, h: number) {
+  const el = byLabel<HTMLElement>(label)
+  const [x0, x1] = span(el, 'x', w)
+  const [y0, y1] = span(el, 'y', h)
+  expect(x0).toBeGreaterThanOrEqual(0)
+  expect(x1).toBeLessThanOrEqual(w)
+  expect(y0).toBeGreaterThanOrEqual(0)
+  expect(y1).toBeLessThanOrEqual(h)
+  expect(el.style.overflowY).toBe('auto')
+  return { x0, x1, y0, y1 }
+}
+function openEditorsAt(edge: DockEdge, w: number, h: number) {
+  hostSize(w, h)
+  settings.value = { ...settings.value, toolDock: { edge, at: 0.6 } }
+  act(() => render(null, host))
+  act(() => render(<ToolMenu tools={['lasso', 'pen', 'highlighter', 'eraser']} />, host))
+  expand()
+  click(byLabel('Colour 1'))
+  expectInside('Edit colour', w, h)
+  click(byLabel('Thickness 2'))
+  expectInside('Edit thickness', w, h)
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
+  hostSize(400, 1000)
   document.body.append(host)
   tool.value = 'pen'
   previousTool.value = 'pen'
@@ -145,6 +182,41 @@ describe('ToolMenu', () => {
     expect(tool.value).toBe('pen')
     tap()
     expect(tool.value).toBe('eraser')
+  })
+
+  it('a keyboard click expands and collapses the menu without changing the tool', () => {
+    const key = () => act(() => void main().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 })))
+    key()
+    expect(panel()).not.toBeNull()
+    expect(main().getAttribute('aria-expanded')).toBe('true')
+    key()
+    expect(panel()).toBeNull()
+    expect(tool.value).toBe('pen')
+    act(() => void main().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })))
+    expect(panel()).toBeNull()
+  })
+
+  it('the colour editor fits a 320 × 600 host with a right dock', () => {
+    hostSize(320, 600)
+    expand()
+    click(byLabel('Colour 1'))
+    const r = expectInside('Edit colour', 320, 600)
+    expect(r.x1 - r.x0).toBe(176)
+  })
+
+  it('the colour editor fits a 1000 × 240 host with a bottom dock and scrolls', () => {
+    settings.value = { ...settings.value, toolDock: { edge: 'bottom', at: 0.5 } }
+    hostSize(1000, 240)
+    expand()
+    click(byLabel('Colour 1'))
+    const r = expectInside('Edit colour', 1000, 240)
+    expect(r.y1 - r.y0).toBeLessThan(240)
+  })
+
+  it('both editors stay inside the host at every dock', () => {
+    for (const [w, h] of [[320, 600], [1000, 240], [400, 1000]]) {
+      for (const edge of ['left', 'right', 'top', 'bottom'] as const) openEditorsAt(edge, w, h)
+    }
   })
 
   it('the tool buttons switch tools and keep the menu open', () => {

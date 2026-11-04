@@ -34,6 +34,10 @@ export const TOOL_MENU_LONG_PRESS_MS = 350
 const SIZE = 44
 const MARGIN = 8
 const DRAG_PX = 8
+const GAP = 8
+const COLUMN_W = 104
+const ROW_H = 56
+const EDITOR_W = 176
 const WHEEL_PX = 160
 const WHEEL_STEP_DEG = 3
 const DOT_MIN_PX = 4
@@ -142,16 +146,52 @@ function dockedStyle(edge: DockEdge, box: Box): Record<string, string> {
   return { bottom: `${MARGIN}px`, left: `${box.left}px` }
 }
 
-// Anchors the panel and editors to the pill's side facing the larger part of the host, capped to fit.
-function popAnchor(edge: DockEdge, box: Box, size: Size): Record<string, string> {
+const px = (n: number) => `${n}px`
+
+// Main-axis anchor of a column panel or its editor: toward the larger part of the host, capped to fit.
+function columnAnchor(box: Box, size: Size): Record<string, string> {
+  return box.top + SIZE / 2 > size.h / 2
+    ? { bottom: '0px', maxHeight: px(box.top + SIZE - MARGIN) }
+    : { top: '0px', maxHeight: px(size.h - box.top - MARGIN) }
+}
+
+// Places the panel beside the pill: a fixed-width column on left/right edges, a fixed-height row on top/bottom.
+function panelStyle(edge: DockEdge, box: Box, size: Size): Record<string, string> {
+  const off = px(SIZE + GAP)
   if (vertical(edge)) {
-    return box.top + SIZE / 2 > size.h / 2
-      ? { bottom: '0px', maxHeight: `${box.top + SIZE - MARGIN}px` }
-      : { top: '0px', maxHeight: `${size.h - box.top - MARGIN}px` }
+    return { [edge]: off, width: px(COLUMN_W), ...columnAnchor(box, size) }
   }
-  return box.left + SIZE / 2 > size.w / 2
-    ? { right: '0px', maxWidth: `${box.left + SIZE - MARGIN}px` }
-    : { left: '0px', maxWidth: `${size.w - box.left - MARGIN}px` }
+  const toRight = box.left + SIZE / 2 > size.w / 2
+  return {
+    [edge]: off,
+    height: px(ROW_H),
+    ...(toRight
+      ? { right: '0px', maxWidth: px(box.left + SIZE - MARGIN) }
+      : { left: '0px', maxWidth: px(size.w - box.left - MARGIN) }),
+  }
+}
+
+// Places an editor past the panel, shifted and capped so it stays inside the host, scrolling when cut short.
+function editorStyle(edge: DockEdge, box: Box, size: Size): Record<string, string> {
+  const width = Math.max(0, Math.min(EDITOR_W, size.w - 2 * MARGIN))
+  const fitX = (x: number) => clamp(x, MARGIN, size.w - MARGIN - width)
+  if (vertical(edge)) {
+    const panelLeft = edge === 'right' ? box.left - GAP - COLUMN_W : box.left + SIZE + GAP
+    const x = fitX(edge === 'right' ? panelLeft - GAP - width : panelLeft + COLUMN_W + GAP)
+    return { width: px(width), left: px(x - panelLeft), ...columnAnchor(box, size), overflowY: 'auto' }
+  }
+  const toRight = box.left + SIZE / 2 > size.w / 2
+  const panelX = toRight ? box.left + SIZE : box.left
+  const x = fitX(toRight ? panelX - width : panelX)
+  const room =
+    edge === 'bottom' ? box.top - GAP - ROW_H - GAP - MARGIN : size.h - MARGIN - (box.top + SIZE + GAP + ROW_H + GAP)
+  return {
+    width: px(width),
+    ...(toRight ? { right: px(panelX - x - width) } : { left: px(x - panelX) }),
+    [edge]: px(ROW_H + GAP),
+    maxHeight: px(Math.max(0, room)),
+    overflowY: 'auto',
+  }
 }
 
 export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
@@ -210,7 +250,8 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
       }
     : dockedBox(edge, at, size)
   const rootStyle = drag ? { left: `${box.left}px`, top: `${box.top}px` } : dockedStyle(edge, box)
-  const anchor = popAnchor(edge, box, size)
+  const panelPos = panelStyle(edge, box, size)
+  const editorPos = editorStyle(edge, box, size)
 
   const onDown = (e: PointerEvent) => {
     if (!e.isPrimary || e.button !== 0) return
@@ -315,11 +356,16 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={onCancel}
+        onClick={(e) => {
+          if (e.detail !== 0) return
+          if (open) collapse()
+          else setOpen(true)
+        }}
       >
         <Icon name={active} />
       </button>
       {open && (
-        <div class="mg-toolmenu-panel" role="dialog" aria-label="Tools" style={anchor}>
+        <div class="mg-toolmenu-panel" role="dialog" aria-label="Tools" style={panelPos}>
           <div class="mg-toolmenu-scroll">
             <div class="mg-toolmenu-group" role="group" aria-label="Tool">
               {tools.map((t) => (
@@ -364,10 +410,10 @@ export function ToolMenu({ tools }: { tools: readonly Tool[] }): JSX.Element {
             {active === 'eraser' && <EraserOptions />}
           </div>
           {slotTool && editor?.tool === slotTool && editor.kind === 'color' && (
-            <ColorEditor t={slotTool} index={editor.index} style={anchor} />
+            <ColorEditor t={slotTool} index={editor.index} style={editorPos} />
           )}
           {slotTool && editor?.tool === slotTool && editor.kind === 'width' && (
-            <WidthEditor t={slotTool} index={editor.index} style={anchor} />
+            <WidthEditor t={slotTool} index={editor.index} style={editorPos} />
           )}
         </div>
       )}

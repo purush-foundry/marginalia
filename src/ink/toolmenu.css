@@ -26,33 +26,17 @@
 .mg-toolmenu-panel {
   position: absolute;
   display: flex;
+  box-sizing: border-box;
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-
-.mg-toolmenu[data-edge='right'] .mg-toolmenu-panel {
-  right: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='left'] .mg-toolmenu-panel {
-  left: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='top'] .mg-toolmenu-panel {
-  top: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-panel {
-  bottom: calc(100% + 8px);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow);
 }
 
 .mg-toolmenu-scroll {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 104px;
+  width: 100%;
   box-sizing: border-box;
   padding: 6px;
   max-height: inherit;
@@ -67,6 +51,9 @@
   flex-direction: row;
   align-items: center;
   width: auto;
+  height: 100%;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .mg-toolmenu-group {
@@ -140,30 +127,12 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: 176px;
   box-sizing: border-box;
   padding: 8px;
-  overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-}
-
-.mg-toolmenu[data-edge='right'] .mg-toolmenu-editor {
-  right: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='left'] .mg-toolmenu-editor {
-  left: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='top'] .mg-toolmenu-editor {
-  top: calc(100% + 8px);
-}
-
-.mg-toolmenu[data-edge='bottom'] .mg-toolmenu-editor {
-  bottom: calc(100% + 8px);
 }
 
 .mg-presets {
