@@ -14,6 +14,7 @@ const SMOOTH_SIGMA_PX = 1.5
 const PRESSURE_WINDOW = 5
 const SIZE_SCALE = 0.96
 const TAPER_MAX_FRACTION = 0.25
+const TAPER_MIN_SIZES = 2
 
 function fmt(n: number): string {
   return String(Math.round(n * 100) / 100)
@@ -117,6 +118,12 @@ function arcLength(pts: number[][]): number {
   return total
 }
 
+// Taper length capped at a fraction of the stroke's length; 0 (a round cap) when the capped taper is too short.
+function taperLength(multiple: number, widthPx: number, strokeLength: number): number {
+  const taper = Math.min(multiple * widthPx, TAPER_MAX_FRACTION * strokeLength)
+  return taper < TAPER_MIN_SIZES * widthPx ? 0 : taper
+}
+
 // Outline of a freehand stroke as a closed SVG path, in the same units as the points.
 export function strokeOutlinePath(
   points: number[],
@@ -128,7 +135,7 @@ export function strokeOutlinePath(
   if (points.length < 3) return ''
   const { thinning, startTaper, endTaper } = PEN_STYLES[pen]
   const smoothed = smoothStrokePoints(points)
-  const maxTaper = TAPER_MAX_FRACTION * arcLength(smoothed)
+  const length = arcLength(smoothed)
   const outline = getStroke(smoothed, {
     size: widthPx * SIZE_SCALE,
     thinning,
@@ -137,8 +144,8 @@ export function strokeOutlinePath(
     last: true,
     easing: (t) => t,
     simulatePressure: !pressureIsReal,
-    start: { cap: true, taper: ends.start ? Math.min(startTaper * widthPx, maxTaper) : 0 },
-    end: { cap: true, taper: ends.end ? Math.min(endTaper * widthPx, maxTaper) : 0 },
+    start: { cap: true, taper: ends.start ? taperLength(startTaper, widthPx, length) : 0 },
+    end: { cap: true, taper: ends.end ? taperLength(endTaper, widthPx, length) : 0 },
   })
   if (outline.length < 2) return ''
   const [x0, y0] = outline[0]

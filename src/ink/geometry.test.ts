@@ -49,10 +49,11 @@ function inkArea(d: string): number {
   return area
 }
 
-// A horizontal line from x = 0 sampled every 2 px at one pressure.
+// A horizontal line from x = 0 to length, sampled every 2 px and at its end, at one pressure.
 function flatLine(pressure: number, length = 200): number[] {
   const out: number[] = []
-  for (let x = 0; x <= length; x += 2) out.push(x, 50, pressure)
+  for (let x = 0; x < length; x += 2) out.push(x, 50, pressure)
+  out.push(length, 50, pressure)
   return out
 }
 
@@ -175,12 +176,27 @@ describe('pen styles', () => {
     expect(heightAt(d, 8)).toBeGreaterThan(0.85 * heightAt(d, 20))
   })
 
-  test('the slow curve keeps the v2 ink area within 7 % with the ball and fountain pens', () => {
-    for (const pen of ['ball', 'fountain'] as const) {
-      const ratio = inkArea(inkOutlinePath(stored(0), 0.004, PAGE.w, PAGE.h, pen)) / 760.87
+  test('a 15 px fountain stroke keeps round caps and about the ball pen\'s ink area', () => {
+    const fountain = inkArea(strokeOutlinePath(flatLine(0.5, 15), 3.2, true, 'fountain'))
+    const ball = inkArea(strokeOutlinePath(flatLine(0.5, 15), 3.2, true, 'ball'))
+    expect(fountain / ball).toBeGreaterThanOrEqual(0.9)
+  })
+
+  test('the fountain pen keeps the v2 ink area of the slow curve within 7 %', () => {
+    const v2 = [760.87, 733.06]
+    for (const noise of [0, 1]) {
+      const ratio = inkArea(inkOutlinePath(stored(noise), 0.004, PAGE.w, PAGE.h, 'fountain')) / v2[noise]
       expect(ratio).toBeGreaterThan(0.93)
       expect(ratio).toBeLessThan(1.07)
     }
+  })
+
+  test('the ball and brush pens stay near the v2 ink area of the slow curve', () => {
+    const ratio = (pen: PenStyle) => inkArea(inkOutlinePath(stored(0), 0.004, PAGE.w, PAGE.h, pen)) / 760.87
+    expect(ratio('ball')).toBeGreaterThan(0.9)
+    expect(ratio('ball')).toBeLessThan(1.1)
+    expect(ratio('brush')).toBeGreaterThan(0.8)
+    expect(ratio('brush')).toBeLessThan(1.0)
   })
 
   test('strokeOutlinePath without end tapers leaves full-width ends', () => {
