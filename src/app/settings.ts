@@ -12,6 +12,8 @@ export interface AppSettings extends Settings {
   penColor: string
   /** Pen width as a fraction of page or sheet width. */
   penWidth: number
+  /** Tool puck centre as a fraction of the host height. */
+  puckY: number
 }
 
 const KEY = 'app'
@@ -27,6 +29,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   penSeen: false,
   penColor: DEFAULT_PEN_COLOR,
   penWidth: DEFAULT_PEN_WIDTH,
+  puckY: 0.6,
 }
 
 export const settings = signal<AppSettings>(DEFAULT_SETTINGS)
@@ -42,6 +45,7 @@ export async function loadSettings(): Promise<AppSettings> {
 
 /** Applies a patch to the signal and stores the result. */
 export async function saveSettings(patch: Partial<AppSettings>): Promise<void> {
+  if (patch.puckY !== undefined) patch = { ...patch, puckY: Math.min(1, Math.max(0, patch.puckY)) }
   settings.value = { ...settings.value, ...patch }
   await idbSet('settings', KEY, settings.value)
 }
