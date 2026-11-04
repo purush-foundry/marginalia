@@ -36,7 +36,7 @@ Vitest runs in happy-dom. The shell's own tests, and what the final fix wave add
   (`privacy.html`) alone.
 - `src/app/pwa.test.ts` — the service worker checks for an update on launch and on becoming visible.
 - `src/app/App.test.tsx` — token renewal runs from pointerup and click, never pointerdown; the
-  `theme-color` meta follows night mode.
+  `theme-color` meta and the night ink follow night mode.
 - `src/app/RootPicker.test.tsx` — the root picker opens nested folders with breadcrumbs and picks
   one; a failed pick re-enables the buttons and shows the error.
 - `src/app/boot.test.tsx` — the stored library renders while Google sign-in never finishes loading.
@@ -48,13 +48,16 @@ Vitest runs in happy-dom. The shell's own tests, and what the final fix wave add
 What v2 added:
 
 - `src/ink/InkLayer.test.tsx` — the live frame is filled with the outline the committed stroke
-  gets; predicted samples are drawn live, never stored.
+  gets; predicted samples are drawn live, never stored; Black strokes, live and committed, show in
+  the pale ink at night and keep their stored colour.
 - `src/ink/PenStrip.test.tsx` — three widths and six colours with the active ones marked; a pick
-  returns from the eraser to the pen; Select only with `withSelect`; the stacked layout.
+  returns from the eraser to the pen; Select only with `withSelect`; the stacked layout; the Black
+  swatch shows pale at night.
 - `src/app/settings.test.ts` — pen colour and width round-trip per device; values outside the
   presets fall back.
-- `src/ink/Puck.test.tsx` — a tap flips Pen ⇄ Eraser, a long-press opens the palette, a drag
-  along the edge moves the puck and is remembered, the puck and palette stay inside the host.
+- `src/ink/Puck.test.tsx` — a tap flips Pen ⇄ Eraser, a long-press opens the palette, a tap while
+  the palette is open closes it without flipping, a drag along the edge moves the puck and is
+  remembered, the puck and palette stay inside the host, the colour ring shows Black pale at night.
 - `src/library/quotes.test.ts` — the quotation pick is deterministic; every quotation is short
   and attributed.
 - `src/library/homeArt.test.ts` — the drawing without pictures; Drive pictures cached by version,
@@ -68,23 +71,27 @@ What v2 added:
   concurrent inserts, takes the newer background and name.
 - `src/drive/library.test.ts` — notes files: create, locate by tag, merge before upload, offline
   queue, isolation from the sidecar, a sidecar edit never re-uploads the notes, a foreign or
-  newer-schema file is never overwritten, a large file goes up resumably; home pictures recorded in
-  the index.
+  newer-schema file is never overwritten, a large file goes up resumably; a notes file carries
+  `notesFor` and no `pdf` key, so a v1 sidecar lookup never returns it; a stored or downloaded
+  annotations body without `highlights` opens as an empty sidecar, is never merged and never
+  uploaded; home pictures recorded in the index.
 - `src/notes/notesStore.test.ts` — blocks in order, split and join, typing as one undo step,
   image resize clamps, strokes, background, remote replace, its own undo stack.
 - `src/notes/images.test.ts` — long edge 1600 px, JPEG at 0.82 or PNG with transparency, steps
-  down to fit 1.5 MB, gives up below 400 px, never upscales.
+  down to fit 1.5 MB, gives up below 400 px, never upscales, closes the decoded image.
 - `src/notes/NotesSheet.test.tsx` — Enter, Backspace, title, images from paste, drop and picker,
   resize, delete, the p.N chip, background menu, ink in sheet units, the caret above the keyboard,
-  a pointerdown outside the sheet drops the image selection.
+  a pointerdown outside the sheet drops the image selection, Black ink shows pale at night.
 - `src/pdf/Viewer.test.tsx` — an armed Snip takes the next box from the pen in the Pen tool, from a
   finger, and from a pen landing during a palm-started drag.
 - `src/app/ui.test.ts` — Copy image writes a PNG `ClipboardItem` or downloads it.
 - `src/app/Toolbar.test.tsx` — Snip arms with the "Drag a box" hint; the Paper · Both · Notes
-  control offers Both only when allowed; no pen strip on touch; Undo acts on the given history.
+  control from 700 px; below it Back alone in the lead and a Notes toggle, with eight controls
+  before Copy as Markdown; no pen strip on touch; Undo acts on the given history.
 - `src/app/Reader.test.tsx` — the notes file is read only when the sheet is shown; Both from
-  700 px, and a stored Both on a narrow window shows the paper and keeps the setting; the divider
-  stores the split; To notes adds the crop linked to its page and shows the sheet; Undo, ⌘Z and
+  700 px, and a stored Both on a narrow window shows the paper and keeps the setting; at 390 px the
+  toolbar has the Notes toggle and no title, at 1024 px the title and the radiogroup, and the
+  toggle switches both ways; the divider is a 44 px target and stores the split; To notes adds the crop linked to its page and shows the sheet; Undo, ⌘Z and
   the document undo events act on the pane touched last; Copy as Markdown appends the Notes
   section; closing after a notes edit queues the notes and flushes; Notes and back returns the
   paper to where it was; a p.N chip in Notes shows the paper; the puck sits over the active pane.
@@ -164,12 +171,19 @@ Not yet run; do these before calling v1 done.
 - [ ] Remove the home-screen app and add it again; the top of the screen is solid with no blur on
       iPhone and iPad, and nothing sits under the status bar.
 - [ ] Pencil strokes look the same before and after lift at every width and colour.
+- [ ] Pencil strokes are as sharp while drawing as after lift on an iPad landscape page and on a
+      long notes sheet; if the live stroke is soft, report it.
+- [ ] Black ink is visible at night, pale on the dark page and on the dark notes sheet, while
+      drawing and after lift; the puck ring and the Black swatch show it pale too.
+- [ ] The app fills the screen with no gap at the bottom on iPhone and iPad after re-adding the
+      home-screen app.
 - [ ] The puck flips Pen ⇄ Eraser with a Pencil tap and opens the palette on long-press, drags
       along the edge, and stays put after relaunch.
 - [ ] Snip works with the Pencil in the Pen tool, with a finger, and with the palm resting.
 - [ ] Copy image pastes into Notes and Messages.
 - [ ] To notes lands the crop on the sheet, and its p.N chip scrolls the paper.
-- [ ] Both on iPad landscape with the divider; Both hidden on iPhone.
+- [ ] Both on iPad landscape with the divider; Both hidden on iPhone, where the toolbar shows the
+      Notes toggle and Night, Sidebar and Threads without scrolling.
 - [ ] Tapping empty sheet space raises the keyboard on iPhone and iPad.
 - [ ] Typing near the bottom of the sheet keeps the caret above the keyboard.
 - [ ] A note typed on the iPad appears on the laptop after sync.

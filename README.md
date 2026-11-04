@@ -75,8 +75,9 @@ crop to the notes sheet with a **p.N** chip that scrolls the paper back to that 
 
 Each paper has one notes sheet. The **Paper · Both · Notes** control in the toolbar picks what
 is on screen; **Both** puts the paper on the left and the sheet on the right with a divider you
-can drag (or move with the arrow keys), and is offered from 700 px wide, so an iPhone gets Paper
-and Notes only. The layout and the split are remembered per device.
+can drag (or move with the arrow keys), and is offered from 700 px wide. Below 700 px, as on an
+iPhone, the control is a single **Notes** toggle that switches between the paper and the sheet.
+The layout and the split are remembered per device.
 
 - **Typing:** tap the sheet and type; Enter starts a new paragraph, Backspace at the start joins
   it to the one before, and the first paragraph is the title.
@@ -94,8 +95,9 @@ that lists the text and `(image, p.N)` lines.
 
 On an iPad, once a Pencil has been used, or with Finger draws on, a round puck sits at the right edge of the pane you
 are working in. Tap it to flip the Pencil between Pen and Eraser; long-press it for the palette
-(tools, widths, colours); drag it up or down the edge to move it. It never changes what a finger
-does.
+(tools, widths, colours), and tap it again to close the palette; drag it up or down the edge to
+move it. It never changes what a finger does. In night mode Black ink shows pale so it stays
+visible; it is still stored as Black.
 
 ### Home pictures
 
