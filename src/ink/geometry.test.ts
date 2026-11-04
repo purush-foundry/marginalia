@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { inkOutlinePath, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { describe, expect, it, test } from 'vitest'
+import { inkOutlinePath, type PenStyle, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { slowCurveSamples, turning } from './testStrokes.ts'
 
 function pathNumbers(d: string): number[] {
   return (d.match(/-?\d+(\.\d+)?/g) ?? []).map(Number)
@@ -7,6 +8,29 @@ function pathNumbers(d: string): number[] {
 
 function maxX(d: string): number {
   return Math.max(...pathNumbers(d).filter((_, i) => i % 2 === 0))
+}
+
+// Vertical extent of the outline polygon (control points and midpoints) where it crosses x.
+function heightAt(d: string, x: number): number {
+  const n = pathNumbers(d)
+  let lo = Infinity
+  let hi = -Infinity
+  for (let i = 0; i + 1 < n.length; i += 2) {
+    const j = (i + 2) % n.length
+    const [ax, ay, bx, by] = [n[i], n[i + 1], n[j], n[j + 1]]
+    if ((ax - x) * (bx - x) > 0 || ax === bx) continue
+    const y = ay + ((by - ay) * (x - ax)) / (bx - ax)
+    lo = Math.min(lo, y)
+    hi = Math.max(hi, y)
+  }
+  return hi > lo ? hi - lo : 0
+}
+
+// A horizontal 200 px line sampled every 2 px at one pressure.
+function flatLine(pressure: number): number[] {
+  const out: number[] = []
+  for (let x = 0; x <= 200; x += 2) out.push(x, 50, pressure)
+  return out
 }
 
 const line = [10, 10, 0.5, 30, 12, 0.6, 60, 15, 0.7, 100, 20, 0.5]
@@ -79,5 +103,42 @@ describe('inkOutlinePath', () => {
     expect(inkOutlinePath([0.1, 0.1, 0.5, 0.5, 0.5, 0.6], 0.01, 200, 400)).toBe(
       strokeOutlinePath([20, 40, 0.5, 100, 200, 0.6], 2, true),
     )
+  })
+})
+
+describe('pen styles', () => {
+  const PAGE = { w: 800, h: 1035 }
+  const stored = (noise: number) =>
+    simplifyPoints(
+      slowCurveSamples(noise).flatMap((s) => [s.x / PAGE.w, s.y / PAGE.h, s.p]),
+      0.5 / PAGE.w,
+    )
+  const wiggle = (pen: PenStyle) =>
+    turning(inkOutlinePath(stored(1), 0.004, PAGE.w, PAGE.h, pen)) -
+    turning(inkOutlinePath(stored(0), 0.004, PAGE.w, PAGE.h, pen))
+
+  test.each(['ball', 'fountain', 'brush'] as const)('the slow curve wiggles under half a turn with the %s pen', (pen) => {
+    expect(wiggle(pen)).toBeLessThan(0.5)
+  })
+
+  test('a ball stroke keeps one width whatever the pressure', () => {
+    const light = strokeOutlinePath(flatLine(0.2), 6, true, 'ball')
+    const heavy = strokeOutlinePath(flatLine(0.9), 6, true, 'ball')
+    expect(Math.abs(heightAt(light, 100) - heightAt(heavy, 100))).toBeLessThan(0.1)
+    expect(Math.abs(heightAt(light, 5) - heightAt(light, 100))).toBeLessThan(0.1)
+  })
+
+  test('fountain and brush taper their ends, and the brush swings more with pressure', () => {
+    const fountain = strokeOutlinePath(flatLine(0.5), 6, true, 'fountain')
+    expect(heightAt(fountain, 2)).toBeLessThan(0.6 * heightAt(fountain, 100))
+    const swing = (pen: PenStyle) =>
+      heightAt(strokeOutlinePath(flatLine(0.9), 6, true, pen), 100) /
+      heightAt(strokeOutlinePath(flatLine(0.2), 6, true, pen), 100)
+    expect(swing('brush')).toBeGreaterThan(swing('fountain'))
+  })
+
+  test('strokeOutlinePath without end tapers leaves full-width ends', () => {
+    const d = strokeOutlinePath(flatLine(0.5), 6, true, 'fountain', { start: false, end: false })
+    expect(heightAt(d, 2)).toBeGreaterThanOrEqual(0.9 * heightAt(d, 100))
   })
 })

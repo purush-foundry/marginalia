@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks'
 import { newId, now } from '../lib/ids.ts'
 import type { InkStroke } from '../types.ts'
-import { inkOutlinePath, simplifyPoints, strokeHitsPoint } from './geometry.ts'
+import { inkOutlinePath, pressureVaries, simplifyPoints, strokeHitsPoint, strokeOutlinePath } from './geometry.ts'
+import { createLiveOutline, type LiveOutline } from './liveOutline.ts'
 import { fingerDraws, inkDisplayColor, mouseDraws, penActivity, penColor, penTool, penWidth } from './tools.ts'
 import './ink.css'
 
@@ -14,10 +15,12 @@ export interface InkLayerProps {
   onEraseStroke(id: string): void
 }
 
+/** Attribute on the scroller whose rect bounds the live canvas. */
+export const INK_VIEWPORT_ATTR = 'data-ink-viewport'
+
 const PALM_WINDOW_MS = 500
 const ERASER_MIN_PX = 12
 const SIMPLIFY_PX = 0.5
-const LIVE_CANVAS_MAX_PIXELS = 4_000_000
 const TAP_MAX_MS = 250
 const TAP_SLOP_PX = 12
 const DOUBLE_TAP_GAP_MS = 300
@@ -36,6 +39,9 @@ interface LiveStroke {
   h: number
   erased: Set<string>
   ctx: CanvasRenderingContext2D | null
+  outline: LiveOutline
+  chunks: Path2D[]
+  real: boolean
 }
 
 type SafariTouch = Touch & { touchType?: string }
@@ -58,6 +64,16 @@ function samplesOf(e: PointerEvent): PointerEvent[] {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v
+}
+
+// Normalised points scaled to CSS px.
+function cssPx(points: number[], cssW: number, cssH: number): number[] {
+  const out = points.slice()
+  for (let i = 0; i + 1 < out.length; i += 3) {
+    out[i] *= cssW
+    out[i + 1] *= cssH
+  }
+  return out
 }
 
 // Normalised points with y rescaled to page-width units so distances are isotropic.
@@ -102,29 +118,43 @@ export function InkLayer(props: InkLayerProps) {
       }
     }
 
+    // Places the live canvas over the visible part of the layer at full device pixel ratio, drawing in layer CSS px.
     const openCanvas = (): CanvasRenderingContext2D | null => {
       const canvas = canvasRef.current
       if (!canvas) return null
-      const { cssW, cssH } = propsRef.current
-      const scale = Math.min(window.devicePixelRatio || 1, Math.sqrt(LIVE_CANVAS_MAX_PIXELS / (cssW * cssH)))
-      canvas.width = Math.max(1, Math.round(cssW * scale))
-      canvas.height = Math.max(1, Math.round(cssH * scale))
+      const page = root.getBoundingClientRect()
+      const viewport = root.closest(`[${INK_VIEWPORT_ATTR}]`)
+      const view = viewport?.getBoundingClientRect() ?? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+      const left = Math.max(page.left, view.left)
+      const top = Math.max(page.top, view.top)
+      const w = Math.max(0, Math.min(page.right, view.right) - left)
+      const h = Math.max(0, Math.min(page.bottom, view.bottom) - top)
+      const offX = left - page.left
+      const offY = top - page.top
+      const dpr = window.devicePixelRatio || 1
+      Object.assign(canvas.style, { left: `${offX}px`, top: `${offY}px`, width: `${w}px`, height: `${h}px` })
+      canvas.width = Math.max(1, Math.round(w * dpr))
+      canvas.height = Math.max(1, Math.round(h * dpr))
       const ctx = canvas.getContext('2d')
       if (!ctx) return null
-      ctx.setTransform(scale, 0, 0, scale, 0, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, -offX * dpr, -offY * dpr)
       return ctx
     }
 
-    // Fills the live stroke's outline, predicted samples included, on the live canvas.
+    // Fills the live stroke's frozen chunks and its tail, predicted samples included, on the live canvas.
     const frame = () => {
       frameId = 0
       const s = live
       if (!s?.ctx) return
       const { cssW, cssH } = propsRef.current
-      const pts = simplifyPoints(s.points, SIMPLIFY_PX / cssW).concat(s.predicted)
+      const stored = simplifyPoints(s.points, SIMPLIFY_PX / cssW)
+      s.real = pressureVaries(stored)
+      const { frozen, tail } = s.outline.update(cssPx(stored, cssW, cssH), cssPx(s.predicted, cssW, cssH))
+      for (let i = s.chunks.length; i < frozen.length; i++) s.chunks.push(new Path2D(frozen[i]))
       s.ctx.clearRect(0, 0, cssW, cssH)
       s.ctx.fillStyle = inkDisplayColor(s.color)
-      s.ctx.fill(new Path2D(inkOutlinePath(pts, s.width, cssW, cssH)))
+      for (const chunk of s.chunks) s.ctx.fill(chunk)
+      s.ctx.fill(new Path2D(tail))
     }
 
     const schedule = () => {
@@ -166,11 +196,18 @@ export function InkLayer(props: InkLayerProps) {
       }
     }
 
+    // Pen pressure, or the previous stored sample's when the pen reports 0; 0.5 for other pointers.
+    const pressureOf = (s: LiveStroke, e: PointerEvent): number => {
+      if (s.pointerType !== 'pen') return 0.5
+      if (e.pressure > 0) return e.pressure
+      return s.points.length > 0 ? s.points[s.points.length - 1] : 0.5
+    }
+
     // Normalised [x, y, pressure] of a sample on the live stroke's page.
     const sampleOf = (s: LiveStroke, e: PointerEvent): [number, number, number] => [
       clamp01((e.clientX - s.left) / s.w),
       clamp01((e.clientY - s.top) / s.h),
-      s.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5,
+      pressureOf(s, e),
     ]
 
     const addSample = (s: LiveStroke, e: PointerEvent) => {
@@ -235,7 +272,7 @@ export function InkLayer(props: InkLayerProps) {
       const rect = root.getBoundingClientRect()
       const width = penWidth.value
       const color = penColor.value
-      live = {
+      const s: LiveStroke = {
         pointerId: e.pointerId,
         pointerType: e.pointerType,
         tool,
@@ -249,8 +286,14 @@ export function InkLayer(props: InkLayerProps) {
         h: rect.height || cssH,
         erased: new Set(),
         ctx: tool === 'pen' ? openCanvas() : null,
+        outline: createLiveOutline((pts, ends) =>
+          strokeOutlinePath(pts, s.width * propsRef.current.cssW, s.real, 'fountain', ends),
+        ),
+        chunks: [],
+        real: false,
       }
-      addSample(live, e)
+      live = s
+      addSample(s, e)
     }
 
     const onPointerMove = (e: PointerEvent) => {

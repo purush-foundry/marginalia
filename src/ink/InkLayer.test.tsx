@@ -2,7 +2,8 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InkStroke } from '../types.ts'
-import { InkLayer, type InkLayerProps } from './InkLayer.tsx'
+import { inkOutlinePath, strokeOutlinePath } from './geometry.ts'
+import { INK_VIEWPORT_ATTR, InkLayer, type InkLayerProps } from './InkLayer.tsx'
 import { fingerDraws, mouseDraws, nightInk, penActivity, penColor, penTool, penWidth } from './tools.ts'
 
 // happy-dom's PointerEvent honours pointerType, pressure, coalescedEvents and predictedEvents from the init dict.
@@ -208,8 +209,12 @@ describe('InkLayer live render', () => {
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
     ctx.fill.mockClear()
+    ctx.setTransform.mockClear()
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it('fills the live Black stroke in the pale ink at night and stores Black', async () => {
     penColor.value = '#1c1c1a'
@@ -249,6 +254,67 @@ describe('InkLayer live render', () => {
     expect(added[0].points).toEqual([0.1, 0.1, 0.3, 0.5, 0.5, 0.6])
     await mount({ strokes: added })
     expect(layer.querySelector('svg path')!.getAttribute('d')).not.toBe(predictedFrame)
+  })
+
+  it("a pressure-0 sample takes the previous sample's pressure", async () => {
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 0, y: 0, pressure: 0.3 }))
+    text.dispatchEvent(
+      pointer('pointermove', {
+        x: 60,
+        y: 0,
+        coalesced: [
+          { x: 20, y: 0, pressure: 0.6 },
+          { x: 40, y: 0, pressure: 0 },
+          { x: 60, y: 0, pressure: 0.4 },
+        ],
+      }),
+    )
+    text.dispatchEvent(pointer('pointerup', { x: 60, y: 0, pressure: 0 }))
+    expect(added[0].points.filter((_, i) => i % 3 === 2)).toEqual([0.3, 0.6, 0.6, 0.4])
+    text.dispatchEvent(pointer('pointerdown', { x: 0, y: 0, pressure: 0 }))
+    text.dispatchEvent(pointer('pointerup', { x: 0, y: 0, pressure: 0 }))
+    expect(added[1].points).toEqual([0, 0, 0.5])
+  })
+
+  it('a 1,000-sample live stroke fills its frozen chunks and the tail, and commits the unchunked outline', async () => {
+    const samples = Array.from({ length: 1000 }, (_, i) => ({ x: 5 + (i % 190), y: 10 + 20 * Math.floor(i / 190) }))
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', samples[0]))
+    text.dispatchEvent(pointer('pointermove', { ...samples[999], coalesced: samples.slice(1) }))
+    flush()
+    expect(ctx.fill).toHaveBeenCalledTimes(4)
+    text.dispatchEvent(pointer('pointerup', samples[999]))
+    expect(added[0].points).toHaveLength(3000)
+    await mount({ strokes: added })
+    expect(layer.querySelector('svg path')!.getAttribute('d')).toBe(inkOutlinePath(added[0].points, 0.004, 200, 400))
+  })
+
+  it('sizes the live canvas to the visible part of the page at the device pixel ratio', async () => {
+    vi.stubGlobal('devicePixelRatio', 2)
+    host.setAttribute(INK_VIEWPORT_ATTR, '')
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 300, 200))
+    const text = await mount({ cssW: 400, cssH: 800 })
+    vi.spyOn(layer, 'getBoundingClientRect').mockReturnValue(new DOMRect(-50, -100, 400, 800))
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40 }))
+    const canvas = layer.querySelector('canvas')!
+    expect(canvas.style).toMatchObject({ left: '50px', top: '100px', width: '300px', height: '200px' })
+    expect([canvas.width, canvas.height]).toEqual([600, 400])
+    expect(ctx.setTransform).toHaveBeenLastCalledWith(2, 0, 0, 2, -100, -200)
+  })
+
+  it('pressureVaries comes from the stored samples, not the predicted ones', async () => {
+    const text = await mount()
+    text.dispatchEvent(pointer('pointerdown', { x: 20, y: 40, pressure: 0.5 }))
+    text.dispatchEvent(
+      pointer('pointermove', { x: 100, y: 200, pressure: 0.5, predicted: [{ x: 180, y: 360, pressure: 0.9 }] }),
+    )
+    flush()
+    const px = [(20 / 200) * 200, (40 / 400) * 400, 0.5, (100 / 200) * 200, (200 / 400) * 400, 0.5]
+    const predictedPx = [(180 / 200) * 200, (360 / 400) * 400, 0.9]
+    expect(paths.at(-1)).toBe(
+      strokeOutlinePath([...px, ...predictedPx], 0.004 * 200, false, 'fountain', { start: true, end: true }),
+    )
   })
 })
 
