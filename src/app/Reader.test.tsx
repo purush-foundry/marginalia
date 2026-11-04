@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -421,6 +422,19 @@ describe('Reader notes', () => {
       divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     })
     expect(settings.value.splitRatio).toBeCloseTo(0.37)
+  })
+
+  test('the divider is a 44 px wide pointer target that takes no layout width', async () => {
+    const style = document.createElement('style')
+    style.textContent = readFileSync('src/app/reader.css', 'utf8')
+    document.head.append(style)
+    settings.value = { ...DEFAULT_SETTINGS, notesLayout: 'both' }
+    await open()
+    const css = getComputedStyle(root.querySelector<HTMLElement>('.mg-divider')!)
+    const [width, left, right] = [css.width, css.marginLeft, css.marginRight].map(parseFloat)
+    style.remove()
+    expect(width).toBeGreaterThanOrEqual(44)
+    expect(width + left + right).toBe(0)
   })
 
   test('To notes appends the crop as an image block linked to its page and shows the sheet', async () => {

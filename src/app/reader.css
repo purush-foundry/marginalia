@@ -146,10 +146,11 @@
   flex: 0 0 clamp(320px, calc(var(--split) * 100%), calc(100% - 320px));
 }
 
+/* 44 px pointer target over the pane edges; ::before draws the line and ::after the grip. */
 .mg-divider {
   flex: none;
-  width: 12px;
-  margin: 0 -6px;
+  width: 44px;
+  margin: 0 -22px;
   z-index: 6;
   position: relative;
   cursor: col-resize;
