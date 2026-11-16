@@ -18,21 +18,21 @@ export const grading = signal<string | null>(null)
 /** This session's grading failures by pdfId. */
 export const gradeErrors = signal<Record<string, string>>({})
 
-let hostGraderProvider: () => Grader | null = () => null
-let hostSkillHash: () => string | null = () => null
+const hostGraderProvider = signal<() => Grader | null>(() => null)
+const hostSkillHash = signal<() => string | null>(() => null)
 
 /** Plugs in the paired host's grader. */
 export function setHostGrader(p: () => Grader | null): void {
-  hostGraderProvider = p
+  hostGraderProvider.value = p
 }
 
 /** Plugs in the paired host's skill hash. */
 export function setHostSkillHash(p: () => string | null): void {
-  hostSkillHash = p
+  hostSkillHash.value = p
 }
 
 const defaultDeps: GraderDeps = {
-  host: () => hostGraderProvider(),
+  host: () => hostGraderProvider.value(),
   direct: () => {
     const { anthropicApiKey, visionModel } = settings.peek()
     if (!anthropicApiKey) return null
@@ -49,7 +49,7 @@ const messageOf = (err: unknown): string => (err instanceof Error ? err.message 
 
 /** The hash notes are compared against: the paired host's when ready, else the bundled skill's. */
 export async function currentSkillHash(): Promise<string> {
-  return hostSkillHash() ?? (await skillHash(SKILL_TEXT))
+  return hostSkillHash.value() ?? (await skillHash(SKILL_TEXT))
 }
 
 // Grades with the host, falling back to direct when the host fails or is absent.
@@ -187,6 +187,7 @@ export function startGrader(deps: GraderDeps = defaultDeps): () => void {
     library.value
     sidecarRevision.value
     settings.value
+    hostGraderProvider.value
     schedulePass(deps, gen)
   })
   return () => {
@@ -199,9 +200,14 @@ export function startGrader(deps: GraderDeps = defaultDeps): () => void {
   }
 }
 
-/** True when a host or an API key can grade. */
+/** True when a host or an API key can grade; reactive when read in a component. */
 export function canGrade(): boolean {
-  return Boolean(settings.peek().anthropicApiKey) || hostGraderProvider() !== null
+  return Boolean(settings.value.anthropicApiKey) || hostGraderProvider.value() !== null
+}
+
+/** The paired host's skill hash, null when none; reactive when read in a component. */
+export function hostSkill(): string | null {
+  return hostSkillHash.value()
 }
 
 /** Grades one paper now, replacing any note. */

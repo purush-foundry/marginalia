@@ -13,7 +13,7 @@ import { useGestures } from './gestures'
 import { ArrowMarker, EdgeLayer, HullLayer, LabelLayer, NodeLayer, type Shade } from './Layers'
 import { anchoredTopics, type Positions } from './layout'
 import { LinkSheet } from './LinkSheet'
-import { canonicalLink, loadGraph, type MapGraph } from './model'
+import { canonicalLink, loadGraph, verdictInfo, type MapGraph } from './model'
 import { degrees, hulls, matchesQuery, nearestByAngle, neighbourhood, placeGraph, yearRange } from './scene'
 import { fitTo, toMap, type Viewport } from './viewport'
 import './map.css'
@@ -41,7 +41,7 @@ function useMapData() {
   const seq = useRef(0)
   const reload = async () => {
     const n = ++seq.current
-    const graph = await loadGraph()
+    const graph = await loadGraph(verdictInfo)
     const next = await placeGraph(graph, pos.current)
     if (!live.current || n !== seq.current) return
     pos.current = next

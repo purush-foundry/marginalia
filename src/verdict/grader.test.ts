@@ -31,7 +31,22 @@ vi.mock('../drive/library', async () => {
   }
 })
 
+vi.mock('./runner', async (orig) => ({
+  ...(await orig<typeof import('./runner')>()),
+  paperInput: async (pdfId: string) => ({ pdfId, name: pdfId, title: null, pages: [], bytes: new ArrayBuffer(0) }),
+}))
+
+const host = vi.hoisted(() => ({ state: null as unknown, hostVerdict: vi.fn() }))
+vi.mock('../agent/host', async () => {
+  const { signal: sig } = await import('@preact/signals')
+  host.state = sig({ status: 'off' })
+  return { hostState: host.state, hostVerdict: host.hostVerdict }
+})
+
+import type { HostState } from '../agent/host'
+import { connectHostGrading } from './hostGrader'
 import {
+  canGrade,
   currentSkillHash,
   gradeErrors,
   gradeNow,
@@ -47,6 +62,7 @@ import {
 import { skillHash, SKILL_TEXT } from './skill'
 
 const libSig = lib.library as ReturnType<typeof signal<LibraryIndex | null>>
+const hostSig = host.state as ReturnType<typeof signal<HostState>>
 let counter = 0
 const uid = () => `p${++counter}`
 
@@ -296,5 +312,52 @@ describe('back catalogue and regrading', () => {
     expect(await currentSkillHash()).toBe(await skillHash(SKILL_TEXT))
     setHostSkillHash(() => 'hosthash')
     expect(await currentSkillHash()).toBe('hosthash')
+  })
+})
+
+describe('host grading', () => {
+  const ready: HostState = {
+    status: 'ready',
+    info: { version: '1', model: 'claude-host', skill: 'hosthash', auth: 'api-key', cwd: '/' },
+  }
+  const markdown = '---\nverdict: skim\nconfidence: low\none_line: Fine\ntopics: [a]\n---\nBody'
+
+  beforeEach(() => {
+    hostSig.value = { status: 'off' }
+    host.hostVerdict.mockReset()
+  })
+
+  it('the host grades when ready', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    host.hostVerdict.mockResolvedValue(markdown)
+    const unplug = connectHostGrading()
+    const stop = startGrader()
+    await tick()
+    expect(canGrade()).toBe(false)
+    expect(host.hostVerdict).not.toHaveBeenCalled()
+    hostSig.value = ready
+    expect(canGrade()).toBe(true)
+    await tick()
+    expect(host.hostVerdict).toHaveBeenCalledWith(a, expect.objectContaining({ pdfId: a, name: a }))
+    expect(lib.notes.get(a)).toMatchObject({ verdict: 'skim', oneLine: 'Fine', topics: ['a'], skill: 'hosthash', model: 'claude-host' })
+    expect(await currentSkillHash()).toBe('hosthash')
+    hostSig.value = { status: 'unreachable' }
+    expect(canGrade()).toBe(false)
+    expect(await currentSkillHash()).toBe(await skillHash(SKILL_TEXT))
+    stop()
+    unplug()
+  })
+
+  it('a host note that does not parse is a clear error', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const a = uid()
+    host.hostVerdict.mockResolvedValue('not a note')
+    const unplug = connectHostGrading()
+    hostSig.value = ready
+    await expect(gradeNow(a)).rejects.toThrow(/agent host's note could not be parsed/)
+    expect(lib.saved).toEqual([])
+    unplug()
   })
 })

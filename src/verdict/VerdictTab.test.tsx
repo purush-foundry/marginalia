@@ -31,7 +31,7 @@ vi.mock('../drive/library', async () => {
 })
 vi.mock('./grader', async () => {
   const { signal } = await import('@preact/signals')
-  return { grading: signal<string | null>(null), currentSkillHash: mocks.currentSkillHash, gradeNow: mocks.gradeNow, canGrade: mocks.canGrade }
+  return { grading: signal<string | null>(null), currentSkillHash: mocks.currentSkillHash, gradeNow: mocks.gradeNow, canGrade: mocks.canGrade, hostSkill: () => null }
 })
 
 import { grading } from './grader'
@@ -87,7 +87,7 @@ describe('VerdictTab', () => {
 
   test('with no note and no runner it points to Settings, and a key added later enables Grade now', async () => {
     mocks.loadVerdict.mockResolvedValue(null)
-    mocks.canGrade.mockReturnValue(false)
+    mocks.canGrade.mockImplementation(() => Boolean(settings.value.anthropicApiKey))
     await show()
     expect(button('Grade now')).toBeUndefined()
     expect(root.textContent).toContain('Add a Claude key or pair the agent host in Settings')

@@ -6,6 +6,7 @@ import { HOST_PROBE_INTERVAL_MS } from '../config'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
 import { startGrader } from '../verdict/grader'
+import { connectHostGrading } from '../verdict/hostGrader'
 import { fingerDraws, nightInk } from '../ink/tools'
 import { Library } from '../library/Library'
 import { MapView } from '../map/MapView'
@@ -105,6 +106,7 @@ export function App() {
 
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
   useEffect(() => (hasLibrary ? startGrader() : undefined), [hasLibrary])
+  useEffect(() => connectHostGrading(), [])
 
   const paired = Boolean(s.hostToken)
   useEffect(() => {

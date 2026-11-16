@@ -18,6 +18,7 @@ vi.mock('../verdict/grader', async () => {
   return {
     grading: signal<string | null>(null),
     canGrade: mocks.canGrade,
+    hostSkill: () => null,
     currentSkillHash: async () => 'abc123',
     ungradedPapers: async () => mocks.ungraded,
     outdatedPapers: async () => mocks.outdated,
@@ -31,6 +32,7 @@ const root = document.createElement('div')
 
 beforeEach(() => {
   document.body.append(root)
+  mocks.canGrade.mockImplementation(() => Boolean(settings.value.anthropicApiKey))
 })
 
 afterEach(() => {

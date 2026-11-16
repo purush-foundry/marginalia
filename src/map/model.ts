@@ -1,4 +1,4 @@
-import { library, loadSidecar } from '../drive/library'
+import { library, loadSidecar, loadVerdict } from '../drive/library'
 import { SYMMETRIC_RELS, type LinkRel, type ReadStatus } from '../types'
 
 export type MapVerdict = 'read' | 'skim' | 'skip'
@@ -64,6 +64,12 @@ export async function loadGraph(verdictOf: (pdfId: string) => Promise<VerdictInf
     }
   }
   return { nodes, edges, topics: topicOrder(nodes, edges) }
+}
+
+/** Reads a paper's worth-reading note as the map's verdict info. */
+export async function verdictInfo(pdfId: string): Promise<VerdictInfo | null> {
+  const note = await loadVerdict(pdfId)
+  return note && { verdict: note.verdict, oneLine: note.oneLine || undefined, topics: note.topics, year: note.year }
 }
 
 function pairKey(a: string, b: string): string {

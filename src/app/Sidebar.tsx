@@ -1,5 +1,6 @@
 // Reader sidebar: outline, highlights with a colour filter, Ask and agent threads, and the paper's done toggle.
 import { useEffect, useState } from 'preact/hooks'
+import { isAgentThread } from '../agent/threads'
 import type { AnnotationStore } from '../annot/store'
 import type { OutlineItem, PdfDoc } from '../pdf/document'
 import { HIGHLIGHT_COLORS, type Box, type Highlight, type HighlightColor, type ReadStatus, type Thread } from '../types'
@@ -31,11 +32,6 @@ const TABS: Array<{ id: SidebarTab; label: string }> = [
 function excerpt(text: string, max = 140): string {
   const t = text.replace(/\s+/g, ' ').trim()
   return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t
-}
-
-/** True for a whole-paper thread held by the agent terminal. */
-export function isAgentThread(t: Thread): boolean {
-  return t.anchor.page === 0 && t.model === 'agent'
 }
 
 export function firstBox(h: Highlight): Box {

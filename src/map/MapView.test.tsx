@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptySidecar, type LibraryIndex, type PaperLink, type Sidecar } from '../types'
 
-const lib = vi.hoisted(() => ({ sidecars: {} as Record<string, Sidecar> }))
+const lib = vi.hoisted(() => ({ sidecars: {} as Record<string, Sidecar>, notes: {} as Record<string, unknown> }))
 vi.mock('../drive/library', async () => {
   const { signal } = await import('@preact/signals')
   const { emptySidecar: empty } = await import('../types')
@@ -11,6 +11,7 @@ vi.mock('../drive/library', async () => {
     library: signal(null),
     sidecarRevision: signal(0),
     loadSidecar: async (id: string) => lib.sidecars[id] ?? empty(id, `${id}.pdf`, 1),
+    loadVerdict: async (id: string) => lib.notes[id] ?? null,
     saveSidecar: vi.fn((id: string, s: Sidecar) => {
       lib.sidecars[id] = s
     }),
@@ -56,6 +57,7 @@ let root: HTMLElement
 
 beforeEach(() => {
   lib.sidecars = {}
+  lib.notes = {}
   vi.mocked(saveSidecar).mockClear()
   root = document.createElement('div')
   document.body.append(root)
@@ -102,6 +104,14 @@ describe('MapView', () => {
     await mount()
     await tap('b')
     expect(root.querySelector('.mg-map-card h2')!.textContent).toBe(TITLES.b)
+  })
+
+  it('shows the worth-reading verdict and one-liner on its card', async () => {
+    lib.notes = { b: { verdict: 'skim', confidence: 'high', readTime: '', oneLine: 'Diffusion for control', topics: ['robotics'], skill: 'h', model: 'm', generated: 'g', body: '' } }
+    await mount()
+    await tap('b')
+    expect(root.querySelector('.mg-map-card .mg-map-verdict-skim')).toBeTruthy()
+    expect(root.querySelector('.mg-map-card')!.textContent).toContain('Diffusion for control')
   })
 
   it('saves the gist to the sidecar on blur', async () => {

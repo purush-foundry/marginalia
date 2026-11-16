@@ -2,17 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LibraryIndex, PaperLink, Sidecar } from '../types'
 import { emptySidecar } from '../types'
 
-const lib = vi.hoisted(() => ({ sidecars: {} as Record<string, unknown> }))
+const lib = vi.hoisted(() => ({ sidecars: {} as Record<string, unknown>, notes: {} as Record<string, unknown> }))
 vi.mock('../drive/library', async () => {
   const { signal: sig } = await import('@preact/signals')
   return {
     library: sig(null),
     loadSidecar: async (id: string) => lib.sidecars[id],
+    loadVerdict: async (id: string) => lib.notes[id] ?? null,
   }
 })
 
 import { library } from '../drive/library'
-import { canonicalLink, loadGraph, shortTitle, topicOrder, type MapEdge, type MapNode } from './model'
+import type { VerdictNote } from '../verdict/note'
+import { canonicalLink, loadGraph, shortTitle, topicOrder, verdictInfo, type MapEdge, type MapNode } from './model'
 
 function link(id: string, to: string, rel: PaperLink['rel'] = 'related', deleted = false): PaperLink {
   return { id, kind: 'link', to, rel, createdAt: 1, updatedAt: 1, ...(deleted ? { deleted } : {}) }
@@ -34,6 +36,7 @@ function setIndex(ids: string[]) {
 
 beforeEach(() => {
   lib.sidecars = {}
+  lib.notes = {}
   ;(library as unknown as { value: LibraryIndex | null }).value = null
 })
 
@@ -68,6 +71,20 @@ describe('loadGraph', () => {
     expect(byId.b.oneLine).toBe('hi')
     expect(byId.c.topics).toEqual([])
     expect(byId.a.title).toBe('a')
+  })
+
+  it('a paper with a verdict note gets its verdict, one-liner, topics and year on its node', async () => {
+    setIndex(['a', 'b'])
+    lib.sidecars = { a: sc('a'), b: sc('b') }
+    const note: VerdictNote = {
+      verdict: 'skim', confidence: 'high', readTime: '10 min', oneLine: 'A faster sampler', topics: ['diffusion', 'robotics'],
+      year: 2024, skill: 'h', model: 'm', generated: 'g', body: '',
+    }
+    lib.notes = { a: note }
+    const g = await loadGraph(verdictInfo)
+    const byId = Object.fromEntries(g.nodes.map(n => [n.pdfId, n]))
+    expect(byId.a).toMatchObject({ verdict: 'skim', oneLine: 'A faster sampler', topics: ['diffusion', 'robotics'], year: 2024 })
+    expect(byId.b).toMatchObject({ verdict: undefined, oneLine: undefined, topics: [], year: undefined })
   })
 
   it('ignores a pin with a negative coordinate', async () => {

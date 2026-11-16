@@ -4,7 +4,7 @@ import { forgetHost, hostState, probeHost } from '../agent/host'
 import { checkApiKey } from '../ai/claude'
 import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
 import { clearPdfCache, library, pdfCacheBytes, sidecarRevision, syncLibrary } from '../drive/library'
-import { canGrade, currentSkillHash, gradeUngraded, grading, outdatedPapers, regradeOutdated, ungradedPapers } from '../verdict/grader'
+import { canGrade, currentSkillHash, gradeUngraded, grading, hostSkill, outdatedPapers, regradeOutdated, ungradedPapers } from '../verdict/grader'
 import { Icon } from './icons'
 import { applyUpdate, buildId, updateReady } from './pwa'
 import { saveSettings, settings, type AppSettings } from './settings'
@@ -243,8 +243,9 @@ function ClaudeSection() {
 function GradingControls() {
   const [counts, setCounts] = useState<{ hash: string; ungraded: number; outdated: number } | null>(null)
   const busy = grading.value
-  const runnable = Boolean(settings.value.anthropicApiKey) || canGrade()
+  const runnable = canGrade()
   const revision = sidecarRevision.value
+  const skill = hostSkill()
   useEffect(() => {
     let live = true
     void (async () => {
@@ -255,7 +256,7 @@ function GradingControls() {
     return () => {
       live = false
     }
-  }, [revision, busy])
+  }, [revision, busy, skill])
 
   const run = (job: () => Promise<number>) =>
     void job().then(

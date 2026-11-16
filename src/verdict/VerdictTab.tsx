@@ -1,11 +1,10 @@
 // Reader sidebar tab: the paper's verdict note with citations, regenerate and an outdated notice.
 import { useEffect, useState } from 'preact/hooks'
 import { renderMarkdown } from '../ai/markdown'
-import { settings } from '../app/settings'
 import { showToast } from '../app/ui'
 import { loadVerdict, sidecarRevision } from '../drive/library'
 import { VerdictChip } from './VerdictChip'
-import { canGrade, currentSkillHash, gradeNow, grading } from './grader'
+import { canGrade, currentSkillHash, gradeNow, grading, hostSkill } from './grader'
 import { isOutdated, type VerdictNote } from './note'
 import './verdict.css'
 
@@ -15,7 +14,8 @@ export function VerdictTab({ pdfId, onGo }: { pdfId: string; onGo(page: number):
   const [loaded, setLoaded] = useState(false)
   const busy = grading.value
   const revision = sidecarRevision.value
-  const runnable = Boolean(settings.value.anthropicApiKey) || canGrade()
+  const runnable = canGrade()
+  const skill = hostSkill()
 
   // Clears the previous paper's note when the paper changes.
   useEffect(() => {
@@ -37,7 +37,7 @@ export function VerdictTab({ pdfId, onGo }: { pdfId: string; onGo(page: number):
     return () => {
       live = false
     }
-  }, [pdfId, revision, busy])
+  }, [pdfId, revision, busy, skill])
 
   const run = () =>
     gradeNow(pdfId).then(
