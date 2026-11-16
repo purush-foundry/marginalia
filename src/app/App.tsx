@@ -3,6 +3,7 @@ import { signal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
+import { startGrader } from '../verdict/grader'
 import { fingerDraws, nightInk } from '../ink/tools'
 import { Library } from '../library/Library'
 import { Onboarding } from './Onboarding'
@@ -99,6 +100,7 @@ export function App() {
   }, [s.nightMode])
 
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
+  useEffect(() => (hasLibrary ? startGrader() : undefined), [hasLibrary])
 
   return (
     <div class="mg-app" onPointerDownCapture={onRootPointerDown} onPointerUpCapture={maybeRenew} onClickCapture={maybeRenew}>
