@@ -1,5 +1,5 @@
 import type { NotesDocV2 } from '../notes/model'
-import type { Sidecar } from '../types'
+import type { PaperLink, Sidecar } from '../types'
 
 interface Versioned {
   id: string
@@ -68,7 +68,17 @@ function mergeItems<T extends Versioned>(a: T[], b: T[], pick: (x: T, y: T) => T
 
 // Latest updatedAt anywhere in the sidecar.
 function lastTouched(s: Sidecar): number {
-  return Math.max(s.reading.updatedAt, ...[...s.highlights, ...s.inks, ...s.threads].map((i) => i.updatedAt))
+  const stamps = [s.gist, s.topics, s.pin].map((f) => f?.updatedAt ?? 0)
+  const items = [...s.highlights, ...s.inks, ...s.threads, ...(s.links ?? [])].map((i) => i.updatedAt)
+  return Math.max(s.reading.updatedAt, ...stamps, ...items)
+}
+
+// The field version with the greater updatedAt; a missing side loses, a tie goes to `pref` then the greater small-field JSON.
+function newerField<T extends { updatedAt: number }>(a: T | undefined, b: T | undefined, pref?: (v: T) => boolean): T | undefined {
+  if (!a || !b) return a ?? b
+  if (a.updatedAt !== b.updatedAt) return b.updatedAt > a.updatedAt ? b : a
+  if (pref && pref(a) !== pref(b)) return pref(a) ? a : b
+  return tieKey(b) > tieKey(a) ? b : a
 }
 
 /** Per item by id, newest updatedAt wins, tombstones win ties; reading state newest wins; colorLabels union (newer sidecar's labels win). */
@@ -82,7 +92,14 @@ export function mergeSidecars(a: Sidecar, b: Sidecar): Sidecar {
     inks: mergeItems(a.inks, b.inks),
     threads: mergeItems(a.threads, b.threads),
     reading: b.reading.updatedAt > a.reading.updatedAt ? b.reading : a.reading,
+    links: mergeItems<PaperLink>(a.links ?? [], b.links ?? []),
   }
+  const gist = newerField(a.gist, b.gist)
+  const topics = newerField(a.topics, b.topics)
+  const pin = newerField(a.pin, b.pin, (p) => p.x < 0 && p.y < 0)
+  if (gist) merged.gist = gist
+  if (topics) merged.topics = topics
+  if (pin) merged.pin = pin
   if (older.colorLabels || newer.colorLabels) {
     merged.colorLabels = { ...older.colorLabels, ...newer.colorLabels }
   }

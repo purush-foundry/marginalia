@@ -33,6 +33,11 @@ describe('sidecarToMarkdown', () => {
     expect(md).not.toContain('gone')
   })
 
+  it('puts the gist under the title', () => {
+    const md = sidecarToMarkdown({ ...sample(), gist: { text: 'Short take', updatedAt: 1 } }, { title: 'T' })
+    expect(md.startsWith('# T\n\n> Short take\n')).toBe(true)
+  })
+
   it('uses colour labels', () => {
     const md = sidecarToMarkdown(sample(), { title: 'T', colorLabels: { yellow: 'Claim' } })
     expect(md).toContain('— p.2 · Claim')

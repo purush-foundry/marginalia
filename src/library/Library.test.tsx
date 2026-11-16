@@ -47,6 +47,11 @@ describe('Library', () => {
     expect(lib.querySelector('.mg-hero')!.compareDocumentPosition(lib.querySelector('.mg-lib-head')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  test('the header links to the map', async () => {
+    await act(async () => render(<Library />, root))
+    expect(root.querySelector('.mg-lib-sync a[aria-label="Map"]')!.getAttribute('href')).toBe('#/map')
+  })
+
   test('lists the root folder: folders first, then papers, each by name, linking to their routes', async () => {
     await act(async () => render(<Library />, root))
 
