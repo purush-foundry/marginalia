@@ -236,4 +236,19 @@ describe('mergeSidecars map fields', () => {
     expect(mergeSidecars(a, b).pdfName).toBe('a.pdf')
     expect(mergeSidecars(b, a).pdfName).toBe('a.pdf')
   })
+
+  test('equal-stamp gist and topics agree in both orders', () => {
+    const a = sidecar({ gist: { text: 'a', updatedAt: 4 }, topics: { ids: ['x'], updatedAt: 4 } })
+    const b = sidecar({ gist: { text: 'b', updatedAt: 4 }, topics: { ids: ['y'], updatedAt: 4 } })
+    const [ab, ba] = [mergeSidecars(a, b), mergeSidecars(b, a)]
+    expect(ab.gist).toEqual(ba.gist)
+    expect(ab.topics).toEqual(ba.topics)
+  })
+
+  test('equal-stamp pin vs unpin gives the unpin in both orders', () => {
+    const pinned = sidecar({ pin: { x: 0.5, y: 0.5, updatedAt: 4 } })
+    const unpinned = sidecar({ pin: { x: -1, y: -1, updatedAt: 4 } })
+    expect(mergeSidecars(pinned, unpinned).pin).toEqual({ x: -1, y: -1, updatedAt: 4 })
+    expect(mergeSidecars(unpinned, pinned).pin).toEqual({ x: -1, y: -1, updatedAt: 4 })
+  })
 })

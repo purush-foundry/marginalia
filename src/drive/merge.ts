@@ -73,10 +73,12 @@ function lastTouched(s: Sidecar): number {
   return Math.max(s.reading.updatedAt, ...stamps, ...items)
 }
 
-// The field version with the greater updatedAt; a missing side loses.
-function newerField<T extends { updatedAt: number }>(a: T | undefined, b: T | undefined): T | undefined {
+// The field version with the greater updatedAt; a missing side loses, a tie goes to `pref` then the greater small-field JSON.
+function newerField<T extends { updatedAt: number }>(a: T | undefined, b: T | undefined, pref?: (v: T) => boolean): T | undefined {
   if (!a || !b) return a ?? b
-  return b.updatedAt > a.updatedAt ? b : a
+  if (a.updatedAt !== b.updatedAt) return b.updatedAt > a.updatedAt ? b : a
+  if (pref && pref(a) !== pref(b)) return pref(a) ? a : b
+  return tieKey(b) > tieKey(a) ? b : a
 }
 
 /** Per item by id, newest updatedAt wins, tombstones win ties; reading state newest wins; colorLabels union (newer sidecar's labels win). */
@@ -94,7 +96,7 @@ export function mergeSidecars(a: Sidecar, b: Sidecar): Sidecar {
   }
   const gist = newerField(a.gist, b.gist)
   const topics = newerField(a.topics, b.topics)
-  const pin = newerField(a.pin, b.pin)
+  const pin = newerField(a.pin, b.pin, (p) => p.x < 0 && p.y < 0)
   if (gist) merged.gist = gist
   if (topics) merged.topics = topics
   if (pin) merged.pin = pin
