@@ -24,7 +24,7 @@ test('upgrading an older database copies every notes record into notebooks and l
   expect(Object.fromEntries((await idb.idbGetAll('notebooks')).map(({ key, value }) => [key, value]))).toEqual(notes)
   expect(fake.records('marginalia', 'notes')).toEqual(notes)
   expect(await idb.idbKeys('queue')).toEqual(['notes:p1'])
-  expect(fake.databases.get('marginalia')!.version).toBe(3)
+  expect(fake.databases.get('marginalia')!.version).toBe(4)
 })
 
 test('a new database has a notebooks store and no notes store', async () => {
@@ -34,4 +34,11 @@ test('a new database has a notebooks store and no notes store', async () => {
 
   expect(fake.records('marginalia', 'notebooks')).toEqual({ p1: { dirty: false } })
   expect(fake.records('marginalia', 'notes')).toBeUndefined()
+})
+
+test('has a verdicts store at database version 4', async () => {
+  const idb = await import('./idb')
+  await idb.idbSet('verdicts', 'p1', { verdict: 'read' })
+  expect(await idb.idbGet('verdicts', 'p1')).toEqual({ verdict: 'read' })
+  expect(fake.databases.get('marginalia')!.version).toBe(4)
 })

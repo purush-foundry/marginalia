@@ -1,6 +1,6 @@
 // Per-device settings in IndexedDB, exposed as a signal; defaults come from config.ts.
 import { effect, signal, untracked } from '@preact/signals'
-import { DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL, GOOGLE_CLIENT_ID } from '../config'
+import { DEFAULT_TEXT_MODEL, HOST_DEFAULT_URL, DEFAULT_VISION_MODEL, GOOGLE_CLIENT_ID } from '../config'
 import {
   DEFAULT_ERASER_SETTINGS,
   DEFAULT_HIGHLIGHTER_SETTINGS,
@@ -44,6 +44,14 @@ export interface AppSettings extends Settings {
   textSize: TextSize
   /** Tool dock edge and its position along that edge as a fraction. */
   toolDock: { edge: DockEdge; at: number }
+  /** Agent host address. */
+  hostUrl: string
+  /** Bearer token for the agent host. */
+  hostToken: string
+  /** Grade new papers from this device. */
+  gradeOnThisDevice: boolean
+  /** Papers modified after this time count as new; 0 until first boot stamps it. */
+  gradingSince: number
 }
 
 const KEY = 'app'
@@ -66,6 +74,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lassoSettings: DEFAULT_LASSO_SETTINGS,
   textSize: 'm',
   toolDock: { edge: 'right', at: 0.6 },
+  hostUrl: HOST_DEFAULT_URL,
+  hostToken: '',
+  gradeOnThisDevice: true,
+  gradingSince: 0,
 }
 
 export const settings = signal<AppSettings>(DEFAULT_SETTINGS)

@@ -30,5 +30,18 @@ export const TOKEN_RENEW_MARGIN_MS = 5 * 60_000
 /** Cap on locally cached PDF bytes before the least recently opened are evicted. */
 export const PDF_CACHE_LIMIT_BYTES = 1024 * 1024 * 1024
 
+export const VERDICT_SUFFIX = '.worth-reading.md'
+
+/** Most characters of paper text sent as context in a direct Ask. */
+export const PAPER_CONTEXT_MAX_CHARS = 600_000
+
+export const HOST_DEFAULT_URL = 'http://127.0.0.1:7700'
+
+/** Interval between agent host reachability probes. */
+export const HOST_PROBE_INTERVAL_MS = 60_000
+
+/** Side length of the paper map's coordinate space. */
+export const MAP_SIZE = 1000
+
 /** Longest edge of a page crop sent to Claude. */
 export const IMAGE_MAX_EDGE_PX = 2576

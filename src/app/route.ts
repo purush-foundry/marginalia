@@ -1,9 +1,16 @@
-// Hash routes: `#/` library root, `#/f/<folderId>` a folder, `#/p/<pdfId>` the reader.
+// Hash routes: `#/` library root, `#/f/<folderId>` a folder, `#/p/<pdfId>` the reader, `#/map` the paper map, `#/pair/<token>` host pairing.
 import { signal } from '@preact/signals'
 
-export type Route = { kind: 'library'; folderId?: string } | { kind: 'paper'; id: string }
+export type Route =
+  | { kind: 'library'; folderId?: string }
+  | { kind: 'paper'; id: string }
+  | { kind: 'map' }
+  | { kind: 'pair'; token: string }
 
 export function parseRoute(hash: string): Route {
+  if (/^#\/map(?:[/?#]|$)/.test(hash)) return { kind: 'map' }
+  const pair = hash.match(/^#\/pair\/([^/?#]+)/)
+  if (pair) return { kind: 'pair', token: decodeURIComponent(pair[1]) }
   const m = hash.match(/^#\/([fp])\/([^/?#]+)/)
   if (!m) return { kind: 'library' }
   const id = decodeURIComponent(m[2])
@@ -12,6 +19,8 @@ export function parseRoute(hash: string): Route {
 
 export const folderHash = (id?: string): string => (id ? `#/f/${encodeURIComponent(id)}` : '#/')
 export const paperHash = (id: string): string => `#/p/${encodeURIComponent(id)}`
+
+export const mapHash = '#/map'
 
 export const route = signal<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash))
 

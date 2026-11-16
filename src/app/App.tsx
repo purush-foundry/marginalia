@@ -77,7 +77,7 @@ function Screen() {
   if (!hasLibrary || choosingRoot.value) return <Onboarding step="root" />
   const r = route.value
   if (r.kind === 'paper') return <ReaderRoute id={r.id} />
-  return <Library folderId={r.folderId} />
+  return <Library folderId={r.kind === 'library' ? r.folderId : undefined} />
 }
 
 export function App() {

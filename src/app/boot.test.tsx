@@ -1,6 +1,6 @@
 import { act } from 'preact/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { idbSet } from '../lib/idb'
+import { idbGet, idbSet } from '../lib/idb'
 import { FOLDER_MIME, PDF_MIME, type DriveNode, type LibraryIndex } from '../types'
 
 vi.mock('../drive/auth', async (orig) => ({
@@ -37,5 +37,17 @@ describe('boot', () => {
     expect(initAuth).toHaveBeenCalledWith('client.apps.googleusercontent.com')
     expect(root.querySelector('.mg-crumbs')!.textContent).toBe('Papers')
     expect(root.querySelector('.mg-row-name')!.textContent).toBe('attention')
+  })
+
+  test('stamps gradingSince on a fresh install and keeps a stored stamp', async () => {
+    document.body.append(root)
+    const { boot } = await import('./boot')
+
+    await act(() => boot(root))
+    await vi.waitFor(async () => expect((await idbGet<{ gradingSince: number }>('settings', 'app'))!.gradingSince).toBeGreaterThan(0))
+
+    await idbSet('settings', 'app', { googleClientId: '', gradingSince: 42 })
+    await act(() => boot(root))
+    expect((await idbGet<{ gradingSince: number }>('settings', 'app'))!.gradingSince).toBe(42)
   })
 })

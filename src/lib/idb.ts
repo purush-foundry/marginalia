@@ -1,10 +1,10 @@
 // IndexedDB key-value helper over the app's object stores, with an in-memory map when IndexedDB is absent.
 
-export type StoreName = 'files' | 'sidecars' | 'notebooks' | 'settings' | 'meta' | 'queue'
+export type StoreName = 'files' | 'sidecars' | 'notebooks' | 'verdicts' | 'settings' | 'meta' | 'queue'
 
 const DB_NAME = 'marginalia'
-const DB_VERSION = 3
-const STORES: readonly StoreName[] = ['files', 'sidecars', 'notebooks', 'settings', 'meta', 'queue']
+const DB_VERSION = 4
+const STORES: readonly StoreName[] = ['files', 'sidecars', 'notebooks', 'verdicts', 'settings', 'meta', 'queue']
 /** The older notes store, read only to seed `notebooks` on upgrade and otherwise left alone. */
 const OLD_NOTES_STORE = 'notes'
 
