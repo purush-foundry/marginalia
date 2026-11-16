@@ -1160,6 +1160,32 @@ describe('verdict notes', () => {
     expect(await lib.loadVerdict('p1')).toEqual(verdictNote(newest, 'skip'))
   })
 
+  test('a note hand-edited in Drive with the same generated replaces a clean local copy on sync', async () => {
+    paper('p1', 'root')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER)))
+    await lib.setRootFolder(ROOT)
+    expect(await idb.idbGet<StoredVerdict>('verdicts', 'p1')).toMatchObject({ dirty: false, remoteVersion: '1' })
+
+    const edited = { ...verdictNote(OLDER), body: 'Edited by hand.' }
+    drive.update('v1', { content: serializeNote(edited) })
+    await lib.syncLibrary()
+
+    expect(await lib.loadVerdict('p1')).toEqual(edited)
+    expect(await idb.idbGet<StoredVerdict>('verdicts', 'p1')).toMatchObject({ dirty: false, remoteVersion: '2' })
+  })
+
+  test('a dirty local note with a newer generated still wins over the remote', async () => {
+    paper('p1', 'root')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER)))
+    await lib.setRootFolder(ROOT)
+    await idb.idbSet('verdicts', 'p1', { sidecar: verdictNote(NEWER, 'skip'), remoteId: 'v1', remoteVersion: '1', dirty: true })
+
+    drive.update('v1', { content: serializeNote({ ...verdictNote(OLDER), body: 'Edited by hand.' }) })
+    await lib.syncLibrary()
+
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(NEWER, 'skip'))
+  })
+
   test('an unparseable note is kept and reported', async () => {
     paper('p1', 'root')
     remoteVerdict('v1', 'p1', 'root', 'garbage')

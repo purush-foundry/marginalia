@@ -82,6 +82,8 @@ interface Companion<T> {
   upgrade(doc: unknown): T
   unparseableIsForeign: boolean
   newer(remote: unknown): boolean
+  /** Takes the remote document as-is on a pull when the local record is clean or missing. */
+  preferRemoteWhenClean?: boolean
   label: string
 }
 
@@ -197,6 +199,7 @@ const VERDICT: Companion<VerdictNote> = {
   upgrade: (doc) => doc as VerdictNote,
   unparseableIsForeign: false,
   newer: () => false,
+  preferRemoteWhenClean: true,
   label: 'verdict',
 }
 
@@ -771,7 +774,7 @@ async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveN
       await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
       return null
     }
-    const doc = latest ? c.merge(latest.sidecar, remote.doc) : remote.doc
+    const doc = latest && (latest.dirty || !c.preferRemoteWhenClean) ? c.merge(latest.sidecar, remote.doc) : remote.doc
     const record: StoredCompanion<T> = { sidecar: doc, ...seen, dirty: remote.upgraded || (latest?.dirty ?? false) }
     await idbSet(c.store, pdfId, record)
     if (remote.upgraded) await idbSet('queue', c.queueKey(pdfId), { queuedAt: Date.now() })
