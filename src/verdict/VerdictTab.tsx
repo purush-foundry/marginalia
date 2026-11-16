@@ -1,10 +1,10 @@
-// Reader sidebar tab: the reader's gist, then the paper's verdict note with citations, regenerate and an outdated notice.
+// Reader sidebar tab: the reader's gist, then the paper's verdict note with citations, regenerate, an outdated notice and an unreadable-Drive-note notice.
 import { useEffect, useState } from 'preact/hooks'
 import type { AnnotationStore } from '../annot/store'
 import { renderMarkdown } from '../ai/markdown'
 import { showToast } from '../app/ui'
 import { GIST_MAX_CHARS } from '../config'
-import { loadVerdict, sidecarRevision } from '../drive/library'
+import { loadVerdict, sidecarRevision, unreadableVerdicts } from '../drive/library'
 import { useDraft } from '../lib/draft'
 import { VerdictChip } from './VerdictChip'
 import { canGrade, currentSkillHash, gradeNow, grading, hostSkill } from './grader'
@@ -29,6 +29,8 @@ export function VerdictTab({ pdfId, store, onGo }: { pdfId: string; store: Annot
   const revision = sidecarRevision.value
   const runnable = canGrade()
   const skill = hostSkill()
+  const unreadable = unreadableVerdicts.value[pdfId]
+  const brokenNotice = unreadable && <p class="mg-muted">The note in Drive ({unreadable}) could not be read — fix or delete it</p>
 
   // Clears the previous paper's note when the paper changes.
   useEffect(() => {
@@ -66,8 +68,8 @@ export function VerdictTab({ pdfId, store, onGo }: { pdfId: string; store: Annot
       ) : !note ? (
         <>
           <VerdictChip note={null} grading={busy === pdfId} />
-          <p class="mg-muted">No note yet</p>
-          {runnable ? (
+          {brokenNotice || <p class="mg-muted">No note yet</p>}
+          {unreadable ? null : runnable ? (
             <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
               Grade now
             </button>
@@ -83,9 +85,11 @@ export function VerdictTab({ pdfId, store, onGo }: { pdfId: string; store: Annot
             {note.model} · skill {note.skill} · {new Date(note.generated).toLocaleDateString()}
           </p>
           {outdated && <p class="mg-muted">Written with an older version of the skill</p>}
-          <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
-            Regenerate
-          </button>
+          {brokenNotice || (
+            <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
+              Regenerate
+            </button>
+          )}
         </>
       )}
     </div>

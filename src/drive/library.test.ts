@@ -1186,7 +1186,7 @@ describe('verdict notes', () => {
     expect(await lib.loadVerdict('p1')).toEqual(verdictNote(NEWER, 'skip'))
   })
 
-  test('an unparseable note is kept and reported', async () => {
+  test('an unparseable note is kept, named as unreadable, and a queued upload for it is dropped with one report', async () => {
     paper('p1', 'root')
     remoteVerdict('v1', 'p1', 'root', 'garbage')
 
@@ -1194,6 +1194,7 @@ describe('verdict notes', () => {
 
     expect(lib.syncState.value).toMatchObject({ status: 'error', message: '1 verdict download(s) failed' })
     expect(await lib.loadVerdict('p1')).toBeNull()
+    expect(lib.unreadableVerdicts.value).toEqual({ p1: 'p1.worth-reading.md' })
 
     lib.saveVerdict('p1', verdictNote(OLDER))
     await lib.flushPendingWrites()
@@ -1201,8 +1202,28 @@ describe('verdict notes', () => {
 
     expect(drive.files.get('v1')!.content).toBe('garbage')
     expect(writes()).toEqual([])
-    expect(await idb.idbKeys('queue')).toEqual(['verdict:p1'])
-    expect(lib.syncState.value.message).toBe('1 verdict upload(s) failed')
+    expect(await idb.idbKeys('queue')).toEqual([])
+    expect(lib.syncState.value).toMatchObject({ status: 'error', message: 'Could not read p1.worth-reading.md in Drive; verdict upload dropped' })
+
+    lib.syncState.value = { status: 'idle' }
+    await lib.flushQueue()
+    expect(lib.syncState.value).toEqual({ status: 'idle' })
+  })
+
+  test('an unreadable note is cleared once it is fixed or deleted in Drive', async () => {
+    paper('p1', 'root')
+    paper('p2', 'root')
+    remoteVerdict('v1', 'p1', 'root', 'garbage')
+    remoteVerdict('v2', 'p2', 'root', 'garbage')
+    await lib.setRootFolder(ROOT)
+    expect(Object.keys(lib.unreadableVerdicts.value).sort()).toEqual(['p1', 'p2'])
+
+    drive.update('v1', { content: serializeNote(verdictNote(OLDER)) })
+    drive.remove('v2')
+    await lib.syncLibrary()
+
+    expect(lib.unreadableVerdicts.value).toEqual({})
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(OLDER))
   })
 
   test('hasRemoteVerdict finds a note the index has not seen and records it', async () => {

@@ -30,13 +30,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../app/ui', () => ({ showToast: mocks.showToast }))
 vi.mock('../drive/library', async () => {
   const { signal } = await import('@preact/signals')
-  return { loadVerdict: mocks.loadVerdict, sidecarRevision: signal(0) }
+  return { loadVerdict: mocks.loadVerdict, sidecarRevision: signal(0), unreadableVerdicts: signal<Record<string, string>>({}) }
 })
 vi.mock('./grader', async () => {
   const { signal } = await import('@preact/signals')
   return { grading: signal<string | null>(null), currentSkillHash: mocks.currentSkillHash, gradeNow: mocks.gradeNow, canGrade: mocks.canGrade, hostSkill: () => null }
 })
 
+import { unreadableVerdicts } from '../drive/library'
 import { grading } from './grader'
 import { VerdictTab } from './VerdictTab'
 
@@ -54,6 +55,7 @@ beforeEach(() => {
   mocks.showToast.mockReset()
   setGist.mockReset()
   grading.value = null
+  unreadableVerdicts.value = {}
   settings.value = { ...settings.value, anthropicApiKey: '' }
 })
 afterEach(() => {
@@ -102,6 +104,23 @@ describe('VerdictTab', () => {
       settings.value = { ...settings.value, anthropicApiKey: 'sk-ant-x' }
     })
     expect(button('Grade now')).toBeTruthy()
+  })
+
+  test('a note in Drive that cannot be read is named, with no Grade now', async () => {
+    mocks.loadVerdict.mockResolvedValue(null)
+    unreadableVerdicts.value = { p1: 'Attention.worth-reading.md' }
+    await show()
+    expect(root.textContent).toContain('The note in Drive (Attention.worth-reading.md) could not be read — fix or delete it')
+    expect(root.textContent).not.toContain('No note yet')
+    expect(button('Grade now')).toBeUndefined()
+  })
+
+  test('a local note over an unreadable Drive note shows the notice instead of Regenerate', async () => {
+    unreadableVerdicts.value = { p1: 'Attention.worth-reading.md' }
+    await show()
+    expect(root.textContent).toContain('Solid paper')
+    expect(root.textContent).toContain('could not be read — fix or delete it')
+    expect(button('Regenerate')).toBeUndefined()
   })
 
   test('a citation jumps to its page', async () => {

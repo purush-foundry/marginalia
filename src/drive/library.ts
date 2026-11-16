@@ -100,6 +100,8 @@ export const library = signal<LibraryIndex | null>(null)
 export const syncState = signal<SyncState>({ status: 'idle' })
 /** Increments whenever a sync merges sidecars, notes or verdicts from Drive into local records. */
 export const sidecarRevision = signal(0)
+/** Drive verdict notes that could not be parsed: the Drive file name by pdfId. */
+export const unreadableVerdicts = signal<Record<string, string>>({})
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
@@ -761,9 +763,29 @@ async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
   return { status: 'ok', doc, upgraded: doc !== remote }
 }
 
+// Sets or clears the paper's entry in unreadableVerdicts.
+function markUnreadable(pdfId: string, name: string | null): void {
+  const current = unreadableVerdicts.peek()
+  if ((current[pdfId] ?? null) === name) return
+  const { [pdfId]: _, ...rest } = current
+  unreadableVerdicts.value = name === null ? rest : { ...rest, [pdfId]: name }
+}
+
+// Downloads the paper's companion file, recording whether a verdict note could be parsed.
+async function downloadFor<T>(c: Companion<T>, pdfId: string, node: DriveNode): Promise<Download<T>> {
+  try {
+    const out = await download(c, node.id)
+    if (c.kind === 'verdict') markUnreadable(pdfId, null)
+    return out
+  } catch (err) {
+    if (c.kind === 'verdict' && err instanceof SyntaxError) markUnreadable(pdfId, node.name)
+    throw err
+  }
+}
+
 // Merges the remote file into the local record and returns the result, dirty and queued when the remote was upgraded; a foreign remote leaves the local document dirty and queued, a newer-schema one leaves it untouched; both return null.
 async function mergeRemote<T>(c: Companion<T>, pdfId: string, remoteNode: DriveNode): Promise<T | null> {
-  const remote = await download(c, remoteNode.id)
+  const remote = await downloadFor(c, pdfId, remoteNode)
   if (remote.status === 'newer') return null
   return localLane(async () => {
     const latest = await readStored(c, pdfId)
@@ -858,6 +880,7 @@ async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
 async function pullSidecars(): Promise<void> {
   const index = library.peek()
   if (!index) return
+  for (const pdfId of Object.keys(unreadableVerdicts.peek())) if (!VERDICT.map(index)[pdfId]) markUnreadable(pdfId, null)
   const failed = new Map<Companion<unknown>, number>()
   for (const c of COMPANIONS) {
     try {
@@ -871,8 +894,8 @@ async function pullSidecars(): Promise<void> {
   if (failed.size) syncState.value = { status: 'error', message: failureMessage(failed, 'download'), at: Date.now() }
 }
 
-// Uploads one queued companion file, merging first if the remote moved, and records the new remote version; leaves it queued when the remote has a newer schema.
-async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
+// Uploads one queued companion file, merging first if the remote moved, and records the new remote version; leaves it queued when the remote has a newer schema; drops it and returns the file name when the remote verdict note cannot be parsed.
+async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<string | void> {
   const key = c.queueKey(pdfId)
   const stored = await readStored(c, pdfId)
   const index = library.peek()
@@ -889,7 +912,14 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
     try {
       const remote = await getNode(known.id)
       if (remoteMoved(stored, remote)) {
-        const theirs = await download(c, known.id)
+        let theirs: Download<T>
+        try {
+          theirs = await downloadFor(c, pdfId, remote)
+        } catch (err) {
+          if (c.kind !== 'verdict' || !(err instanceof SyntaxError)) throw err
+          await idbDel('queue', key)
+          return remote.name
+        }
         if (theirs.status === 'newer') return
         if (theirs.status === 'ok') body = c.merge(body, theirs.doc)
       }
@@ -918,15 +948,17 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
   })
 }
 
-/** Uploads every queued sidecar, notes and verdict file; failures stay queued and are reported in syncState. */
+/** Uploads every queued sidecar, notes and verdict file; failures stay queued and are reported in syncState; a verdict upload over an unreadable Drive note is dropped and reported once. */
 export function flushQueue(): Promise<void> {
   return driveLane(async () => {
     if (!getAccessToken()) return
     const failed = new Map<Companion<unknown>, number>()
+    const dropped: string[] = []
     for (const key of await idbKeys('queue')) {
       const [c, pdfId] = fromQueueKey(key)
       try {
-        await flushOne(c, pdfId)
+        const unreadable = await flushOne(c, pdfId)
+        if (unreadable) dropped.push(unreadable)
       } catch (err) {
         if (failureState(err).status === 'offline') {
           syncState.value = { ...failureState(err), at: Date.now() }
@@ -936,6 +968,10 @@ export function flushQueue(): Promise<void> {
         if (err instanceof DriveError && err.status === 401) break
       }
     }
-    if (failed.size) syncState.value = { status: 'error', message: failureMessage(failed, 'upload'), at: Date.now() }
+    const messages = [
+      ...(failed.size ? [failureMessage(failed, 'upload')] : []),
+      ...(dropped.length ? [`Could not read ${dropped.join(', ')} in Drive; verdict upload dropped`] : []),
+    ]
+    if (messages.length) syncState.value = { status: 'error', message: messages.join(' · '), at: Date.now() }
   })
 }
