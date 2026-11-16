@@ -276,9 +276,13 @@ Fruchterman–Reingold in a 1000×1000 map space.
 5. 200 iterations, temperature quenching linearly from 100 to `k/8` by iteration 120, then
    constant (FR's quench and simmer); displacement capped by the temperature; clamp to
    [10, 990]; nodes iterated in sorted id order so the result is reproducible.
-6. The output is a pure function of (ids, topics, links, pins), cached in the IndexedDB `meta`
-   store under a hash of those inputs for instant first paint; an edit warm-starts from the
-   cache for 40 simmer iterations so the map nudges rather than jumps.
+6. A device's first layout is a pure function of (ids, topics, links, pins). It is cached in
+   the IndexedDB `meta` store under a hash of those inputs for instant first paint; when the
+   inputs change, the layout warm-starts from that device's previous positions for 40 simmer
+   iterations so the map nudges rather than jumps. Positions therefore depend on each device's
+   history, and two devices can differ slightly; a pin fixes a paper's place on every device.
+   **(call, final review: the warm start stays for on-device stability; cross-device identity
+   is given up.)**
 
 **View** (`#/map`, `src/map/MapView.tsx`, SVG): one layer each for topic hulls (a soft circle
 round each topic's members with the topic name as a large label readable at every zoom),
@@ -316,7 +320,7 @@ No edge text on the canvas; the linking phrase shows on hover/tap and in the car
 reader has a "Gist" field too (the same `gist`), so a line can be written right after reading.
 The map excludes nothing by default; a "read only" filter (status done) is one tap.
 
-**Tests** (`layout.test.ts`, `MapView.test.tsx`, `merge.test.ts` additions): the layout is
+**Tests** (`layout.test.ts`, `MapView.test.tsx`, `merge.test.ts` additions): a cold layout is
 deterministic and stable when a paper is added; pinned nodes do not move; topic order is the
 greedy chain; a link saves on the right paper with the right direction; symmetric links land
 on the smaller id; gist saves to the sidecar; merge keeps the newer gist and unions links;
@@ -523,6 +527,8 @@ graded from the iPad appears on the laptop; the terminal on a 13" laptop; the ma
   owner folders (`--read`, else `MARGINALIA_READ_DIRS`, else `~/Documents`, `~/Desktop`,
   `~/ToRead`), with the private-path denylist applied inside and unknown tools denied; a denylist
   alone was bypassable.
+- **Verdict runs get no owner folders.** Grading runs unattended on any PDF that lands in Drive,
+  so it reads only the paper's folder and `skills/`; the skill needs only the web tools.
 - **Grep roots are the paper's folder and `skills/` only.** The CLI's Grep always searches hidden
   files, so in an owner folder it would return `.env` and key contents; owner folders stay
   reachable through Glob and Read, which check each file.

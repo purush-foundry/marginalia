@@ -82,10 +82,12 @@ sidecar.
   one; after the skill changes, Settings → Claude → **Regenerate M outdated** rewrites the notes
   written with the older skill.
 - **Editing:** open the file in Drive and edit it by hand. A device with no unsynced change to that
-  note takes the Drive copy on its next sync, so your edit wins.
-- **Who grades:** the agent host when it is paired and connected, else this browser with your
-  Anthropic key; a host failure falls back to the key. **Grade new papers on this device** in
-  Settings → Claude turns grading off for a device.
+  note takes the Drive copy on its next sync, so your edit wins. If the file no longer reads as a
+  note, the Verdict tab names it and offers no grading until you fix or delete it.
+- **Who grades:** the agent host when it is paired, connected and has a key, else this browser
+  with your Anthropic key; a host failure falls back to the key, or with no key the paper is
+  tried again later. **Grade new papers on this device** in Settings → Claude turns grading off
+  for a device.
 
 ### Map
 
@@ -97,9 +99,11 @@ the lines are the links you drew. Topics come from the worth-reading note until 
   the note's one-liner, its topics (add or remove), its links as sentences with an editable
   phrase, and **Open paper**, **Neighbours**, **Link** and **Pin**. The reader's Verdict tab has
   the same gist as **Your gist**, so you can write it right after reading.
-- **Layout:** the same papers, topics, links and pins give the same map on every device, and adding
-  a paper does not move the others. Drag a paper with the mouse, or press and hold then drag on
-  touch, to pin it where you want; **Unpin** returns it to the layout.
+- **Layout:** a device drawing the map for the first time gets the same layout from the same
+  papers, topics, links and pins. After that each device settles from its own previous positions
+  when something changes, so a new paper barely moves the others, but two devices can differ
+  slightly. A pin fixes a paper's place on every device: drag it with the mouse, or press and hold
+  then drag on touch; **Unpin** returns it to the layout.
 - **Links:** select a paper, tap **Link**, tap the other paper, then pick the relation (builds on,
   extends, baseline, contradicts, same problem, related) and an optional phrase.
 - **Finding things:** the topic and status chips fade everything else without moving it. Search
@@ -245,10 +249,12 @@ thread in the Threads tab; opening it again resumes the conversation.
 **What the agent can reach.**
 
 - It writes only inside the paper's folder under `~/.marginalia/papers/`.
-- It reads the paper's folder, the `skills/` folder of this repo, and your own folders: the ones
-  named with `--read <dir>` (repeat it for more, e.g. `npm run host -- --read ~/Papers`), else
-  `MARGINALIA_READ_DIRS` (colon-separated), else whichever of `~/Documents`, `~/Desktop` and
-  `~/ToRead` exist. The host prints the list at start.
+- Grading runs unattended, on any paper that lands in the library, so a grading run reads only
+  the paper's folder and the `skills/` folder of this repo.
+- In the terminal it reads the paper's folder, the `skills/` folder of this repo, and your own
+  folders: the ones named with `--read <dir>` (repeat it for more, e.g.
+  `npm run host -- --read ~/Papers`), else `MARGINALIA_READ_DIRS` (colon-separated), else
+  whichever of `~/Documents`, `~/Desktop` and `~/ToRead` exist. The host prints the list at start.
 - Grep searches only the paper's folder and `skills/`; your folders are reached by listing and
   reading files.
 - Private paths are never readable, even inside those folders: `~/.ssh`, `~/.aws`,

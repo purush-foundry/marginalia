@@ -309,3 +309,17 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
   clears the chip.
 - No tests for Ask and terminal excluding each other, a host state flip while the terminal is
   open, or `paper().pages` page tags.
+
+### From the v4 final review
+
+- Fallback grades after a host failure stamp the bundled skill hash and may show "older skill" at once.
+- No timeout on a grade; a hung host run blocks the lane and disables the buttons for the session.
+- The `uploaded` cache in `src/agent/host.ts` is never invalidated (404 after the host root changes until reload).
+- `pairHost` sets `unreachable` before any probe, so fresh pairing reads "not reachable".
+- The Settings host URL is free text; restrict it to 127.0.0.1/localhost.
+- Agent threads export as "p.0" in Copy as Markdown.
+- The plugin root is the whole repo; a dedicated plugin folder would be safer.
+- The scanned-paper test checks the request shape, not the skill's "no text layer" rule in the prompt.
+- Nothing tests that the browser and host skill hashes agree on the same file.
+- `gradingSince` compares Drive modifiedTime, so an old PDF moved into the library later is never auto-graded; "first seen in the index" would match the intent better.
+- Chrome Local Network Access vs the older Private Network Access preflight header: unverified across Chrome versions.
