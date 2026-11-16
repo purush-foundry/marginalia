@@ -1,6 +1,6 @@
 import { act } from 'preact/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { idbSet } from '../lib/idb'
+import { idbGet, idbSet } from '../lib/idb'
 import { FOLDER_MIME, PDF_MIME, type DriveNode, type LibraryIndex } from '../types'
 
 vi.mock('../drive/auth', async (orig) => ({
@@ -14,7 +14,10 @@ const node = (id: string, name: string, mimeType: string, parents: string[]): Dr
 
 const root = document.createElement('div')
 
-afterEach(() => root.remove())
+afterEach(() => {
+  root.remove()
+  vi.unstubAllGlobals()
+})
 
 describe('boot', () => {
   test('renders the stored library while Google sign-in never finishes loading', async () => {
@@ -37,5 +40,35 @@ describe('boot', () => {
     expect(initAuth).toHaveBeenCalledWith('client.apps.googleusercontent.com')
     expect(root.querySelector('.mg-crumbs')!.textContent).toBe('Papers')
     expect(root.querySelector('.mg-row-name')!.textContent).toBe('attention')
+  })
+
+  test('stamps gradingSince on a fresh install and keeps a stored stamp', async () => {
+    document.body.append(root)
+    const { boot } = await import('./boot')
+
+    await act(() => boot(root))
+    await vi.waitFor(async () => expect((await idbGet<{ gradingSince: number }>('settings', 'app'))!.gradingSince).toBeGreaterThan(0))
+
+    await idbSet('settings', 'app', { googleClientId: '', gradingSince: 42 })
+    await act(() => boot(root))
+    expect((await idbGet<{ gradingSince: number }>('settings', 'app'))!.gradingSince).toBe(42)
+  })
+
+  test('a #/pair/<token> link stores the token, drops it from the URL and shows the library', async () => {
+    const fetchStub = vi.fn(async () => new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchStub)
+    history.replaceState(null, '', '/#/pair/tok')
+    document.body.append(root)
+    const { boot } = await import('./boot')
+    const { route } = await import('./route')
+
+    await act(() => boot(root))
+
+    expect((await idbGet<{ hostToken: string }>('settings', 'app'))!.hostToken).toBe('tok')
+    expect(location.hash).toBe('#/')
+    expect(location.href).not.toContain('tok')
+    expect(route.value).toEqual({ kind: 'library' })
+    await vi.waitFor(() => expect(fetchStub).toHaveBeenCalledWith(expect.stringMatching(/\/status$/), expect.anything()))
+    history.replaceState(null, '', '/')
   })
 })

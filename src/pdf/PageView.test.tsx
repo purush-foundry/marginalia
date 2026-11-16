@@ -21,6 +21,7 @@ function fakeDoc(cleanup: () => boolean): PdfDoc {
     getPage: async () => proxy,
     getOutline: async () => [],
     getPageText: () => never(),
+    getAllText: () => never(),
     getLinks: async () => [],
     renderCrop: () => never(),
     destroy() {},

@@ -1,12 +1,14 @@
 // Settings: Google client id and Drive session, Claude key and models, reading switches, cache, version.
 import { useEffect, useRef, useState } from 'preact/hooks'
+import { forgetHost, hostState, probeHost } from '../agent/host'
 import { checkApiKey } from '../ai/claude'
 import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
-import { clearPdfCache, library, pdfCacheBytes, syncLibrary } from '../drive/library'
+import { clearPdfCache, library, pdfCacheBytes, sidecarRevision, syncLibrary } from '../drive/library'
+import { canGrade, currentSkillHash, gradeUngraded, grading, hostSkill, outdatedPapers, regradeOutdated, ungradedPapers } from '../verdict/grader'
 import { Icon } from './icons'
 import { applyUpdate, buildId, updateReady } from './pwa'
 import { saveSettings, settings, type AppSettings } from './settings'
-import { authReady, choosingRoot, settingsOpen } from './ui'
+import { authReady, choosingRoot, settingsOpen, showToast } from './ui'
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -233,6 +235,98 @@ function ClaudeSection() {
           onChange={(e) => void saveSettings({ visionModel: e.currentTarget.value.trim() })}
         />
       </div>
+      <GradingControls />
+    </section>
+  )
+}
+
+function GradingControls() {
+  const [counts, setCounts] = useState<{ hash: string; ungraded: number; outdated: number } | null>(null)
+  const busy = grading.value
+  const runnable = canGrade()
+  const revision = sidecarRevision.value
+  const skill = hostSkill()
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      const hash = await currentSkillHash()
+      const [ungraded, outdated] = await Promise.all([ungradedPapers(), outdatedPapers(hash)])
+      if (live) setCounts({ hash, ungraded: ungraded.length, outdated: outdated.length })
+    })()
+    return () => {
+      live = false
+    }
+  }, [revision, busy, skill])
+
+  const run = (job: () => Promise<number>) =>
+    void job().then(
+      (n) => showToast(`Graded ${n} ${n === 1 ? 'paper' : 'papers'}`),
+      (err: unknown) => showToast(err instanceof Error ? err.message : String(err)),
+    )
+  const disabled = busy !== null || !runnable
+  return (
+    <>
+      <Toggle label="Grade new papers on this device" field="gradeOnThisDevice" />
+      {counts && (
+        <>
+          <p class="mg-muted">
+            Skill {counts.hash} · {counts.ungraded} ungraded · {counts.outdated} from an older skill
+          </p>
+          <div class="mg-actions">
+            {counts.ungraded > 0 && (
+              <button type="button" class="btn" disabled={disabled} onClick={() => run(() => gradeUngraded())}>
+                Grade {counts.ungraded} ungraded
+              </button>
+            )}
+            {counts.outdated > 0 && (
+              <button type="button" class="btn" disabled={disabled} onClick={() => run(() => regradeOutdated())}>
+                Regenerate {counts.outdated} outdated
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
+function AgentHostSection() {
+  const state = hostState.value
+  const paired = Boolean(settings.value.hostToken)
+  const line =
+    state.status === 'off'
+      ? paired
+        ? 'Paired, not yet connected'
+        : 'Not paired — run `npm run host` on the laptop and open the pairing link'
+      : state.status === 'unreachable'
+        ? 'Paired, not reachable'
+        : state.status === 'unauthorised'
+          ? 'Token rejected — pair again'
+          : `Connected · ${state.info.model} · skill ${state.info.skill}`
+  return (
+    <section>
+      <h2>Agent host</h2>
+      <p class="mg-muted">{line}</p>
+      <div class="mg-field">
+        <label for="mg-host-url">Host URL</label>
+        <input
+          id="mg-host-url"
+          type="text"
+          spellcheck={false}
+          value={settings.value.hostUrl}
+          onChange={(e) => void saveSettings({ hostUrl: e.currentTarget.value.trim() })}
+        />
+      </div>
+      {paired && (
+        <div class="mg-actions">
+          <button type="button" class="btn" onClick={() => void probeHost(true)}>
+            Connect
+          </button>
+          <button type="button" class="btn" onClick={() => void forgetHost()}>
+            Forget
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -279,6 +373,7 @@ export function Settings(props: { onboarding?: boolean }) {
       </header>
       <DriveSection />
       <ClaudeSection />
+      <AgentHostSection />
       <section>
         <h2>Reading</h2>
         <Toggle label="Night mode" field="nightMode" />

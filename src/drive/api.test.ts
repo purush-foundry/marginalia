@@ -134,6 +134,33 @@ describe('request shapes', () => {
     expect(node.version).toBe('9')
   })
 
+  test('createFile sends a Markdown media part verbatim with text/markdown in the metadata and part header', async () => {
+    const calls = mockFetch(() => json(rawFile('md', { name: 'x.worth-reading.md', mimeType: 'text/markdown' })))
+    const text = '---\nverdict: read\n---\n\nBody line.\n'
+
+    const node = await api.createFile('x.worth-reading.md', 'folder', text, 'text/markdown', { marginalia: 'verdict', verdictFor: 'pdf1' })
+
+    const { headers, body } = calls[0]
+    const boundary = headers['content-type'].match(/^multipart\/related; boundary=(.+)$/)![1]
+    const [metaPart, mediaPart] = body!.split(`--${boundary}`).slice(1, 3)
+    expect(JSON.parse(metaPart.split('\r\n\r\n')[1])).toMatchObject({ mimeType: 'text/markdown', appProperties: { marginalia: 'verdict', verdictFor: 'pdf1' } })
+    expect(mediaPart).toBe(`\r\nContent-Type: text/markdown\r\n\r\n${text}\r\n`)
+    expect(node.id).toBe('md')
+  })
+
+  test('updateFile PATCHes the text with its mime type and downloadText returns the raw content', async () => {
+    const calls = mockFetch(({ method }) => (method === 'PATCH' ? json(rawFile('md', { version: '4' })) : new Response('---\nverdict: skim\n---\n')))
+
+    const node = await api.updateFile('md', '# note', 'text/markdown')
+    const text = await api.downloadText('md')
+
+    expect(calls[0].headers['content-type']).toBe('text/markdown')
+    expect(calls[0].body).toBe('# note')
+    expect(node.version).toBe('4')
+    expect(calls[1].url.searchParams.get('alt')).toBe('media')
+    expect(text).toBe('---\nverdict: skim\n---\n')
+  })
+
   test('findSidecarFile looks up by appProperties.pdf, then by name in the parent', async () => {
     const calls = mockFetch(({ url }) =>
       url.searchParams.get('q')!.startsWith('name') ? json({ files: [rawFile('byName')] }) : json({ files: [] }),

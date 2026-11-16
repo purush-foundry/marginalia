@@ -263,4 +263,12 @@ describe('annotation store', () => {
     document.dispatchEvent(new CustomEvent('marginalia:undo'))
     expect(store.highlights.value).toHaveLength(1)
   })
+
+  it('sets the gist with a fresh stamp and persists', () => {
+    const { store, persist } = make()
+    store.setGist('one line')
+    expect(store.sidecar.value.gist?.text).toBe('one line')
+    expect(store.sidecar.value.gist!.updatedAt).toBeGreaterThan(1)
+    expect(persist).toHaveBeenLastCalledWith(store.sidecar.value)
+  })
 })

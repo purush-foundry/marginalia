@@ -12,9 +12,13 @@ stroke, note and Claude thread in a small JSON sidecar next to each PDF
 - Snip a figure or equation to the clipboard or into a notebook that sits beside the paper.
 - Ask Claude about a passage or area; answers quote the paper and link back to the page.
 - Unread / reading / done badges, outline, highlight list, Copy as Markdown.
+- A short worth-reading note on every new paper: Read, Skim or Skip, and why.
+- A map of your papers by topic, with your one-line gist and the links you draw between them.
+- An agent terminal on the laptop that works on the open paper (optional, runs on your machine).
 - Works offline for cached papers; edits sync through Drive when you are back online.
 
 There is no backend. The app talks to Google Drive and the Anthropic API directly from the browser.
+The optional agent host is a small program you run on your own laptop.
 
 ## Google Cloud setup (once)
 
@@ -61,6 +65,53 @@ permissions. This happens once per Google account.
 2. Drop PDFs into that folder from any device; they show up on the next sync (every minute while
    the app is open, on returning to it, or with the sync button).
 3. Select text to get the colour bar; tap a highlight to change, note, ask about or delete it.
+
+### Worth reading
+
+Each new paper gets a short note from Claude: a verdict (**Read**, **Skim** or **Skip**) with a
+confidence and a reading time, one line on what the paper does, a few topics, then what it does,
+why it matters for you, its weak points and where to look first, with page citations. The note is
+a Markdown file beside the PDF in Drive, `<paper>.worth-reading.md`, so it is yours like the
+sidecar.
+
+- **When:** a paper is graded once, when it first shows up in the folder. Papers that were there
+  before v4 are the back catalogue: Settings → Claude → **Grade N ungraded** grades them on request.
+- **Where it shows:** a chip on the library row, and the reader's **Verdict** sidebar tab, where
+  citations like (p. 4) jump to the page.
+- **Regenerating:** nothing rewrites a note on its own. **Regenerate** in the Verdict tab rewrites
+  one; after the skill changes, Settings → Claude → **Regenerate M outdated** rewrites the notes
+  written with the older skill.
+- **Editing:** open the file in Drive and edit it by hand. A device with no unsynced change to that
+  note takes the Drive copy on its next sync, so your edit wins. If the file no longer reads as a
+  note, the Verdict tab names it and offers no grading until you fix or delete it.
+- **Who grades:** the agent host when it is paired, connected and has a key, else this browser
+  with your Anthropic key; a host failure falls back to the key. With no key, a paper the host
+  could not be reached for is tried again later, and a run that failed on the host is not.
+  **Grade new papers on this device** in Settings → Claude turns grading off for a device.
+
+### Map
+
+**Map** in the library header shows every paper as a dot, grouped round its topics. The colour is
+the paper's main topic, the ring its reading status (hollow unread, half reading, full done), and
+the lines are the links you drew. Topics come from the worth-reading note until you edit them.
+
+- **Card:** tap a paper for its year, verdict, status, your **gist** (one line, 140 characters),
+  the note's one-liner, its topics (add or remove), its links as sentences with an editable
+  phrase, and **Open paper**, **Neighbours**, **Link** and **Pin**. The reader's Verdict tab has
+  the same gist as **Your gist**, so you can write it right after reading.
+- **Layout:** a device drawing the map for the first time gets the same layout from the same
+  papers, topics, links and pins. After that each device settles from its own previous positions
+  when something changes, so a new paper barely moves the others, but two devices can differ
+  slightly. A pin fixes a paper's place on every device: drag it with the mouse, or press and hold
+  then drag on touch; **Unpin** returns it to the layout.
+- **Links:** select a paper, tap **Link**, tap the other paper, then pick the relation (builds on,
+  extends, baseline, contradicts, same problem, related) and an optional phrase.
+- **Finding things:** the topic and status chips fade everything else without moving it. Search
+  dims what does not match as you type; Enter fits the matches. **Neighbours** shows the papers
+  within two links and **Back** returns. Drag, pinch or the wheel pans and zooms; double-tap a
+  topic to zoom to it; **Fit** shows everything.
+- **Keyboard on the laptop:** `/` searches, the arrows move to the nearest paper in that
+  direction, Enter opens it, L starts a link, Esc cancels or clears.
 
 ### Snip
 
@@ -171,6 +222,52 @@ tap **Test key**. The key stays in this device's IndexedDB; it is never written 
 a URL. **Forget** removes it. The Fast model answers text questions; the Smart model handles
 figures, equations and "think harder".
 
+### Agent host
+
+The agent host is a small Node program on the laptop. It runs Claude with the Agent SDK on the
+open paper and streams its work into a terminal panel in the reader, and it grades worth-reading
+notes while it is connected.
+
+1. Install it once: `npm run host:install`.
+2. Give it a key. Put `ANTHROPIC_API_KEY=…` (from the Anthropic Console, the supported way) or
+   `CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`, a convenience) in
+   `~/.config/marginalia/host.env`, then `chmod 600 ~/.config/marginalia/host.env`. A key already
+   in the environment works too. Never pass a key on the command line.
+3. Start it: `npm run host`. It prints a pairing link ending in `#/pair/<token>`.
+4. Open the link in Chrome on the laptop, then tap **Connect** in Settings → Agent host. Chrome
+   asks once to let the page reach this device; allow it. The token is kept in
+   `~/.marginalia/host-token`; `npm run host -- --new-token` replaces it and unpairs every browser.
+
+Safari cannot reach `localhost` from an HTTPS page, so the terminal is for Chrome on the laptop
+only. The iPad and the phone still get the notes the host grades, through Drive.
+
+**The terminal.** With the host connected, the toolbar's **Agent** button opens it. A selected
+passage comes along as an attachment. **Esc** stops a turn, `/clear` starts a new session,
+`/paper` has the agent read the paper again, `/help` lists the rest. Each session is saved as a
+thread in the Threads tab; opening it again resumes the conversation.
+
+**What the agent can reach.**
+
+- It writes only inside the paper's folder under `~/.marginalia/papers/`.
+- Grading runs unattended, on any paper that lands in the library, so a grading run reads only
+  the paper's folder and the `skills/` folder of this repo.
+- In the terminal it reads the paper's folder, the `skills/` folder of this repo, and your own
+  folders: the ones named with `--read <dir>` (repeat it for more, e.g.
+  `npm run host -- --read ~/Papers`), else `MARGINALIA_READ_DIRS` (colon-separated), else
+  whichever of `~/Documents`, `~/Desktop` and `~/ToRead` exist. The host prints the list at start.
+- Grep searches only the paper's folder and `skills/`; your folders are reached by listing and
+  reading files.
+- Private paths are never readable, even inside those folders: `~/.ssh`, `~/.aws`,
+  `~/.config/marginalia`, `.env` files, keys and the like.
+- It can search and fetch the web. A hostile paper could ask the agent to read files in your
+  folders and fetch a URL that carries them, so keep the `--read` folders free of secrets.
+- `--allow-bash` turns on shell commands, for chat and for grading. They run without approval and
+  outside these rules: they can read and change anything your user can, and your API key or token
+  is in their environment. It is off by default, and the host prints a warning while it is on.
+
+The rest of the flags (port, model, effort, where it keeps papers) are in
+[`host/README.md`](host/README.md).
+
 ## Development
 
 Node lives at `~/.local/node/bin` on the owner's laptop: `export PATH="$HOME/.local/node/bin:$PATH"`.
@@ -182,7 +279,12 @@ npx tsc -b        # typecheck
 npx vitest run    # unit tests
 npm run build     # production build into dist/ (base /marginalia/, includes dist/sw.js)
 npm run preview   # serves dist/ at http://localhost:4173/marginalia/
+npm run host:install  # installs the agent host's dependencies into host/node_modules (once)
+npm run host          # builds and starts the agent host; flags go after `--`
+npm run host:check    # typechecks host/ (the root `tsc -b` leaves it out)
 ```
+
+`npx vitest run` also runs the host's tests (`host/src/*.test.ts`).
 
 The service worker (`src/sw.ts`) is built as its own entry; a small plugin
 (`src/app/sw-plugin.ts`, wired in `vite.config.ts`) writes the list of built files into `dist/sw.js`
@@ -216,3 +318,8 @@ GitHub Pages serves at `https://purush-foundry.github.io/marginalia/`. Open apps
   system clipboard except pasted images. An image on the system clipboard, even an older one,
   wins over copied ink on ⌘V; the menu's **Paste** pastes the ink.
 - Dragging a lasso selection moves the dashed frame; the items follow at lift.
+- A device still on v3 that edits a paper uploads its sidecar without the map fields (gist,
+  topics, pin, links). A v4 device that holds a local copy puts them back; if none does, they are
+  lost. Reload the iPad and phone apps soon after deploying v4.
+- The agent host is reachable from Chrome on the laptop only; Safari cannot reach `localhost`
+  from an HTTPS page.

@@ -1,5 +1,6 @@
 // Minimal streaming client for the Claude Messages API, called directly from the browser.
 import { DEFAULT_TEXT_MODEL } from '../config.ts'
+import { sseEvents as readSse } from '../lib/sse.ts'
 
 const API_BASE = 'https://api.anthropic.com/v1'
 const API_VERSION = '2026-10-21'
@@ -9,7 +10,7 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
 
 export type ContentBlock =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
   | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg'; data: string } }
 
 export interface ApiMessage {
@@ -108,37 +109,13 @@ function parseEvent(data: string): SseEvent {
   }
 }
 
-// Reads `data:` payloads from an SSE body with getReader(), one parsed event at a time.
+// Streams parsed SSE events, mapping a dropped connection to a ClaudeError.
 async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
   try {
-    for (;;) {
-      let chunk: ReadableStreamReadResult<Uint8Array>
-      try {
-        chunk = await reader.read()
-      } catch (err) {
-        if (isAbort(err)) throw err
-        throw new ClaudeError('The connection dropped while the answer was streaming.')
-      }
-      const { done, value } = chunk
-      if (done) break
-      buf += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
-      let end: number
-      while ((end = buf.indexOf('\n\n')) >= 0) {
-        const raw = buf.slice(0, end)
-        buf = buf.slice(end + 2)
-        const data = raw
-          .split('\n')
-          .filter((l) => l.startsWith('data:'))
-          .map((l) => l.slice(5).trimStart())
-          .join('\n')
-        if (data) yield parseEvent(data)
-      }
-    }
-  } finally {
-    reader.releaseLock()
+    yield* readSse(body, parseEvent)
+  } catch (err) {
+    if (isAbort(err) || err instanceof ClaudeError) throw err
+    throw new ClaudeError('The connection dropped while the answer was streaming.')
   }
 }
 

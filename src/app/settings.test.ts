@@ -11,6 +11,14 @@ beforeEach(async () => {
 })
 
 describe('settings', () => {
+  test('defaults the host and grading settings', async () => {
+    const s = await mod.loadSettings()
+    expect(s.hostUrl).toBe('http://127.0.0.1:7700')
+    expect(s.hostToken).toBe('')
+    expect(s.gradeOnThisDevice).toBe(true)
+    expect(s.gradingSince).toBe(0)
+  })
+
   test('loads the config defaults when nothing is stored', async () => {
     const loaded = await mod.loadSettings()
     expect(loaded).toMatchObject({

@@ -201,3 +201,128 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
   `flushOne` still compares whole notebooks as JSON after an upload; no `onblocked` handler (a
   held connection hangs boot silently); the DB v3 bump makes the deploy one-way; the I1 perf test
   never reaches `tieKey`.
+
+## Deferred from the v4 reviews (2026-11-15)
+
+### Shell
+
+- `settings.ts` import order; `VERDICT_SUFFIX` and `HOST_DEFAULT_URL` have no doc comments; the
+  `boot.test.tsx` double-boot test relies on module state.
+
+### Ask
+
+- A selected page that alone is over the paper cap is still sent whole.
+- The cached paper block differs per selected page only when truncated; a `<truncated>` marker
+  after a later kept page can read as if that page was dropped.
+- The first Ask on a long paper shows no progress while its pages load.
+- Tests: the `Paper:` line, a missing selected page, kept pages 1–3, a `getAllText` failure then
+  retry; the `+ image` line is covered only by the template test.
+
+### Verdicts
+
+- The skill's confidence and verdict criteria could be more concrete; the hash test has no known
+  vector; `text` is shadowed in `skill.ts`.
+- The note parser rejects a trailing `# comment`, reads YAML block-list topics as none, and
+  `isVerdictNote` checks little; serialising writes an empty body as two newlines, topics are not
+  quote-safe, and a quoted placeholder is an edge case.
+- Every grading pass reads every paper's note; an automatic pass does not check grades already in
+  flight, so it can repeat a manual grade; a stale `stop` from an older `startGrader` invalidates
+  the newer one.
+- The grader tests wait on fixed timer ticks; under full-suite load the restarted-grader test can
+  fail and leave the queue blocked for the tests after it. Wait on conditions instead.
+- Runner tests pin the fixture title as null, not the system-prompt suffix; abort, `ClaudeError`
+  and destroy-on-reject are untested; no test for the queued-twice path.
+- The busy chip has no role; a paper switch shows the old note for one frame; the Settings tests
+  mock the whole grader module and restore mocks in a test body.
+- The host's verdict-note check is a separate ten-line copy of the browser's parser rule.
+
+### Drive
+
+- A note that cannot be parsed blocks that paper's upload until the Drive file is removed.
+- Note merges compare `generated` as strings; the resumable upload's content type is untested.
+- A sidecar update from the map can be overwritten by an open reader store's next save.
+- Exact `lastTouched` ties pick `pdfName` and colour labels by argument order; a multi-line gist
+  quotes only its first line; the `mergeSidecars` doc comment; `setGist` leaving undo alone is
+  not asserted.
+
+### Map
+
+- A new primary topic shifts every topic anchor; links are not sorted before the forces add up, so
+  float order can drift; topic ids like `constructor` hit plain-object keys; pinned papers on the
+  same spot jitter.
+- The node fill is a hard-coded white at night; `map.css` loads before `app.css`, so `.mg-sheet`
+  overrides the link sheet; hulls do not dim with filters.
+- Touch: no hold cue and no `-webkit-touch-callout: none`; `pointers` is not cleared on
+  `lostpointercapture`; right-button drags pan.
+- Every move re-renders every layer; `MapView` is in the main bundle rather than loaded on the
+  route.
+- Duplicate links are allowed; `clampMap` uses 0–1000 while the layout uses 10–990; two quick
+  topic adds use stale topics; the gist in the card and in the Verdict tab does not refresh when a
+  sync changes it.
+- The map card has its own verdict chip beside `src/verdict/VerdictChip`.
+- Empty `topics.ids` hides the note's topics; duplicate topic ids double-count; the note's topics
+  array is shared, not copied; `note: undefined` keys on edges.
+- Untested: tie-break rules, hold-drag, pinch, wheel, hull double-tap, Neighbours, keyboard,
+  Unpin, link phrases, `placeGraph`; tests mock the library instead of the fake IndexedDB;
+  LinkSheet accessibility.
+
+### Host
+
+- `decodeURIComponent` on a bad path gives a 500; request bodies are not validated; page text is
+  not escaped inside its tags; paper folder ids can collide; the token file's mode and atomic
+  write, and `sessions.json`'s mode and write race; the jobs map grows; status events are noisy;
+  subagent messages are not shown.
+- Two `POST /sessions` for one paper at once leak the loser until shutdown; a drained event pump
+  drops its session without `close()`; a dead session never reopened stays until the next open or
+  shutdown; the verdict iterator's `return()` is not awaited; queued `turn_start` ordering.
+- Fence: Grep patterns starting with `/` or `~` are denied; Glob brace patterns like `{..,x}`
+  list names outside the root (reads stay fenced); a Write through a dangling symlink inside the
+  paper folder is allowed; NotebookEdit picks `file_path ?? notebook_path`; about 13 `realpath`
+  calls per check.
+- `host.env` values keep their quotes; `--app` with a `/marginalia` path doubles the segment;
+  `npm run host -- --flag` is not spelled out in `host/README.md`; `Skill` in `allowedTools` is
+  deprecated for the `skills` option; no `engines` field; `interrupt()` swallows every error; the
+  `--allow-bash` warning names only the API key, not the OAuth token.
+- `onFailure: 'block'` on the fence hook has not been checked against a live CLI.
+- Browser client: pairing from the link resets a custom host URL; `HostHttpError` is not
+  exported; concurrent uploads of one paper.
+
+### Terminal
+
+- A message sent while the session is still opening is dropped silently.
+- Enter is ignored while a turn runs, `/clear` included, so a hung turn needs the panel closed;
+  `busy` stays set after a mid-turn connection flip until Esc.
+- A mid-stream error shows the raw fetch message instead of the lost-connection line; turns that
+  end in an error are not saved.
+- `/model` is not confirmed and the header keeps the old model; a bare `/model` is sent as a
+  message; the host's status spinner events are ignored.
+- Command parsing lives in the component; each keystroke writes `value` twice.
+
+### Reader
+
+- The toolbar's Agent button repeats `openThread`'s exclusion and does not close the sidebar on a
+  narrow screen, so sheets stack below 700 px; a second Agent click is ambiguous and the button
+  has no pressed state.
+- Opening a just-created agent thread from the sidebar remounts the terminal mid-turn.
+- A dropped attachment cannot be re-attached by selecting the same passage; a press on the
+  selection bar's own buttons clears it; with the terminal open, dismissing the bar on the PDF
+  clears the chip.
+- No tests for Ask and terminal excluding each other, a host state flip while the terminal is
+  open, or `paper().pages` page tags.
+
+### From the v4 final review
+
+- Fallback grades after a host failure stamp the bundled skill hash and may show "older skill" at once.
+- No timeout on a grade; a hung host run blocks the lane and disables the buttons for the session.
+- The `uploaded` cache in `src/agent/host.ts` is never invalidated (404 after the host root changes until reload).
+- `pairHost` sets `unreachable` before any probe, so fresh pairing reads "not reachable".
+- The Settings host URL is free text; restrict it to 127.0.0.1/localhost.
+- Agent threads export as "p.0" in Copy as Markdown.
+- The plugin root is the whole repo; a dedicated plugin folder would be safer.
+- The scanned-paper test checks the request shape, not the skill's "no text layer" rule in the prompt.
+- Nothing tests that the browser and host skill hashes agree on the same file.
+- `gradingSince` compares Drive modifiedTime, so an old PDF moved into the library later is never auto-graded; "first seen in the index" would match the intent better.
+- Chrome Local Network Access vs the older Private Network Access preflight header: unverified across Chrome versions.
+- With no API key, a definite host 4xx (for example 413 on a PDF over about 45 MB) is treated as a transport failure, so that paper stays first in the queue and automatic grading stalls for the session; a 4xx other than 401 should be recorded like a failed run.
+- The spec's grading-trigger section predates the rules that transport failures retry, a host without credentials is not a runner, and an unreadable Drive note blocks grading.
+- README "Who grades" says the host grades when it "has a key"; the host accepts an OAuth token too, so "has Claude credentials" is the accurate wording.

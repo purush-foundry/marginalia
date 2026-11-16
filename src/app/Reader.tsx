@@ -1,7 +1,10 @@
-// Reader: loads a paper and its sidecar, then wires the paper and notes panes, ink, selection bar, sidebar and Ask panel.
+// Reader: loads a paper and its sidecar, then wires the paper and notes panes, ink, selection bar, sidebar, Ask panel and agent terminal.
 import { computed, effect, signal, useComputed, useSignal, type ReadonlySignal, type Signal } from '@preact/signals'
 import type { RefObject } from 'preact'
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { hostState, type PaperSource } from '../agent/host'
+import { Terminal } from '../agent/Terminal'
+import { isAgentThread } from '../agent/threads'
 import { AskPanel } from '../ai/AskPanel'
 import { highlightAt } from '../annot/HighlightLayer'
 import { SelectionBar } from '../annot/SelectionBar'
@@ -54,6 +57,8 @@ interface Loaded {
   notes: ReadonlySignal<NotebookStore | null>
   /** Loads the notebook and creates its store on the first call; later calls share it. */
   ensureNotes(): Promise<NotebookStore>
+  /** The page-tagged text and the bytes of the PDF the document was opened from. */
+  paper(): Promise<PaperSource>
 }
 
 type Pane = 'paper' | 'notes'
@@ -339,6 +344,8 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
   const [bar, setBar] = useState<Bar | null>(null)
   const [note, setNote] = useState<{ id: string; rect: DOMRect } | null>(null)
   const [thread, setThread] = useState<Thread | null>(null)
+  const [agent, setAgent] = useState<{ thread: Thread | null } | null>(null)
+  const [attach, setAttach] = useState<{ text: string; page: number } | null>(null)
   const [sidebar, setSidebar] = useState<SidebarTab | null>(null)
   const [backTo, setBackTo] = useState<number | null>(null)
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
@@ -515,8 +522,10 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     go(jumpTarget.page, jumpTarget.box)
   }, [jumpTarget, showPaper])
 
+  // Opens an agent thread in the terminal and any other thread in the Ask panel.
   const openThread = (t: Thread) => {
-    setThread(t)
+    setThread(isAgentThread(t) ? null : t)
+    setAgent(isAgentThread(t) ? { thread: t } : null)
     if (!wide()) setSidebar(null)
   }
 
@@ -547,6 +556,21 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
 
   const current = bar?.kind === 'highlight' ? store.highlights.value.find((h) => h.id === bar.id) : undefined
   const barText = bar?.kind === 'selection' ? (bar.sel.kind === 'text' ? bar.sel.text : '') : current?.kind === 'text' ? current.text : ''
+  const barPage = bar?.kind === 'selection' ? bar.sel.page : current?.page
+
+  // Keeps the latest bar text as the terminal's attachment after the bar closes.
+  useEffect(() => {
+    if (barText && barPage) setAttach({ text: barText, page: barPage })
+  }, [barText, barPage])
+
+  // Drops the attachment on any press outside the terminal and its toolbar button.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.mg-term-wrap, .mg-toolbar button[aria-label="Agent"]')) setAttach(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [])
 
   const toNotes = (page: number, box: Box) => {
     const shown = showNotes
@@ -724,12 +748,21 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         onToggleNight={() => void saveSettings({ nightMode: !s.nightMode })}
         onToggleSidebar={() => setSidebar(sidebar ? null : 'outline')}
         onThreads={() => setSidebar('threads')}
+        onAgent={
+          hostState.value.status === 'ready'
+            ? () => {
+                setThread(null)
+                setAgent({ thread: null })
+              }
+            : undefined
+        }
         onExport={exportMarkdown}
       />
       <div class="mg-reader-body">
         {sidebar && (
           <Sidebar
             doc={doc}
+            pdfId={pdfId}
             store={store}
             tab={sidebar}
             status={status}
@@ -817,6 +850,25 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
             </div>
           )}
         </div>
+        {agent && (
+          <div class="mg-ask-wrap mg-term-wrap">
+            <Terminal
+              key={agent.thread?.id ?? 'new'}
+              pdfId={pdfId}
+              title={title}
+              store={store}
+              thread={agent.thread}
+              paper={loaded.paper}
+              attach={attach}
+              live={hostState.value.status === 'ready'}
+              onCite={onCite}
+              onClose={() => {
+                setAgent(null)
+                setAttach(null)
+              }}
+            />
+          </div>
+        )}
         {thread && (
           <div class="mg-ask-wrap">
             <AskPanel
@@ -826,7 +878,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               apiKey={s.anthropicApiKey}
               textModel={s.textModel}
               visionModel={s.visionModel}
-              getPageText={(p) => doc.getPageText(p)}
+              getPaperText={() => doc.getAllText()}
               getCrop={(p, b) => cropBase64(doc, p, b)}
               onThreadChange={store.upsertThread}
               onCite={onCite}
@@ -899,12 +951,13 @@ export function Reader({ pdfId }: { pdfId: string }) {
     setProgress(0)
     void (async () => {
       const onProgress = (f: number) => !cancelled && setProgress(f)
-      const blob = await getPdfBlob(pdfId, onProgress)
+      let blob = await getPdfBlob(pdfId, onProgress)
       if (cancelled) return
-      doc = await openPdf(blob).catch(async (err: unknown) => {
-        const fresh = await getPdfBlob(pdfId, onProgress, { fresh: true }).catch(() => Promise.reject(err))
-        return openPdf(fresh)
+      const pdf = await openPdf(blob).catch(async (err: unknown) => {
+        blob = await getPdfBlob(pdfId, onProgress, { fresh: true }).catch(() => Promise.reject(err))
+        return openPdf(blob)
       })
+      doc = pdf
       const sidecar = await loadSidecar(pdfId)
       if (cancelled) return
       const opened = createAnnotationStore(
@@ -919,7 +972,8 @@ export function Reader({ pdfId }: { pdfId: string }) {
       const name = library.peek()?.papers[pdfId]?.name ?? sidecar.pdfName
       const title = name.replace(/\.pdf$/i, '') || doc.title || 'Untitled'
       const remotePosition = signal<{ page: number; offset: number } | null>(null)
-      setLoaded({ doc, store: opened, title, remotePosition, notes: notesSignal, ensureNotes })
+      const paper = async (): Promise<PaperSource> => ({ name, title: pdf.title, pages: await pdf.getAllText(), bytes: await blob.arrayBuffer() })
+      setLoaded({ doc, store: opened, title, remotePosition, notes: notesSignal, ensureNotes, paper })
       // Applies the merged remote sidecar, then moves an unread paper to reading.
       const settle = (merged: Sidecar | null) => {
         if (cancelled) return

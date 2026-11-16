@@ -1,5 +1,6 @@
 // Builds the Claude request for a question about an anchored passage or area, and reads citations back.
 import type { Anchor, ChatMessage, PageText } from '../types.ts'
+import { PAPER_CONTEXT_MAX_CHARS } from '../config.ts'
 import type { ApiMessage, ContentBlock } from './claude.ts'
 
 export type Preset = 'explain' | 'define' | 'math' | 'why'
@@ -14,7 +15,7 @@ export const PRESET_LABELS: Record<Preset, string> = {
 export interface AskInput {
   paperTitle: string | null
   anchor: Anchor
-  pageText: PageText
+  paper: PageText[]
   crop?: { mediaType: 'image/png'; dataBase64: string }
   history: ChatMessage[]
   question: string
@@ -30,9 +31,9 @@ export const CITATION = /["“]([^"“”\n]{1,800}?)["”]\s*\(p\.\s*(\d+)\)/
 
 const SYSTEM_PROMPT = [
   'You are reading a research paper together with the user. They have selected a passage, equation or figure on one page and are asking about it.',
-  'You are given the text of that page with the selected passage marked between << and >>. When they selected a region instead, you are also given an image of it.',
-  'Answer about the selection, in the context of the page text provided.',
-  'Support your answer by quoting the page text verbatim in the form "quoted words" (p. N), where N is the page number. Quote only words that appear in the provided text, and keep quotes short.',
+  'The whole paper is provided page by page, each page inside <page n="…"> tags. The selected passage is repeated in a separate content block with its page and marked between << and >>; when they selected a region instead, you are also given an image of it.',
+  'References such as "Section 5", "Eq. 3" or "Fig. 2" must be resolved by reading that part of the paper, wherever it is.',
+  'Support your answer by quoting the paper text verbatim in the form "quoted words" (p. N), where N is the page number. Quote only words that appear in the provided text, and keep quotes short.',
   'If the answer is not supported by the provided text, say so plainly. If you then add background from general knowledge, label it as such.',
   'Be concise. Use plain Markdown: short paragraphs, lists, **bold**, *italic*, `code`. No tables, no HTML. Write maths inline in plain text or `code`.',
 ].join('\n')
@@ -81,28 +82,43 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length
 }
 
-// Describes the page for the first user turn: title, selection handling, then the page text.
-function contextText(input: AskInput): string {
-  const { anchor, pageText, paperTitle } = input
+function renderPaper(pages: PageText[], title: string | null, truncatedFrom: number | null, total: number): string {
   const lines: string[] = []
-  if (paperTitle) lines.push(`Paper: ${paperTitle}`)
-  let body = pageText.text
-  if (isArea(anchor) && input.crop) {
-    lines.push(`Text of page ${anchor.page}. The user selected a region of this page; it is shown in the image below.`)
-  } else if (isArea(anchor)) {
-    lines.push(`Text of page ${anchor.page}. The user is asking about the selected area on p.${anchor.page}, which is not marked in this text.`)
-  } else {
-    const marked = markSelection(pageText.text, anchor.text!)
-    if (marked) {
-      body = marked
-      lines.push(`Text of page ${anchor.page}, with the selected passage marked between << and >>.`)
-    } else {
-      lines.push(`Selected passage (not found verbatim in the page text): <<${anchor.text!.trim()}>>`)
-      lines.push(`Text of page ${anchor.page}:`)
-    }
-  }
-  lines.push(`<page_text page="${anchor.page}">`, body, '</page_text>')
+  if (title) lines.push(`Paper: ${title}`)
+  lines.push(`<paper pages="${total}">`)
+  for (const p of pages) lines.push(`<page n="${p.page}">`, p.text, '</page>')
+  lines.push('</paper>')
+  if (truncatedFrom !== null) lines.push(`<truncated from_page="${truncatedFrom}"/>`)
   return lines.join('\n')
+}
+
+/** The page-tagged paper text, identical for every thread on the paper; drops trailing pages (never `keepPage`) past PAPER_CONTEXT_MAX_CHARS. */
+export function paperBlock(paper: PageText[], title: string | null, keepPage?: number): { text: string; truncated: boolean; words: number } {
+  let used = paper.find((p) => p.page === keepPage)?.text.length ?? 0
+  let firstDropped: number | null = null
+  const kept = paper.filter((p) => {
+    if (p.page === keepPage) return true
+    if (firstDropped === null && used + p.text.length <= PAPER_CONTEXT_MAX_CHARS) {
+      used += p.text.length
+      return true
+    }
+    firstDropped ??= p.page
+    return false
+  })
+  const words = kept.reduce((n, p) => n + countWords(p.text), 0)
+  return { text: renderPaper(kept, title, firstDropped, paper.length), truncated: firstDropped !== null, words }
+}
+
+/** The second block: the anchor page's text with the passage marked, or the not-found / area line. */
+export function selectionBlock(anchor: Anchor, page: PageText | undefined, hasImage: boolean): string {
+  if (isArea(anchor)) {
+    return hasImage
+      ? `The user selected a region on p.${anchor.page}; it is shown in the image below.`
+      : `The user is asking about a selected area on p.${anchor.page}, which is not marked in the text.`
+  }
+  const marked = page ? markSelection(page.text, anchor.text!) : null
+  if (!marked) return `Selected passage on p.${anchor.page} (not found verbatim in the page text): <<${anchor.text!.trim()}>>`
+  return `Page ${anchor.page} again, with the selected passage marked between << and >>:\n<page_text page="${anchor.page}">\n${marked}\n</page_text>`
 }
 
 // Drops empty turns, merges consecutive same-role turns and drops a leading assistant turn.
@@ -120,11 +136,17 @@ function alternate(turns: { role: ChatMessage['role']; content: string }[]): { r
 export function buildRequest(input: AskInput): {
   system: string
   messages: ApiMessage[]
-  summary: { words: number; page: number; hasImage: boolean }
+  summary: { pages: number; words: number; page: number; hasImage: boolean; truncated: boolean }
 } {
   const turns = alternate([...input.history, { role: 'user', content: input.question }])
   if (turns.length === 0) throw new Error('buildRequest needs a question: both the question and the history are empty.')
-  const first: ContentBlock[] = [{ type: 'text', text: contextText(input) }]
+  const { anchor, paper } = input
+  const anchorPage = paper.find((p) => p.page === anchor.page)
+  const block = paperBlock(paper, input.paperTitle, anchor.page)
+  const first: ContentBlock[] = [
+    { type: 'text', text: block.text, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: selectionBlock(anchor, anchorPage, Boolean(input.crop)) },
+  ]
   if (input.crop) {
     first.push({ type: 'image', source: { type: 'base64', media_type: input.crop.mediaType, data: input.crop.dataBase64 } })
   }
@@ -133,7 +155,7 @@ export function buildRequest(input: AskInput): {
   return {
     system: SYSTEM_PROMPT,
     messages,
-    summary: { words: countWords(input.pageText.text), page: input.anchor.page, hasImage: Boolean(input.crop) },
+    summary: { pages: paper.length, words: block.words, page: anchor.page, hasImage: Boolean(input.crop), truncated: block.truncated },
   }
 }
 

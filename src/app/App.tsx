@@ -1,10 +1,15 @@
-// App shell: onboarding, library or reader by route, settings sheet, toast, theme and root gesture hooks.
+// App shell: onboarding, library, map or reader by route, settings sheet, toast, theme and root gesture hooks.
 import { signal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
+import { probeHost } from '../agent/host'
+import { HOST_PROBE_INTERVAL_MS } from '../config'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
+import { startGrader } from '../verdict/grader'
+import { connectHostGrading } from '../verdict/hostGrader'
 import { fingerDraws, nightInk } from '../ink/tools'
 import { Library } from '../library/Library'
+import { MapView } from '../map/MapView'
 import { Onboarding } from './Onboarding'
 import { applyUpdate, updateReady } from './pwa'
 import { route } from './route'
@@ -77,7 +82,8 @@ function Screen() {
   if (!hasLibrary || choosingRoot.value) return <Onboarding step="root" />
   const r = route.value
   if (r.kind === 'paper') return <ReaderRoute id={r.id} />
-  return <Library folderId={r.folderId} />
+  if (r.kind === 'map') return <MapView />
+  return <Library folderId={r.kind === 'library' ? r.folderId : undefined} />
 }
 
 export function App() {
@@ -99,6 +105,22 @@ export function App() {
   }, [s.nightMode])
 
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
+  useEffect(() => (hasLibrary ? startGrader() : undefined), [hasLibrary])
+  useEffect(() => connectHostGrading(), [])
+
+  const paired = Boolean(s.hostToken)
+  useEffect(() => {
+    if (!paired) return undefined
+    const probe = () => void probeHost(false)
+    const onVisible = () => document.visibilityState === 'visible' && probe()
+    probe()
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = setInterval(probe, HOST_PROBE_INTERVAL_MS)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(timer)
+    }
+  }, [paired])
 
   return (
     <div class="mg-app" onPointerDownCapture={onRootPointerDown} onPointerUpCapture={maybeRenew} onClickCapture={maybeRenew}>

@@ -28,3 +28,7 @@ dist-ssr
 
 # pdf.js assets copied by scripts/copy-pdfjs-assets.mjs
 public/pdfjs/
+
+# marginalia host
+host/node_modules
+host/dist

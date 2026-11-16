@@ -12,7 +12,7 @@ export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
 
 export const HIGHLIGHT_COLORS: readonly HighlightColor[] = ['yellow', 'green', 'blue', 'pink']
 
-interface Item {
+export interface Item {
   id: string
   createdAt: number
   updatedAt: number
@@ -75,6 +75,8 @@ export interface Thread extends Item {
   anchor: Anchor
   model: string
   messages: ChatMessage[]
+  /** The agent host's session id. */
+  session?: string
 }
 
 export type ReadStatus = 'unread' | 'reading' | 'done'
@@ -100,6 +102,22 @@ export interface Sidecar {
   threads: Thread[]
   reading: ReadingState
   colorLabels?: Partial<Record<HighlightColor, string>>
+  gist?: { text: string; updatedAt: number }
+  topics?: { ids: string[]; updatedAt: number }
+  pin?: { x: number; y: number; updatedAt: number }
+  links?: PaperLink[]
+}
+
+export type LinkRel = 'builds-on' | 'extends' | 'baseline' | 'contradicts' | 'same-problem' | 'related'
+
+export const SYMMETRIC_RELS: ReadonlySet<LinkRel> = new Set<LinkRel>(['contradicts', 'same-problem', 'related'])
+
+/** A typed link from this paper to another paper. */
+export interface PaperLink extends Item {
+  kind: 'link'
+  to: string
+  rel: LinkRel
+  note?: string
 }
 
 export type Annotation = Highlight | InkStroke | Thread
@@ -112,6 +130,7 @@ export function emptySidecar(pdfId: string, pdfName: string, now: number): Sidec
     highlights: [],
     inks: [],
     threads: [],
+    links: [],
     reading: { page: 1, offset: 0, zoom: 0, status: 'unread', updatedAt: now },
   }
 }
@@ -146,6 +165,8 @@ export interface LibraryIndex {
   sidecars: Record<string, DriveNode>
   /** Notes file node keyed by the PDF file id it belongs to. */
   notes?: Record<string, DriveNode>
+  /** Verdict file node keyed by the PDF file id it belongs to. */
+  verdicts?: Record<string, DriveNode>
   /** Home pictures found in the root folder, by slot. */
   homeArt?: HomeArtFiles
   syncedAt: number

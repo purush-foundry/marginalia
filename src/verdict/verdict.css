@@ -1,0 +1,38 @@
+.mg-verdict {
+  flex: none;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.mg-verdict-read {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mg-verdict-skip {
+  text-decoration: line-through;
+}
+
+.mg-verdict-busy {
+  animation: mg-verdict-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mg-verdict-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.mg-verdict-tab {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mg-verdict-tab .mg-verdict {
+  align-self: flex-start;
+}

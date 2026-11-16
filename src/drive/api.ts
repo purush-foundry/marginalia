@@ -13,7 +13,7 @@ const MAX_RETRIES = 3
 const RETRY_BASE_MS = 1000
 const RATE_LIMIT_REASONS = new Set(['userRateLimitExceeded', 'rateLimitExceeded'])
 
-/** JSON bodies above this many UTF-8 bytes are uploaded through a resumable session. */
+/** File bodies above this many UTF-8 bytes are uploaded through a resumable session. */
 export const SIMPLE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 
 export class DriveError extends Error {
@@ -132,37 +132,45 @@ export async function downloadFile(id: string, onProgress?: (bytesReceived: numb
   return new Blob(chunks, { type: res.headers.get('Content-Type') ?? '' })
 }
 
-export async function downloadJson<T>(id: string): Promise<T> {
-  return getJson<T>(url(API, `/files/${encodeURIComponent(id)}`, { alt: 'media' }))
+/** Downloads a file's content as text. */
+export async function downloadText(id: string): Promise<string> {
+  return (await request(url(API, `/files/${encodeURIComponent(id)}`, { alt: 'media' }))).text()
 }
+
+export async function downloadJson<T>(id: string): Promise<T> {
+  return JSON.parse(await downloadText(id)) as T
+}
+
+/** Media types of the text companion files Marginalia writes. */
+export type FileMime = 'application/json' | 'text/markdown'
 
 function exceedsSimpleUpload(text: string): boolean {
   return new TextEncoder().encode(text).byteLength > SIMPLE_UPLOAD_MAX_BYTES
 }
 
-// Opens a resumable upload session with the metadata, then PUTs the JSON text to the session URL.
-async function uploadResumable(method: 'POST' | 'PATCH', path: string, metadata: object, text: string): Promise<DriveNode> {
+// Opens a resumable upload session with the metadata, then PUTs the text to the session URL.
+async function uploadResumable(method: 'POST' | 'PATCH', path: string, metadata: object, text: string, mime: FileMime): Promise<DriveNode> {
   const session = await request(url(UPLOAD, path, { uploadType: 'resumable', fields: NODE_FIELDS }), {
     method,
-    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime },
     body: JSON.stringify(metadata),
   })
   const location = session.headers.get('Location')
   if (!location) throw new DriveError(session.status, 'noUploadSession', 'resumable upload returned no session URL')
-  const raw = await getJson<RawNode>(location, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: text })
+  const raw = await getJson<RawNode>(location, { method: 'PUT', headers: { 'Content-Type': mime }, body: text })
   return toNode(raw)
 }
 
-/** Creates a JSON file with metadata in one multipart upload, or a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
-export async function createJsonFile(
+/** Creates a text file with metadata in one multipart upload, or a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
+export async function createFile(
   name: string,
   parentId: string,
-  body: unknown,
+  text: string,
+  mime: FileMime,
   appProperties: Record<string, string>,
 ): Promise<DriveNode> {
-  const metadata = { name, parents: [parentId], mimeType: 'application/json', appProperties }
-  const text = JSON.stringify(body)
-  if (exceedsSimpleUpload(text)) return uploadResumable('POST', '/files', metadata, text)
+  const metadata = { name, parents: [parentId], mimeType: mime, appProperties }
+  if (exceedsSimpleUpload(text)) return uploadResumable('POST', '/files', metadata, text, mime)
   const boundary = `marginalia-${crypto.randomUUID()}`
   const multipart = [
     `--${boundary}`,
@@ -170,7 +178,7 @@ export async function createJsonFile(
     '',
     JSON.stringify(metadata),
     `--${boundary}`,
-    'Content-Type: application/json',
+    `Content-Type: ${mime}`,
     '',
     text,
     `--${boundary}--`,
@@ -184,17 +192,26 @@ export async function createJsonFile(
   return toNode(raw)
 }
 
-/** Replaces a JSON file's content, through a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
-export async function updateJsonFile(id: string, body: unknown): Promise<DriveNode> {
+/** Replaces a text file's content, through a resumable session above SIMPLE_UPLOAD_MAX_BYTES. */
+export async function updateFile(id: string, text: string, mime: FileMime): Promise<DriveNode> {
   const path = `/files/${encodeURIComponent(id)}`
-  const text = JSON.stringify(body)
-  if (exceedsSimpleUpload(text)) return uploadResumable('PATCH', path, {}, text)
+  if (exceedsSimpleUpload(text)) return uploadResumable('PATCH', path, {}, text, mime)
   const raw = await getJson<RawNode>(url(UPLOAD, path, { uploadType: 'media', fields: NODE_FIELDS }), {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': mime },
     body: text,
   })
   return toNode(raw)
+}
+
+/** Creates a JSON file through createFile. */
+export function createJsonFile(name: string, parentId: string, body: unknown, appProperties: Record<string, string>): Promise<DriveNode> {
+  return createFile(name, parentId, JSON.stringify(body), 'application/json', appProperties)
+}
+
+/** Replaces a JSON file's content through updateFile. */
+export function updateJsonFile(id: string, body: unknown): Promise<DriveNode> {
+  return updateFile(id, JSON.stringify(body), 'application/json')
 }
 
 /** An existing companion file of the given kind for the PDF: by its appProperties tag and PDF key, else by name in the parent folder. */
@@ -202,8 +219,8 @@ export async function findCompanionFile(
   pdfId: string,
   name: string,
   parentId: string,
-  tag: '1' | 'notes',
-  pdfKey: 'pdf' | 'notesFor',
+  tag: '1' | 'notes' | 'verdict',
+  pdfKey: 'pdf' | 'notesFor' | 'verdictFor',
 ): Promise<DriveNode | null> {
   const kind = tag === '1' ? '' : ` and appProperties has { key='marginalia' and value=${quote(tag)} }`
   const tagged = await listAll(`appProperties has { key=${quote(pdfKey)} and value=${quote(pdfId)} }${kind} and trashed = false`)

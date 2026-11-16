@@ -12,7 +12,7 @@ export interface AskPanelProps {
   apiKey: string
   textModel: string
   visionModel: string
-  getPageText(page: number): Promise<PageText>
+  getPaperText(): Promise<PageText[]>
   getCrop(page: number, box: Box): Promise<{ mediaType: 'image/png'; dataBase64: string }>
   onThreadChange(thread: Thread): void
   onCite(page: number, quote: string): void
@@ -21,7 +21,7 @@ export interface AskPanelProps {
 }
 
 type Crop = { mediaType: 'image/png'; dataBase64: string }
-type Summary = { words: number; page: number; hasImage: boolean }
+type Summary = { pages: number; truncated: boolean; hasImage: boolean }
 
 const PRESETS = Object.keys(PRESET_LABELS) as Preset[]
 const EXCERPT_CHARS = 120
@@ -32,7 +32,7 @@ function excerpt(text: string): string {
 }
 
 function sendingLine(s: Summary): string {
-  return `Sending ${s.words} word${s.words === 1 ? '' : 's'} from p.${s.page}${s.hasImage ? ' (+ image)' : ''}`
+  return `Sending the whole paper (${s.pages} page${s.pages === 1 ? '' : 's'})${s.truncated ? ', trimmed' : ''}${s.hasImage ? ' + image' : ''}`
 }
 
 function describeError(err: unknown): string {
@@ -111,11 +111,11 @@ export function AskPanel(props: AskPanelProps) {
     setBusy(true)
     setMessages(turn())
     try {
-      const [pageText, image] = await Promise.all([
-        props.getPageText(anchor.page),
+      const [paper, image] = await Promise.all([
+        props.getPaperText(),
         isArea && anchor.boxes.length > 0 ? loadCrop() : Promise.resolve(undefined),
       ])
-      const req = buildRequest({ paperTitle: props.paperTitle, anchor, pageText, crop: image, history, question: q })
+      const req = buildRequest({ paperTitle: props.paperTitle, anchor, paper, crop: image, history, question: q })
       setSummary(req.summary)
       const gen = streamMessage({ apiKey, model, system: req.system, messages: req.messages, signal: ctrl.signal })
       for (;;) {

@@ -199,3 +199,56 @@ describe('mergeNotebooks', () => {
     }
   })
 })
+
+describe('mergeSidecars map fields', () => {
+  const lk = (id: string, updatedAt: number, extra: Record<string, unknown> = {}) =>
+    ({ id, kind: 'link' as const, to: 'q', rel: 'related' as const, createdAt: 1, updatedAt, ...extra })
+
+  test('keeps the newer gist, topics and pin in both orders', () => {
+    const a = sidecar({ gist: { text: 'old', updatedAt: 1 }, topics: { ids: ['x'], updatedAt: 5 }, pin: { x: 0.1, y: 0.1, updatedAt: 2 } })
+    const b = sidecar({ gist: { text: 'new', updatedAt: 3 }, topics: { ids: ['y'], updatedAt: 4 }, pin: { x: -1, y: -1, updatedAt: 6 } })
+    for (const m of [mergeSidecars(a, b), mergeSidecars(b, a)]) {
+      expect(m.gist?.text).toBe('new')
+      expect(m.topics?.ids).toEqual(['x'])
+      expect(m.pin).toEqual({ x: -1, y: -1, updatedAt: 6 })
+    }
+  })
+
+  test('a side without the field loses, and the field is omitted when neither has it', () => {
+    const m = mergeSidecars(sidecar({ gist: { text: 'g', updatedAt: 1 } }), sidecar({}))
+    expect(m.gist?.text).toBe('g')
+    const none = mergeSidecars(sidecar({}), sidecar({}))
+    expect('gist' in none || 'topics' in none || 'pin' in none).toBe(false)
+  })
+
+  test('unions links with tombstones and always outputs an array', () => {
+    const a = sidecar({ links: [lk('a', 1), lk('b', 1)] })
+    const b = sidecar({ links: [lk('a', 2, { deleted: true }), lk('c', 1)] })
+    const m = mergeSidecars(a, b)
+    expect(m.links!.map((l) => [l.id, !!l.deleted])).toEqual([['a', true], ['b', false], ['c', false]])
+    const { links: _l, ...rest } = sidecar({})
+    expect(mergeSidecars(rest as Sidecar, rest as Sidecar).links).toEqual([])
+  })
+
+  test('takes pdfName from the side touched most recently via a pin stamp', () => {
+    const a = sidecar({ pdfName: 'a.pdf', pin: { x: 0, y: 0, updatedAt: 50 } })
+    const b = sidecar({ pdfName: 'b.pdf' })
+    expect(mergeSidecars(a, b).pdfName).toBe('a.pdf')
+    expect(mergeSidecars(b, a).pdfName).toBe('a.pdf')
+  })
+
+  test('equal-stamp gist and topics agree in both orders', () => {
+    const a = sidecar({ gist: { text: 'a', updatedAt: 4 }, topics: { ids: ['x'], updatedAt: 4 } })
+    const b = sidecar({ gist: { text: 'b', updatedAt: 4 }, topics: { ids: ['y'], updatedAt: 4 } })
+    const [ab, ba] = [mergeSidecars(a, b), mergeSidecars(b, a)]
+    expect(ab.gist).toEqual(ba.gist)
+    expect(ab.topics).toEqual(ba.topics)
+  })
+
+  test('equal-stamp pin vs unpin gives the unpin in both orders', () => {
+    const pinned = sidecar({ pin: { x: 0.5, y: 0.5, updatedAt: 4 } })
+    const unpinned = sidecar({ pin: { x: -1, y: -1, updatedAt: 4 } })
+    expect(mergeSidecars(pinned, unpinned).pin).toEqual({ x: -1, y: -1, updatedAt: 4 })
+    expect(mergeSidecars(unpinned, pinned).pin).toEqual({ x: -1, y: -1, updatedAt: 4 })
+  })
+})
