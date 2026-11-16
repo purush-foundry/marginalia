@@ -3,6 +3,7 @@ import { LIBRARY_SYNC_INTERVAL_MS, PDF_CACHE_LIMIT_BYTES, SIDECAR_SAVE_DEBOUNCE_
 import { FIRST_PAGE_ID, convertV1, emptyNotebook, isNotebookDoc, type ImageObject, type NotesDocV2, type TextObject } from '../notes/model'
 import { FOLDER_MIME, PDF_MIME, emptyNotes, emptySidecar, type AreaHighlight, type NotesDoc, type Sidecar, type TextBlock } from '../types'
 import { FakeIndexedDb } from '../lib/test-idb'
+import { parseNote, serializeNote, type VerdictNote } from '../verdict/note'
 import { FakeDrive, driveError, signIn } from './test-helpers'
 
 type Library = typeof import('./library')
@@ -1035,6 +1036,174 @@ describe('notes', () => {
     expect(uploaded.strokes.map((s) => s.id)).toEqual(['s1'])
     expect(await idb.idbKeys('queue')).toEqual([])
     expect(await lib.loadNotebook('p1')).toEqual(uploaded)
+  })
+})
+
+interface StoredVerdict {
+  sidecar: VerdictNote
+  remoteId?: string
+  remoteVersion?: string
+  dirty: boolean
+}
+
+function verdictNote(generated: string, verdict: VerdictNote['verdict'] = 'read'): VerdictNote {
+  return { verdict, confidence: 'high', readTime: '20 min', oneLine: `Line ${generated}`, topics: ['ml'], skill: 's1', model: 'm1', generated, body: `Body ${generated}.` }
+}
+
+function remoteVerdict(id: string, pdfId: string, parent: string, content: string, tagged = true, name = `${pdfId}.worth-reading.md`) {
+  drive.add({
+    id,
+    name,
+    mimeType: 'text/markdown',
+    parents: [parent],
+    appProperties: tagged ? { marginalia: 'verdict', verdictFor: pdfId } : undefined,
+    content,
+  })
+}
+
+describe('verdict notes', () => {
+  const OLDER = '2026-11-01T00:00:00Z'
+  const NEWER = '2026-11-02T00:00:00Z'
+  const writes = () => drive.calls.filter((c) => c.method !== 'GET')
+
+  test('verdictNameFor swaps .pdf for .worth-reading.md', () => {
+    expect(lib.verdictNameFor('Attention.PDF')).toBe('Attention.worth-reading.md')
+  })
+
+  test('a tagged note beside a PDF is attached on sync and loadVerdict returns it parsed', async () => {
+    paper('p1', 'root')
+    paper('p2', 'root')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER)))
+    const revision = lib.sidecarRevision.value
+
+    await lib.setRootFolder(ROOT)
+
+    const index = lib.library.value!
+    expect(index.verdicts!.p1.id).toBe('v1')
+    expect(index.sidecars).toEqual({})
+    expect(index.notes).toEqual({})
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(OLDER))
+    expect(await lib.loadVerdict('p2')).toBeNull()
+    expect(lib.sidecarRevision.value).toBeGreaterThan(revision)
+  })
+
+  test('an untagged <paper>.worth-reading.md in the same folder attaches by name', async () => {
+    folder('f1', 'root')
+    paper('p1', 'root', 'Attention.pdf')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER, 'skim')), false, 'Attention.worth-reading.md')
+    remoteVerdict('v2', 'p1', 'f1', serializeNote(verdictNote(NEWER)), false, 'Attention.worth-reading.md')
+
+    await lib.setRootFolder(ROOT)
+
+    expect(lib.library.value!.verdicts!.p1.id).toBe('v1')
+    expect((await lib.loadVerdict('p1'))?.verdict).toBe('skim')
+  })
+
+  test('saveVerdict then flushQueue creates a Markdown file with the verdict tags, then updates it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+
+    lib.saveVerdict('p1', verdictNote(OLDER))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    const id = lib.library.value!.verdicts!.p1.id
+    const file = drive.files.get(id)!
+    expect(file).toMatchObject({
+      name: 'p1.worth-reading.md',
+      mimeType: 'text/markdown',
+      parents: ['root'],
+      appProperties: { marginalia: 'verdict', verdictFor: 'p1' },
+    })
+    expect(file.content.startsWith('---\nverdict:')).toBe(true)
+    expect(parseNote(file.content)).toEqual(verdictNote(OLDER))
+    expect(await idb.idbGet<StoredVerdict>('verdicts', 'p1')).toMatchObject({ dirty: false, remoteId: id, remoteVersion: '1' })
+    expect(await idb.idbKeys('queue')).toEqual([])
+
+    lib.saveVerdict('p1', verdictNote(NEWER, 'skip'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    const patches = drive.calls.filter((c) => c.method === 'PATCH')
+    expect(patches.map((c) => [c.url.pathname, c.headers['content-type']])).toEqual([[`/upload/drive/v3/files/${id}`, 'text/markdown']])
+    expect(parseNote(drive.files.get(id)!.content)).toEqual(verdictNote(NEWER, 'skip'))
+    expect(await idb.idbKeys('queue')).toEqual([])
+  })
+
+  test('two notes merge to the newer generated', async () => {
+    paper('p1', 'root')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(NEWER, 'skim')))
+    await lib.setRootFolder(ROOT)
+
+    lib.saveVerdict('p1', verdictNote(OLDER, 'read'))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(NEWER, 'skim'))
+    expect(parseNote(drive.files.get('v1')!.content)).toEqual(verdictNote(NEWER, 'skim'))
+
+    const newest = '2026-11-03T00:00:00Z'
+    drive.update('v1', { content: serializeNote(verdictNote(newest, 'skip')) })
+    await lib.syncLibrary()
+
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(newest, 'skip'))
+  })
+
+  test('an unparseable note is kept and reported', async () => {
+    paper('p1', 'root')
+    remoteVerdict('v1', 'p1', 'root', 'garbage')
+
+    await lib.setRootFolder(ROOT)
+
+    expect(lib.syncState.value).toMatchObject({ status: 'error', message: '1 verdict download(s) failed' })
+    expect(await lib.loadVerdict('p1')).toBeNull()
+
+    lib.saveVerdict('p1', verdictNote(OLDER))
+    await lib.flushPendingWrites()
+    await lib.flushQueue()
+
+    expect(drive.files.get('v1')!.content).toBe('garbage')
+    expect(writes()).toEqual([])
+    expect(await idb.idbKeys('queue')).toEqual(['verdict:p1'])
+    expect(lib.syncState.value.message).toBe('1 verdict upload(s) failed')
+  })
+
+  test('hasRemoteVerdict finds a note the index has not seen and records it', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    expect(await lib.hasRemoteVerdict('p1')).toBe(false)
+
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER)))
+
+    expect(await lib.hasRemoteVerdict('p1')).toBe(true)
+    expect(lib.library.value!.verdicts!.p1.id).toBe('v1')
+    expect(await lib.refreshVerdict('p1')).toEqual(verdictNote(OLDER))
+    expect(await lib.refreshVerdict('p1')).toBeNull()
+  })
+
+  test('an index from before verdict notes walks once to find them', async () => {
+    paper('p1', 'root')
+    remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(OLDER)))
+    const p1 = { id: 'p1', name: 'p1.pdf', mimeType: PDF_MIME, parents: ['root'], modifiedTime: '2026-01-01T00:00:00Z', version: '1', size: 4 }
+    await idb.idbSet('meta', 'library', {
+      rootId: 'root',
+      rootName: 'Papers',
+      folders: { root: { ...ROOT } },
+      papers: { p1 },
+      sidecars: {},
+      notes: {},
+      syncedAt: 1,
+      changesToken: String(drive.changeLog.length),
+    })
+    await lib.loadLibrary()
+
+    await lib.syncLibrary()
+
+    expect(lib.library.value!.verdicts!.p1.id).toBe('v1')
+    const lists = () => drive.calls.filter((c) => c.url.pathname === '/drive/v3/files').length
+    const before = lists()
+    await lib.syncLibrary()
+    expect(lists()).toBe(before)
   })
 })
 

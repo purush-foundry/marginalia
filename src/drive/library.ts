@@ -1,4 +1,4 @@
-// Mirror of the chosen Drive folder tree, the PDF blob cache, and companion file (sidecar, notes) load/save/sync.
+// Mirror of the chosen Drive folder tree, the PDF blob cache, and companion file (sidecar, notes, verdict) load/save/sync.
 import { signal } from '@preact/signals'
 import {
   HOME_ART_FILE,
@@ -7,6 +7,7 @@ import {
   PDF_CACHE_LIMIT_BYTES,
   SIDECAR_SAVE_DEBOUNCE_MS,
   SIDECAR_SUFFIX,
+  VERDICT_SUFFIX,
 } from '../config'
 import { idbDel, idbGet, idbGetAll, idbKeys, idbSet } from '../lib/idb'
 import { convertV1, emptyNotebook, isNotebookDoc, type NotesDocV2 } from '../notes/model'
@@ -21,17 +22,19 @@ import {
   type NotesDoc,
   type Sidecar,
 } from '../types'
+import { isVerdictNote, parseNote, serializeNote, type VerdictNote } from '../verdict/note'
 import {
   DriveError,
-  createJsonFile,
+  createFile,
   downloadFile,
-  downloadJson,
+  downloadText,
   findCompanionFile,
   getNode,
   getStartPageToken,
   listChanges,
   listChildren,
-  updateJsonFile,
+  updateFile,
+  type FileMime,
 } from './api'
 import { getAccessToken } from './auth'
 import { mergeNotebooks, mergeSidecars } from './merge'
@@ -51,7 +54,7 @@ interface LegacyCachedFile {
   openedAt: number
 }
 
-/** A local companion record; the document lives under `sidecar` for both kinds. */
+/** A local companion record; the document lives under `sidecar` for every kind. */
 interface StoredCompanion<T> {
   sidecar: T
   remoteId?: string
@@ -59,13 +62,17 @@ interface StoredCompanion<T> {
   dirty: boolean
 }
 
-/** One kind of per-PDF companion file and how it is named, stored, indexed, merged, validated and upgraded. */
+/** One kind of per-PDF companion file and how it is named, encoded, stored, indexed, merged, validated and upgraded. */
 interface Companion<T> {
-  kind: 'annotations' | 'notes'
-  store: 'sidecars' | 'notebooks'
-  indexKey: 'sidecars' | 'notes'
-  tag: '1' | 'notes'
-  pdfKey: 'pdf' | 'notesFor'
+  kind: 'annotations' | 'notes' | 'verdict'
+  store: 'sidecars' | 'notebooks' | 'verdicts'
+  indexKey: 'sidecars' | 'notes' | 'verdicts'
+  tag: '1' | 'notes' | 'verdict'
+  pdfKey: 'pdf' | 'notesFor' | 'verdictFor'
+  mime: FileMime
+  serialize(doc: T): string
+  /** Decodes file text; throws SyntaxError when it cannot. */
+  parse(text: string): unknown
   nameFor(pdfName: string): string
   queueKey(pdfId: string): string
   map(index: LibraryIndex): Record<string, DriveNode>
@@ -89,7 +96,7 @@ interface SyncState {
 
 export const library = signal<LibraryIndex | null>(null)
 export const syncState = signal<SyncState>({ status: 'idle' })
-/** Increments whenever a sync merges sidecars or notes from Drive into local records. */
+/** Increments whenever a sync merges sidecars, notes or verdicts from Drive into local records. */
 export const sidecarRevision = signal(0)
 
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
@@ -102,7 +109,12 @@ export function notesNameFor(pdfName: string): string {
   return pdfName.replace(/\.pdf$/i, '') + NOTES_SUFFIX
 }
 
+export function verdictNameFor(pdfName: string): string {
+  return pdfName.replace(/\.pdf$/i, '') + VERDICT_SUFFIX
+}
+
 const NOTES_QUEUE_PREFIX = 'notes:'
+const VERDICT_QUEUE_PREFIX = 'verdict:'
 
 // True for a notes document written by a client with a newer schema.
 function isNewerNotes(remote: unknown): boolean {
@@ -122,6 +134,9 @@ const ANNOTATIONS: Companion<Sidecar> = {
   indexKey: 'sidecars',
   tag: '1',
   pdfKey: 'pdf',
+  mime: 'application/json',
+  serialize: (doc) => JSON.stringify(doc),
+  parse: (text) => JSON.parse(text),
   nameFor: sidecarNameFor,
   queueKey: (pdfId) => pdfId,
   map: (index) => index.sidecars,
@@ -140,6 +155,9 @@ const NOTEBOOK: Companion<NotesDocV2> = {
   indexKey: 'notes',
   tag: 'notes',
   pdfKey: 'notesFor',
+  mime: 'application/json',
+  serialize: (doc) => JSON.stringify(doc),
+  parse: (text) => JSON.parse(text),
   nameFor: notesNameFor,
   queueKey: (pdfId) => NOTES_QUEUE_PREFIX + pdfId,
   map: (index) => index.notes ?? {},
@@ -152,11 +170,43 @@ const NOTEBOOK: Companion<NotesDocV2> = {
   label: 'notes',
 }
 
-const COMPANIONS: readonly Companion<unknown>[] = [ANNOTATIONS, NOTEBOOK]
+// Parses a verdict note; throws SyntaxError when the text is not one.
+function parseVerdict(text: string): VerdictNote {
+  const note = parseNote(text)
+  if (!note) throw new SyntaxError('not a verdict note')
+  return note
+}
+
+const VERDICT: Companion<VerdictNote> = {
+  kind: 'verdict',
+  store: 'verdicts',
+  indexKey: 'verdicts',
+  tag: 'verdict',
+  pdfKey: 'verdictFor',
+  mime: 'text/markdown',
+  serialize: serializeNote,
+  parse: parseVerdict,
+  nameFor: verdictNameFor,
+  queueKey: (pdfId) => VERDICT_QUEUE_PREFIX + pdfId,
+  map: (index) => index.verdicts ?? {},
+  empty: () => {
+    throw new Error('a verdict note has no empty form')
+  },
+  merge: (a, b) => (b.generated > a.generated ? b : a),
+  accepts: isVerdictNote,
+  upgrade: (doc) => doc as VerdictNote,
+  unparseableIsForeign: false,
+  newer: () => false,
+  label: 'verdict',
+}
+
+const COMPANIONS: readonly Companion<unknown>[] = [ANNOTATIONS, NOTEBOOK, VERDICT]
 
 // The companion kind and PDF id a queue key stands for.
 function fromQueueKey(key: string): [Companion<unknown>, string] {
-  return key.startsWith(NOTES_QUEUE_PREFIX) ? [NOTEBOOK, key.slice(NOTES_QUEUE_PREFIX.length)] : [ANNOTATIONS, key]
+  if (key.startsWith(NOTES_QUEUE_PREFIX)) return [NOTEBOOK, key.slice(NOTES_QUEUE_PREFIX.length)]
+  if (key.startsWith(VERDICT_QUEUE_PREFIX)) return [VERDICT, key.slice(VERDICT_QUEUE_PREFIX.length)]
+  return [ANNOTATIONS, key]
 }
 
 interface PendingSave {
@@ -273,6 +323,7 @@ async function fullWalk(index: LibraryIndex): Promise<LibraryIndex> {
     papers: {},
     sidecars: {},
     notes: {},
+    verdicts: {},
     syncedAt: 0,
     changesToken,
   }
@@ -318,6 +369,7 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
     papers: { ...index.papers },
     sidecars: { ...index.sidecars },
     notes: { ...index.notes },
+    verdicts: { ...index.verdicts },
     homeArt: { ...index.homeArt },
   }
   const newFolders: string[] = []
@@ -354,12 +406,12 @@ async function applyChanges(index: LibraryIndex, startToken: string): Promise<Li
   return next
 }
 
-// Applies changes since the token; walks in full when there is no token, the token is rejected, or the index predates notes files.
+// Applies changes since the token; walks in full when there is no token, the token is rejected, or the index predates notes or verdict files.
 async function refreshIndex(): Promise<void> {
   const index = library.peek()
   if (!index) return
   let next: LibraryIndex
-  if (index.changesToken && index.notes) {
+  if (index.changesToken && index.notes && index.verdicts) {
     try {
       next = await applyChanges(index, index.changesToken)
     } catch (err) {
@@ -391,6 +443,7 @@ export async function setRootFolder(node: DriveNode): Promise<void> {
     papers: {},
     sidecars: {},
     notes: {},
+    verdicts: {},
     syncedAt: 0,
   })
   await syncLibrary()
@@ -661,7 +714,7 @@ export function saveNotebook(pdfId: string, doc: NotesDocV2): void {
   save(NOTEBOOK, pdfId, doc)
 }
 
-/** Writes every debounced sidecar and notes edit to IndexedDB and the upload queue immediately. */
+/** Writes every debounced sidecar, notes and verdict edit to IndexedDB and the upload queue immediately. */
 export async function flushPendingWrites(): Promise<void> {
   await Promise.all([...pendingSaves.values()].map((entry) => writePending(entry)))
 }
@@ -694,7 +747,7 @@ async function locate<T>(c: Companion<T>, pdfId: string): Promise<DriveNode | un
 async function download<T>(c: Companion<T>, id: string): Promise<Download<T>> {
   let remote: unknown
   try {
-    remote = await downloadJson<unknown>(id)
+    remote = c.parse(await downloadText(id))
   } catch (err) {
     if (err instanceof SyntaxError && c.unparseableIsForeign) return { status: 'foreign' }
     throw err
@@ -749,6 +802,26 @@ export function refreshNotebook(pdfId: string): Promise<NotesDocV2 | null> {
   return refresh(NOTEBOOK, pdfId)
 }
 
+/** The stored verdict note for the paper, or null. */
+export async function loadVerdict(pdfId: string): Promise<VerdictNote | null> {
+  return (await readStored(VERDICT, pdfId))?.sidecar ?? null
+}
+
+/** Debounced by SIDECAR_SAVE_DEBOUNCE_MS: keeps the note with the newer `generated`, marks it dirty and queues an upload. */
+export function saveVerdict(pdfId: string, note: VerdictNote): void {
+  save(VERDICT, pdfId, note)
+}
+
+/** If the remote verdict note's version differs from the one last merged: download, merge, store and return it; else null. */
+export function refreshVerdict(pdfId: string): Promise<VerdictNote | null> {
+  return refresh(VERDICT, pdfId)
+}
+
+/** True when Drive already holds a note for the paper (records it in the index). */
+export async function hasRemoteVerdict(pdfId: string): Promise<boolean> {
+  return Boolean(await locate(VERDICT, pdfId))
+}
+
 // One message for the per-kind failure counts, joined with ' · '.
 function failureMessage(failed: Map<Companion<unknown>, number>, action: 'download' | 'upload'): string {
   return COMPANIONS.filter((c) => failed.has(c))
@@ -776,7 +849,7 @@ async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
   return failed
 }
 
-// Pulls every changed sidecar and notes file, so badges and notes reflect other devices.
+// Pulls every changed sidecar, notes and verdict file, so badges, notes and verdicts reflect other devices.
 async function pullSidecars(): Promise<void> {
   const index = library.peek()
   if (!index) return
@@ -815,14 +888,14 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
         if (theirs.status === 'newer') return
         if (theirs.status === 'ok') body = c.merge(body, theirs.doc)
       }
-      node = await updateJsonFile(known.id, body)
+      node = await updateFile(known.id, c.serialize(body), c.mime)
     } catch (err) {
       if (!(err instanceof DriveError) || err.status !== 404) throw err
     }
   }
   if (!node) {
     if (!paper || !parent) return
-    node = await createJsonFile(c.nameFor(paper.name), parent, body, { marginalia: c.tag, [c.pdfKey]: pdfId })
+    node = await createFile(c.nameFor(paper.name), parent, c.serialize(body), c.mime, { marginalia: c.tag, [c.pdfKey]: pdfId })
   }
   const current = library.peek()
   if (current) await commit(withCompanion(current, c, pdfId, node))
@@ -840,7 +913,7 @@ async function flushOne<T>(c: Companion<T>, pdfId: string): Promise<void> {
   })
 }
 
-/** Uploads every queued sidecar and notes file; failures stay queued and are reported in syncState. */
+/** Uploads every queued sidecar, notes and verdict file; failures stay queued and are reported in syncState. */
 export function flushQueue(): Promise<void> {
   return driveLane(async () => {
     if (!getAccessToken()) return
