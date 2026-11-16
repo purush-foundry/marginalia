@@ -9,7 +9,7 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
 
 export type ContentBlock =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
   | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg'; data: string } }
 
 export interface ApiMessage {
