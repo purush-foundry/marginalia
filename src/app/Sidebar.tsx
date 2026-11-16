@@ -3,12 +3,14 @@ import { useEffect, useState } from 'preact/hooks'
 import type { AnnotationStore } from '../annot/store'
 import type { OutlineItem, PdfDoc } from '../pdf/document'
 import { HIGHLIGHT_COLORS, type Box, type Highlight, type HighlightColor, type ReadStatus, type Thread } from '../types'
+import { VerdictTab } from '../verdict/VerdictTab'
 import { Icon } from './icons'
 
-export type SidebarTab = 'outline' | 'highlights' | 'threads'
+export type SidebarTab = 'outline' | 'highlights' | 'threads' | 'verdict'
 
 export interface SidebarProps {
   doc: PdfDoc
+  pdfId: string
   store: AnnotationStore
   tab: SidebarTab
   status: ReadStatus
@@ -23,6 +25,7 @@ const TABS: Array<{ id: SidebarTab; label: string }> = [
   { id: 'outline', label: 'Outline' },
   { id: 'highlights', label: 'Highlights' },
   { id: 'threads', label: 'Threads' },
+  { id: 'verdict', label: 'Verdict' },
 ]
 
 function excerpt(text: string, max = 140): string {
@@ -153,6 +156,7 @@ export function Sidebar(props: SidebarProps) {
       <div class="mg-sidebar-body">
         {props.tab === 'outline' && <OutlineTab doc={props.doc} onGo={(p) => props.onGo(p)} />}
         {props.tab === 'highlights' && <HighlightsTab store={props.store} onGo={props.onGo} />}
+        {props.tab === 'verdict' && <VerdictTab pdfId={props.pdfId} onGo={(p) => props.onGo(p)} />}
         {props.tab === 'threads' && <ThreadsTab store={props.store} onOpen={props.onOpenThread} />}
       </div>
       <div class="mg-sidebar-foot">

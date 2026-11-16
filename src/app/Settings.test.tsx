@@ -2,6 +2,19 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { settings } from './settings'
+
+vi.mock('../verdict/grader', async () => {
+  const { signal } = await import('@preact/signals')
+  return {
+    grading: signal(null),
+    canGrade: () => true,
+    currentSkillHash: async () => 'abc123',
+    ungradedPapers: async () => ['a', 'b', 'c'],
+    outdatedPapers: async () => ['d', 'e'],
+    gradeUngraded: vi.fn(),
+    regradeOutdated: vi.fn(),
+  }
+})
 import { Settings } from './Settings'
 
 const root = document.createElement('div')
@@ -70,5 +83,14 @@ describe('Settings', () => {
     await act(async () => button('Paste').click())
 
     await vi.waitFor(() => expect(root.textContent).toContain('Clipboard access denied — paste manually'))
+  })
+
+  test('Claude section has the grading toggle and the ungraded and outdated buttons', async () => {
+    await act(async () => render(<Settings />, root))
+    const labels = [...root.querySelectorAll('label')].map((l) => l.textContent ?? '')
+    expect(labels.some((t) => t.startsWith('Grade new papers on this device'))).toBe(true)
+    await vi.waitFor(() => expect(root.textContent).toContain('Skill abc123 · 3 ungraded · 2 from an older skill'))
+    expect(button('Grade 3 ungraded').disabled).toBe(false)
+    expect(button('Regenerate 2 outdated')).toBeTruthy()
   })
 })

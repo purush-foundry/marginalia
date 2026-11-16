@@ -145,6 +145,11 @@ export function startGrader(deps: GraderDeps = defaultDeps): () => void {
   })
 }
 
+/** True when a host or an API key can grade. */
+export function canGrade(): boolean {
+  return Boolean(settings.peek().anthropicApiKey) || hostGraderProvider() !== null
+}
+
 /** Grades one paper now, replacing any note. */
 export function gradeNow(pdfId: string, deps: GraderDeps = defaultDeps): Promise<VerdictNote> {
   return gradeAndSave(pdfId, deps)

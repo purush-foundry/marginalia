@@ -2,7 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { authState } from '../drive/auth'
-import { flushPendingWrites, getPdfBlob, saveSidecar, setRootFolder, syncLibrary } from '../drive/library'
+import { flushPendingWrites, getPdfBlob, saveSidecar, saveVerdict, setRootFolder, syncLibrary } from '../drive/library'
 import { FakeDrive, signIn } from '../drive/test-helpers'
 import { FOLDER_MIME, PDF_MIME, emptySidecar } from '../types'
 import { Library } from './Library'
@@ -69,6 +69,23 @@ describe('Library', () => {
     expect(row('attention').querySelector('.mg-badge')!.textContent).toBe('Unread')
     expect(row('attention').querySelector('.mg-cached')).not.toBeNull()
     expect(row('adam').querySelector('.mg-cached')).toBeNull()
+  })
+
+  test('a paper with a local verdict note shows its chip', async () => {
+    saveVerdict('attention', {
+      verdict: 'read',
+      confidence: 'high',
+      readTime: '10 min',
+      oneLine: 'x',
+      topics: [],
+      skill: 'h',
+      model: 'm',
+      generated: '2026-01-01T00:00:00Z',
+      body: 'b',
+    })
+    await act(async () => render(<Library />, root))
+    await vi.waitFor(() => expect(row('attention').querySelector('.mg-verdict-read')!.textContent).toBe('Read'))
+    expect(row('adam').querySelector('.mg-verdict')).toBeNull()
   })
 
   test('a badge follows a reading state another device synced to Drive', async () => {
