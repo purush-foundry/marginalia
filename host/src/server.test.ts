@@ -50,6 +50,7 @@ function makeSession(events: HostEvent[], log: Log): Session {
       log.closed.push(id)
       ch.end()
     },
+    ended: false,
   }
 }
 

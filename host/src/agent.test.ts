@@ -3,11 +3,14 @@ import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createRunner, ENDED_MESSAGE, looksLikeNote, type AgentOptions, type AgentSession } from './agent'
+import { createRunner, ENDED_MESSAGE, looksLikeNote, type AgentOptions } from './agent'
+import type { AddressInfo } from 'node:net'
 import { paperDir, readSessions, savePaper } from './papers'
+import { createServer } from './server'
 import type { HostEvent } from './protocol'
 
 type FakeCall = {
+  done?: boolean
   prompt: unknown
   options: Record<string, any>
   sent: any[]
@@ -40,6 +43,7 @@ const sdk = vi.hoisted(() => {
           if (state.failTurn) break
         }
       }
+      call.done = true
       if (state.failTurn) throw new Error('process exited')
     })()
     return Object.assign(gen, { setModel: call.setModel, interrupt: call.interrupt })
@@ -223,7 +227,7 @@ describe('openSession', () => {
 
   it('reports a dead session on send and does not throw on interrupt', async () => {
     sdk.state.failTurn = true
-    const session = (await createRunner(opts).openSession('p1', null, false)) as AgentSession
+    const session = await createRunner(opts).openSession('p1', null, false)
     const events = session.events[Symbol.asyncIterator]()
     session.send({ text: 'hi' })
     const turn = await readUntil(events, (e) => e.type === 'error')
@@ -279,6 +283,38 @@ describe('openSession', () => {
       expect((await canUseTool(name, input, { signal })).behavior, label).toBe(allowed ? 'allow' : 'deny')
       const out = await hooks.PreToolUse[0].hooks[0]({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input }, 't', { signal })
       expect(out.hookSpecificOutput?.permissionDecision === 'deny', label).toBe(!allowed)
+    }
+  })
+})
+
+describe('server reopen of an ended session', () => {
+  it('resumes a new live session when the old one ended, and a fresh reopen starts clean', async () => {
+    const server = createServer({ runner: createRunner(opts), token: 't', origins: ['http://app'], root })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const call = (p: string, body: unknown) =>
+      fetch(base + p, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: 'Bearer t', Origin: 'http://app', 'Content-Type': 'application/json' } })
+    try {
+      sdk.state.failTurn = true
+      const { sessionId } = (await (await call('/sessions', { pdfId: 'p1' })).json()) as { sessionId: string }
+      expect((await call(`/sessions/${sessionId}/messages`, { text: 'hi' })).status).toBe(202)
+      await vi.waitFor(() => expect(sdk.state.calls[0].done).toBe(true))
+
+      sdk.state.failTurn = false
+      const reopened = (await (await call('/sessions', { pdfId: 'p1', sessionId })).json()) as { sessionId: string }
+      expect(sdk.state.calls).toHaveLength(2)
+      expect(sdk.state.calls[1].options.resume).toBe(sessionId)
+      expect(reopened.sessionId).toBe(sessionId)
+      expect((await call(`/sessions/${sessionId}/messages`, { text: 'again' })).status).toBe(202)
+      await vi.waitFor(() => expect(sdk.state.calls[1].sent).toHaveLength(1))
+
+      const fresh = (await (await call('/sessions', { pdfId: 'p1', sessionId, fresh: true })).json()) as { sessionId: string }
+      expect(sdk.state.calls).toHaveLength(3)
+      expect(sdk.state.calls[2].options.resume).toBeUndefined()
+      expect(fresh.sessionId).not.toBe(sessionId)
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((r) => server.close(() => r()))
     }
   })
 })

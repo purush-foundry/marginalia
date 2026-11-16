@@ -11,6 +11,7 @@ export interface Session {
   send(body: MessageBody): void
   interrupt(): Promise<void>
   close(): void
+  readonly ended: boolean
 }
 
 export interface Runner {
@@ -217,7 +218,7 @@ export function createServer(opts: ServerOptions): http.Server {
       if (!(await runner.paperReady(body.pdfId))) return json(404, { error: 'paper not uploaded' })
       const fresh = body.fresh === true
       const prev = byPaper.get(body.pdfId)
-      if (prev && !fresh && body.sessionId === prev.session.id) return json(200, { sessionId: prev.session.id })
+      if (prev && !fresh && !prev.session.ended && body.sessionId === prev.session.id) return json(200, { sessionId: prev.session.id })
       if (prev) closeEntry(prev)
       const session = await runner.openSession(body.pdfId, body.sessionId ?? null, fresh)
       const entry: Entry = { session, pdfId: body.pdfId, pump: new Pump(session.events) }

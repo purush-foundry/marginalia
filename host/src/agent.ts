@@ -21,10 +21,6 @@ export interface AgentOptions {
   auth: StatusResponse['auth']
 }
 
-export interface AgentSession extends Session {
-  readonly ended: boolean
-}
-
 // System prompt append naming the folders the agent may read besides its own.
 export function marginaliaAppend(readDirs: string[]): string {
   const folders =
@@ -34,7 +30,7 @@ export function marginaliaAppend(readDirs: string[]): string {
   return `You are the paper agent inside Marginalia, the user's paper reader. The whole paper was given to you in the first message, page-tagged with <page n="…"> blocks; the same text is in paper.txt and the original PDF in paper.pdf in your working directory, for Grep or a second look. When you quote the paper, write "quoted words" (p. N) so the app can jump to the page. Resolve cross-references ("Section 5", "Eq. 3", "Fig. 2") by reading that part of the paper. ${folders} Web search and web fetch are allowed. Write only inside this folder. Answer in plain Markdown: short paragraphs, lists, bold, code; no tables.`
 }
 
-export const ENDED_MESSAGE = 'The agent session has ended; use /clear to start a new one'
+export const ENDED_MESSAGE = 'The agent session has ended; close and reopen the agent panel to resume it, or use /clear to start over'
 
 const PAPER_LEAD = 'The paper above is the one we are discussing.'
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit'])
@@ -152,7 +148,7 @@ export function createRunner(opts: AgentOptions): Runner {
     }
   }
 
-  async function openSession(pdfId: string, sessionId: string | null, fresh: boolean): Promise<AgentSession> {
+  async function openSession(pdfId: string, sessionId: string | null, fresh: boolean): Promise<Session> {
     const dir = paperDir(root, pdfId)
     const resume = fresh ? undefined : (sessionId ?? (await readSessions(root))[pdfId])
     const id = resume ?? randomUUID()
