@@ -14,7 +14,10 @@ const node = (id: string, name: string, mimeType: string, parents: string[]): Dr
 
 const root = document.createElement('div')
 
-afterEach(() => root.remove())
+afterEach(() => {
+  root.remove()
+  vi.unstubAllGlobals()
+})
 
 describe('boot', () => {
   test('renders the stored library while Google sign-in never finishes loading', async () => {
@@ -52,6 +55,8 @@ describe('boot', () => {
   })
 
   test('a #/pair/<token> link stores the token, drops it from the URL and shows the library', async () => {
+    const fetchStub = vi.fn(async () => new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchStub)
     history.replaceState(null, '', '/#/pair/tok')
     document.body.append(root)
     const { boot } = await import('./boot')
@@ -63,6 +68,7 @@ describe('boot', () => {
     expect(location.hash).toBe('#/')
     expect(location.href).not.toContain('tok')
     expect(route.value).toEqual({ kind: 'library' })
+    await vi.waitFor(() => expect(fetchStub).toHaveBeenCalledWith(expect.stringMatching(/\/status$/), expect.anything()))
     history.replaceState(null, '', '/')
   })
 })
