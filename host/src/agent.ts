@@ -112,13 +112,14 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 export function createRunner(opts: AgentOptions): Runner {
   const { root, repoDir, model, effort, allowBash, readDirs } = opts
   const home = os.homedir()
-  const append = marginaliaAppend(readDirs)
   const skillsDir = path.join(repoDir, 'skills')
   const readPaper = (pdfId: string) => readFile(path.join(paperDir(root, pdfId), 'paper.txt'), 'utf8')
 
+  // Session options; verdict runs (write false) read only the paper folder and the skills.
   function options(dir: string, write: boolean): Options {
     const extra = allowBash ? ['Bash'] : []
-    const fence = fenceHook(dir, home, readDirs, [skillsDir])
+    const reads = write ? readDirs : []
+    const fence = fenceHook(dir, home, reads, [skillsDir])
     const hook: HookCallback = async (input) => {
       const pre = input as PreToolUseHookInput
       if (UNFENCED_TOOLS.has(pre.tool_name) || (allowBash && pre.tool_name === 'Bash')) return {}
@@ -134,7 +135,7 @@ export function createRunner(opts: AgentOptions): Runner {
       cwd: dir,
       settingSources: [],
       plugins: [{ type: 'local', path: repoDir }],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: marginaliaAppend(reads) },
       tools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', ...(write ? ['Write', 'Edit'] : []), 'Skill', ...extra],
       allowedTools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', ...extra],
       hooks: { PreToolUse: [{ hooks: [hook], timeout: HOOK_TIMEOUT_S, onFailure: 'block' }] },

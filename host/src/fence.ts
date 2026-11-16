@@ -90,8 +90,9 @@ export function fenceHook(paperDir: string, home: string, readDirs: string[] = [
       if (SEARCH_TOOLS.has(tool_name) && typeof tool_input.pattern === 'string') {
         const pattern = tool_input.pattern.trim()
         if (path.isAbsolute(pattern) || pattern.startsWith('~')) return deny('Search patterns must be relative')
-        if (tool_name === 'Glob' && pattern.split(/[\\/]/).includes('..')) return deny('Search patterns must stay inside the search root')
       }
+      const glob = tool_name === 'Glob' ? tool_input.pattern : tool_name === 'Grep' ? tool_input.glob : undefined
+      if (typeof glob === 'string' && glob.includes('..')) return deny('Search patterns must stay inside the search root')
       const lexical = expandToolPath(raw, paperDir, home)
       const target = await realpathLoose(lexical)
       const dirs = [paperDir, ...grepDirs, ...(tool_name === 'Grep' ? [] : readDirs)]

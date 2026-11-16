@@ -166,6 +166,10 @@ describe('fenceHook reads', () => {
       ['Glob', { pattern: '/x/*' }],
       ['Glob', { pattern: '~/.ssh/*' }],
       ['Glob', { pattern: '../../../../.ssh/*' }],
+      ['Glob', { pattern: '{..,x}/*' }],
+      ['Glob', { pattern: 'a/{b,..}/*' }],
+      ['Grep', { pattern: 'x', glob: '{..,x}/**' }],
+      ['Grep', { pattern: 'x', glob: '../*' }],
     ]
     for (const [tool_name, tool_input] of cases) {
       expect(denied(await docsHook({ tool_name, tool_input })), `${tool_name} ${JSON.stringify(tool_input)}`).toBe(true)

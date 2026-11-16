@@ -341,6 +341,21 @@ describe('verdict', () => {
     expect(events.filter((e) => e.type === 'error')).toEqual([{ type: 'error', message: 'max turns' }])
   })
 
+  it('reads only the paper folder and the skills, never the owner folders', async () => {
+    const owner = await mkdtemp(path.join(os.tmpdir(), 'mg-agent-owner-'))
+    await writeFile(path.join(owner, 'a.pdf'), 'x')
+    sdk.state.reply = NOTE
+    await collect(createRunner({ ...opts, readDirs: [owner] }).verdict('p1'))
+    const { hooks, systemPrompt } = sdk.state.calls[0].options
+    const signal = new AbortController().signal
+    const run = (tool_name: string, tool_input: Record<string, unknown>) => hooks.PreToolUse[0].hooks[0]({ hook_event_name: 'PreToolUse', tool_name, tool_input }, 't', { signal })
+    expect((await run('Read', { file_path: path.join(owner, 'a.pdf') })).hookSpecificOutput.permissionDecision).toBe('deny')
+    expect((await run('Glob', { path: owner, pattern: '*.pdf' })).hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(await run('Read', { file_path: path.join(paperDir(root, 'p1'), 'paper.txt') })).toEqual({})
+    expect(await run('Read', { file_path: path.join(repoDir, 'skills', 'worth-reading', 'SKILL.md') })).toEqual({})
+    expect(systemPrompt.append).not.toContain(owner)
+  })
+
   it('ends with an error for an answer that is not a note', async () => {
     sdk.state.reply = 'I think you should read it.'
     const events = await collect(createRunner(opts).verdict('p1'))
