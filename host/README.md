@@ -31,7 +31,8 @@ Flags, passed after `node host/dist/main.js`:
 - `--root ~/.marginalia` where papers, sessions and the token live.
 - `--repo <dir>` the Marginalia checkout whose `skills/` load as the `marginalia` plugin; defaults to the repo that holds `host/dist/main.js`.
 - `--token <t>` use this token instead of the stored one; `--new-token` replaces the stored one.
-- `--allow-bash` enable shell access.
+- `--read <dir>` a folder the agent may read; repeat for more. See the fence below.
+- `--allow-bash` enable shell access. See Bash below.
 
 ## Pairing
 
@@ -43,8 +44,12 @@ The pairing token is stored in `~/.marginalia/host-token` (mode 600) so it survi
 
 ## Read/write fence
 
-The agent works in the paper's folder under `~/.marginalia/papers/`. It writes only inside that folder. It may read elsewhere under your home, except private configuration such as `~/.ssh`, `~/.aws`, `~/.config/marginalia`, `.env` files and keys.
+The agent works in the paper's folder under `~/.marginalia/papers/`. It writes only inside that folder.
+
+It reads only from an allowlist: the paper's folder, the repo's `skills/` folder, and the owner folders the host was started with. Owner folders come from the `--read <dir>` flags; without any, from `MARGINALIA_READ_DIRS` (colon-separated, also accepted in `host.env`); without that, from `~/Documents`, `~/Desktop` and `~/ToRead`, keeping those that exist. The host prints the list on start. Everything else is unreadable. Inside allowed folders, private paths stay denied: `~/.ssh`, `~/.aws`, `~/.config/marginalia`, `.env` files, `.pem` and `.key` files and similar.
+
+If the fence check fails or times out, the tool call is blocked.
 
 ## Bash
 
-Shell access is off by default. Start with `--allow-bash` to enable it; shell commands are not fenced.
+Shell access is off by default. `--allow-bash` turns it on for chat sessions and verdict runs. Shell commands run without approval and without the fence. They can read and write anything your user can, including the private paths above, and they run with your API key or OAuth token in their environment. The host prints a warning on start while the flag is on.

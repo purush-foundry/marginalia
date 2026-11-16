@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,6 +11,7 @@ import { createServer } from './server'
 
 const DEV_APP = 'http://localhost:5173'
 const EFFORTS = ['low', 'medium', 'high'] as const
+const DEFAULT_READ_DIRS = ['~/Documents', '~/Desktop', '~/ToRead']
 
 // Expands a leading `~` to the home directory.
 const expandHome = (p: string) => (p === '~' ? os.homedir() : p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p)
@@ -33,6 +34,14 @@ function loadEnvFile(file: string): void {
   }
 }
 
+// Owner folders the agent may read: --read flags, else MARGINALIA_READ_DIRS, else the defaults that exist.
+function ownerReadDirs(flags: string[] | undefined): string[] {
+  const fromEnv = (process.env.MARGINALIA_READ_DIRS ?? '').split(':').filter((d) => d.trim() !== '')
+  const chosen = flags && flags.length > 0 ? flags : fromEnv.length > 0 ? fromEnv : null
+  if (chosen) return [...new Set(chosen.map((d) => path.resolve(expandHome(d.trim()))))]
+  return DEFAULT_READ_DIRS.map(expandHome).filter((d) => existsSync(d))
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -41,6 +50,7 @@ async function main(): Promise<void> {
       'new-token': { type: 'boolean', default: false },
       app: { type: 'string', default: 'https://purush-foundry.github.io' },
       'allow-bash': { type: 'boolean', default: false },
+      read: { type: 'string', multiple: true },
       model: { type: 'string', default: 'claude-opus-5-5' },
       effort: { type: 'string', default: 'medium' },
       root: { type: 'string', default: '~/.marginalia' },
@@ -57,9 +67,10 @@ async function main(): Promise<void> {
 
   loadEnvFile(path.join(os.homedir(), '.config', 'marginalia', 'host.env'))
   const auth: AgentOptions['auth'] = process.env.ANTHROPIC_API_KEY ? 'api-key' : process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'oauth-token' : 'none'
+  const readDirs = ownerReadDirs(values.read)
   const token = values.token ?? (await loadToken(root, values['new-token']))
 
-  const runner = createRunner({ root, repoDir, model: values.model, effort, allowBash: values['allow-bash'], skillHash: hashSkill(repoDir) ?? 'missing', auth })
+  const runner = createRunner({ root, repoDir, model: values.model, effort, allowBash: values['allow-bash'], readDirs, skillHash: hashSkill(repoDir) ?? 'missing', auth })
   const origins = [...new Set([new URL(app).origin, DEV_APP])]
   const server = createServer({ runner, token, origins, root })
   await new Promise<void>((resolve, reject) => {
@@ -71,6 +82,8 @@ async function main(): Promise<void> {
   console.log(`marginalia-host ${HOST_VERSION} on http://127.0.0.1:${bound}`)
   console.log(`auth: ${auth}`)
   if (auth === 'none') console.log('warning: no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN found; agent runs will fail')
+  if (values['allow-bash']) console.log('warning: --allow-bash runs shell commands unfenced with the API key in the environment')
+  console.log(`read: ${readDirs.length > 0 ? readDirs.join(', ') : 'none'}`)
   console.log(app === DEV_APP ? `Pair: ${DEV_APP}/#/pair/${token}` : `Pair: ${app}/marginalia/#/pair/${token}`)
 
   const shutdown = () => {

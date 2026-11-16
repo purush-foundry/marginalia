@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { query, type CanUseTool, type HookCallback, type HookJSONOutput, type Options, type PreToolUseHookInput, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createNormalizer, type SdkMsg } from './events'
-import { denyAll, fenceHook, insideDir } from './fence'
+import { denyAll, fenceHook, insideDir, resolveToolPath } from './fence'
 import { paperDir, readSessions, writeSession } from './papers'
 import type { HostEvent, MessageBody, StatusResponse } from './protocol'
 import type { Runner, Session } from './server'
@@ -16,16 +16,30 @@ export interface AgentOptions {
   model: string
   effort: 'low' | 'medium' | 'high'
   allowBash: boolean
+  readDirs: string[]
   skillHash: string
   auth: StatusResponse['auth']
 }
 
-export const MARGINALIA_APPEND =
-  'You are the paper agent inside Marginalia, the user\'s paper reader. The whole paper was given to you in the first message, page-tagged with <page n="…"> blocks; the same text is in paper.txt and the original PDF in paper.pdf in your working directory, for Grep or a second look. When you quote the paper, write "quoted words" (p. N) so the app can jump to the page. Resolve cross-references ("Section 5", "Eq. 3", "Fig. 2") by reading that part of the paper. The user\'s other folders under their home directory are readable, except private configuration, which is off limits. Web search and web fetch are allowed. Write only inside this folder. Answer in plain Markdown: short paragraphs, lists, bold, code; no tables.'
+export interface AgentSession extends Session {
+  readonly ended: boolean
+}
+
+// System prompt append naming the folders the agent may read besides its own.
+export function marginaliaAppend(readDirs: string[]): string {
+  const folders =
+    readDirs.length > 0
+      ? `The folders the host was started with are readable: ${readDirs.join(', ')}; everything else, including private configuration, is off limits.`
+      : 'No folders besides this one are readable; private configuration is off limits.'
+  return `You are the paper agent inside Marginalia, the user's paper reader. The whole paper was given to you in the first message, page-tagged with <page n="…"> blocks; the same text is in paper.txt and the original PDF in paper.pdf in your working directory, for Grep or a second look. When you quote the paper, write "quoted words" (p. N) so the app can jump to the page. Resolve cross-references ("Section 5", "Eq. 3", "Fig. 2") by reading that part of the paper. ${folders} Web search and web fetch are allowed. Write only inside this folder. Answer in plain Markdown: short paragraphs, lists, bold, code; no tables.`
+}
+
+export const ENDED_MESSAGE = 'The agent session has ended; use /clear to start a new one'
 
 const PAPER_LEAD = 'The paper above is the one we are discussing.'
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit'])
 const FENCED_TOOLS = 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash'
+const HOOK_TIMEOUT_S = 30
 
 type UserContent = SDKUserMessage['message']['content']
 
@@ -100,22 +114,25 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 
 // Builds the Agent SDK runner that backs the HTTP server.
 export function createRunner(opts: AgentOptions): Runner {
-  const { root, repoDir, model, effort, allowBash } = opts
+  const { root, repoDir, model, effort, allowBash, readDirs } = opts
   const home = os.homedir()
+  const append = marginaliaAppend(readDirs)
+  const fenceDirs = [path.join(repoDir, 'skills'), ...readDirs]
   const readPaper = (pdfId: string) => readFile(path.join(paperDir(root, pdfId), 'paper.txt'), 'utf8')
 
   function options(dir: string, write: boolean): Options {
     const extra = allowBash ? ['Bash'] : []
-    const fence = fenceHook(dir, home)
+    const fence = fenceHook(dir, home, fenceDirs)
     const hook: HookCallback = async (input) => {
       const pre = input as PreToolUseHookInput
       if (allowBash && pre.tool_name === 'Bash') return {}
       return (await fence({ tool_name: pre.tool_name, tool_input: (pre.tool_input ?? {}) as Record<string, unknown> })) as HookJSONOutput
     }
     const canUseTool: CanUseTool = async (name, input) => {
-      const file = input.file_path
-      if (write && WRITE_TOOLS.has(name) && typeof file === 'string' && insideDir(path.resolve(dir, file), dir)) {
-        return { behavior: 'allow', updatedInput: input }
+      const file = input.file_path ?? input.notebook_path
+      if (write && WRITE_TOOLS.has(name) && typeof file === 'string' && file !== '') {
+        const [target, realDir] = await Promise.all([resolveToolPath(file, dir, home), resolveToolPath(dir, dir, home)])
+        if (insideDir(target, realDir)) return { behavior: 'allow', updatedInput: input }
       }
       return denyAll(name)
     }
@@ -123,10 +140,10 @@ export function createRunner(opts: AgentOptions): Runner {
       cwd: dir,
       settingSources: [],
       plugins: [{ type: 'local', path: repoDir }],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: MARGINALIA_APPEND },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append },
       tools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', ...(write ? ['Write', 'Edit'] : []), 'Skill', ...extra],
       allowedTools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', ...extra],
-      hooks: { PreToolUse: [{ matcher: FENCED_TOOLS, hooks: [hook] }] },
+      hooks: { PreToolUse: [{ matcher: FENCED_TOOLS, hooks: [hook], timeout: HOOK_TIMEOUT_S, onFailure: 'block' }] },
       canUseTool,
       permissionMode: 'default',
       model,
@@ -137,7 +154,7 @@ export function createRunner(opts: AgentOptions): Runner {
     }
   }
 
-  async function openSession(pdfId: string, sessionId: string | null, fresh: boolean): Promise<Session> {
+  async function openSession(pdfId: string, sessionId: string | null, fresh: boolean): Promise<AgentSession> {
     const dir = paperDir(root, pdfId)
     const resume = fresh ? undefined : (sessionId ?? (await readSessions(root))[pdfId])
     const id = resume ?? randomUUID()
@@ -145,6 +162,7 @@ export function createRunner(opts: AgentOptions): Runner {
     const events = channel<HostEvent>()
     const abort = new AbortController()
     let closed = false
+    let ended = false
 
     async function* userMessages(): AsyncGenerator<SDKUserMessage> {
       let needsPaper = resume === undefined
@@ -163,22 +181,33 @@ export function createRunner(opts: AgentOptions): Runner {
 
     void (async () => {
       const norm = createNormalizer()
+      let lastWasError = false
       try {
         for await (const msg of q) {
           if (msg.type === 'system' && msg.subtype === 'init') await writeSession(root, pdfId, msg.session_id)
-          for (const ev of norm.push(msg as unknown as SdkMsg)) events.push(ev)
+          for (const ev of norm.push(msg as unknown as SdkMsg)) {
+            lastWasError = ev.type === 'error'
+            events.push(ev)
+          }
         }
       } catch (err) {
-        if (!closed) events.push({ type: 'error', message: errorText(err) })
+        if (!closed && !lastWasError) events.push({ type: 'error', message: errorText(err) })
       } finally {
-        events.close()
+        ended = true
       }
     })()
 
     return {
       id,
       events: events.iterable,
+      get ended() {
+        return ended
+      },
       send(body) {
+        if (ended) {
+          events.push({ type: 'error', message: ENDED_MESSAGE })
+          return
+        }
         if (body.text.startsWith('/model ')) {
           q.setModel(body.text.slice(7).trim()).catch((err: unknown) => events.push({ type: 'error', message: errorText(err) }))
           return
@@ -186,7 +215,8 @@ export function createRunner(opts: AgentOptions): Runner {
         inbox.push(body)
       },
       async interrupt() {
-        await q.interrupt()
+        if (ended) return
+        await q.interrupt().catch(() => undefined)
       },
       close() {
         closed = true
