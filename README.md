@@ -62,6 +62,13 @@ permissions. This happens once per Google account.
    the app is open, on returning to it, or with the sync button).
 3. Select text to get the colour bar; tap a highlight to change, note, ask about or delete it.
 
+### Worth reading
+
+Each new paper gets a short verdict note from Claude: **Read**, **Skim** or **Skip**. The verdict
+shows as a chip on the library row and in the reader's **Verdict** sidebar tab, where **Regenerate**
+rewrites the note and citations like (p. 4) jump to the page. Settings → Claude turns grading on
+for this device and can grade the back catalogue or regrade notes written with an older skill.
+
 ### Snip
 
 The **Snip** button is in the toolbar on every device. Tap it, then drag a box with whatever

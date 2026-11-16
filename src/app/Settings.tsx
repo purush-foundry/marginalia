@@ -2,11 +2,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { checkApiKey } from '../ai/claude'
 import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
-import { clearPdfCache, library, pdfCacheBytes, syncLibrary } from '../drive/library'
+import { clearPdfCache, library, pdfCacheBytes, sidecarRevision, syncLibrary } from '../drive/library'
+import { canGrade, currentSkillHash, gradeUngraded, grading, outdatedPapers, regradeOutdated, ungradedPapers } from '../verdict/grader'
 import { Icon } from './icons'
 import { applyUpdate, buildId, updateReady } from './pwa'
 import { saveSettings, settings, type AppSettings } from './settings'
-import { authReady, choosingRoot, settingsOpen } from './ui'
+import { authReady, choosingRoot, settingsOpen, showToast } from './ui'
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -233,7 +234,57 @@ function ClaudeSection() {
           onChange={(e) => void saveSettings({ visionModel: e.currentTarget.value.trim() })}
         />
       </div>
+      <GradingControls />
     </section>
+  )
+}
+
+function GradingControls() {
+  const [counts, setCounts] = useState<{ hash: string; ungraded: number; outdated: number } | null>(null)
+  const busy = grading.value
+  const runnable = Boolean(settings.value.anthropicApiKey) || canGrade()
+  const revision = sidecarRevision.value
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      const hash = await currentSkillHash()
+      const [ungraded, outdated] = await Promise.all([ungradedPapers(), outdatedPapers(hash)])
+      if (live) setCounts({ hash, ungraded: ungraded.length, outdated: outdated.length })
+    })()
+    return () => {
+      live = false
+    }
+  }, [revision, busy])
+
+  const run = (job: () => Promise<number>) =>
+    void job().then(
+      (n) => showToast(`Graded ${n} ${n === 1 ? 'paper' : 'papers'}`),
+      (err: unknown) => showToast(err instanceof Error ? err.message : String(err)),
+    )
+  const disabled = busy !== null || !runnable
+  return (
+    <>
+      <Toggle label="Grade new papers on this device" field="gradeOnThisDevice" />
+      {counts && (
+        <>
+          <p class="mg-muted">
+            Skill {counts.hash} · {counts.ungraded} ungraded · {counts.outdated} from an older skill
+          </p>
+          <div class="mg-actions">
+            {counts.ungraded > 0 && (
+              <button type="button" class="btn" disabled={disabled} onClick={() => run(() => gradeUngraded())}>
+                Grade {counts.ungraded} ungraded
+              </button>
+            )}
+            {counts.outdated > 0 && (
+              <button type="button" class="btn" disabled={disabled} onClick={() => run(() => regradeOutdated())}>
+                Regenerate {counts.outdated} outdated
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </>
   )
 }
 

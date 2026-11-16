@@ -163,7 +163,7 @@ export class FakeDrive {
     }
     if (path === '/upload/drive/v3/files' && method === 'POST') {
       const boundary = call.headers['content-type'].split('boundary=')[1]
-      const [meta, media] = call.body!.split(`--${boundary}`).slice(1, 3).map((p) => p.split('\r\n\r\n')[1].trim())
+      const [meta, media] = call.body!.split(`--${boundary}`).slice(1, 3).map((p) => p.slice(p.indexOf('\r\n\r\n') + 4, -2))
       const id = `created-${this.nextId++}`
       this.add({ id, ...(JSON.parse(meta) as Omit<FakeFile, 'id'>), content: media })
       return json(this.raw(this.files.get(id)!))

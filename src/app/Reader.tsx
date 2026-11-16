@@ -730,6 +730,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
         {sidebar && (
           <Sidebar
             doc={doc}
+            pdfId={pdfId}
             store={store}
             tab={sidebar}
             status={status}

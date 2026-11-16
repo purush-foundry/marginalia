@@ -1,18 +1,22 @@
 // Library browser: breadcrumbs, folders then PDFs with size, cached dot and reading badge, sync header.
 import { useEffect, useState } from 'preact/hooks'
 import { authState } from '../drive/auth'
-import { childrenOf, isCached, library, loadSidecar, pathTo, sidecarRevision, syncLibrary, syncState } from '../drive/library'
+import { childrenOf, isCached, library, loadSidecar, loadVerdict, pathTo, sidecarRevision, syncLibrary, syncState } from '../drive/library'
 import { Icon } from '../app/icons'
 import { folderHash, paperHash } from '../app/route'
 import { connectDrive, formatBytes } from '../app/Settings'
 import { settingsOpen } from '../app/ui'
 import type { ReadStatus } from '../types'
+import { grading } from '../verdict/grader'
+import type { VerdictNote } from '../verdict/note'
+import { VerdictChip } from '../verdict/VerdictChip'
 import { Hero } from './Hero'
 import './library.css'
 
 interface PaperInfo {
   cached: boolean
   status: ReadStatus
+  verdict: VerdictNote | null
 }
 
 const STATUS_LABEL: Record<ReadStatus, string> = { unread: 'Unread', reading: 'Reading', done: 'Done' }
@@ -66,8 +70,8 @@ export function Library({ folderId }: { folderId?: string }) {
     let live = true
     void Promise.all(
       papers.map(async (p) => {
-        const [cached, sidecar] = await Promise.all([isCached(p.id), loadSidecar(p.id)])
-        return [p.id, { cached, status: sidecar.reading.status }] as const
+        const [cached, sidecar, verdict] = await Promise.all([isCached(p.id), loadSidecar(p.id), loadVerdict(p.id)])
+        return [p.id, { cached, status: sidecar.reading.status, verdict }] as const
       }),
     ).then((entries) => {
       if (live) setInfo(Object.fromEntries(entries))
@@ -114,6 +118,7 @@ export function Library({ folderId }: { folderId?: string }) {
                 {pi?.cached && <span class="mg-cached" title="Available offline" aria-label="Cached" />}
                 {p.size !== undefined && <span class="mg-muted mg-size">{formatBytes(p.size)}</span>}
                 {pi && <span class={`mg-badge mg-badge-${pi.status}`}>{STATUS_LABEL[pi.status]}</span>}
+                {pi && <VerdictChip note={pi.verdict} grading={grading.value === p.id} />}
               </a>
             </li>
           )
