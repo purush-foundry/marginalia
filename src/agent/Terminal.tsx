@@ -27,6 +27,7 @@ const STICK_PX = 40
 const ATTACH_CHARS = 80
 const PAPER_PROMPT = 'Re-read paper.txt in full before answering.'
 const LOST = 'Connection to the host was lost'
+const RETRY = ' — /clear to retry'
 const HELP = [
   '/clear          start a fresh session',
   '/model <name>   switch the model',
@@ -110,16 +111,20 @@ export function Terminal(props: TerminalProps) {
       if (thread.current && thread.current.session !== id) save({ ...thread.current, session: id })
       for await (const ev of sessionEvents(id, c.signal)) apply(ev)
     } catch (err) {
-      if (!c.signal.aborted) apply({ type: 'error', message: errorText(err) })
+      if (!c.signal.aborted) apply({ type: 'error', message: `${errorText(err)}${RETRY}` })
       return
     }
     if (!c.signal.aborted) apply({ type: 'error', message: LOST })
   }
 
   useEffect(() => {
-    if (props.live) void connect(props.thread?.session ?? null, false)
-    return () => ctl.current?.abort()
-  }, [])
+    if (!props.live) return
+    void connect(thread.current?.session ?? null, false)
+    return () => {
+      ctl.current?.abort()
+      session.current = null
+    }
+  }, [props.live])
 
   useEffect(() => {
     setAttach(props.attach)

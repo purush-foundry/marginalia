@@ -269,6 +269,27 @@ describe('Terminal', () => {
     expect(root.textContent).not.toContain('esc to interrupt)')
   })
 
+  it('connects when live turns true on a mounted terminal', async () => {
+    const { props } = mount({ live: false, thread: thread() })
+    expect(root.querySelector('textarea')).toBeNull()
+    render(<Terminal {...props} live />, root)
+    await ready()
+    expect(host.openSession).toHaveBeenCalledWith('pdf1', 'old-session', false)
+    await send('now?')
+    await vi.waitFor(() => expect(host.sendMessage).toHaveBeenCalledWith('s1', { text: 'now?' }))
+  })
+
+  it('a failed open says /clear retries, and /clear reconnects', async () => {
+    vi.mocked(host.openSession).mockRejectedValueOnce(new Error('Agent host returned HTTP 500'))
+    mount()
+    await vi.waitFor(() => expect(root.textContent).toContain('Agent host returned HTTP 500 — /clear to retry'))
+    await send('/clear')
+    await ready()
+    expect(host.openSession).toHaveBeenLastCalledWith('pdf1', null, true)
+    await send('again')
+    await vi.waitFor(() => expect(host.sendMessage).toHaveBeenCalledWith('s1', { text: 'again' }))
+  })
+
   it('without a live host shows the pairing line and no input', async () => {
     mount({ live: false, thread: thread() })
     expect(root.textContent).toContain('Scaled attention.')
