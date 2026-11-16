@@ -72,6 +72,7 @@ async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> 
 const inFlight = new Map<string, Promise<VerdictNote>>()
 let lane: Promise<unknown> = Promise.resolve()
 let generation = 0
+let active: { deps: GraderDeps; gen: number } | null = null
 
 // Queues a job behind every grading already queued or running.
 function serial<T>(job: () => Promise<T>): Promise<T> {
@@ -100,7 +101,15 @@ async function gradeAndSave(pdfId: string, deps: GraderDeps): Promise<VerdictNot
 
 // Grades one paper through the lane, sharing the result when that paper is already being graded.
 function gradeQueued(pdfId: string, deps: GraderDeps): Promise<VerdictNote> {
-  return inFlight.get(pdfId) ?? serial(() => gradeAndSave(pdfId, deps))
+  const existing = inFlight.get(pdfId)
+  if (existing) return existing
+  const queued = serial(() => gradeAndSave(pdfId, deps))
+  inFlight.set(pdfId, queued)
+  const clear = () => {
+    if (inFlight.get(pdfId) === queued) inFlight.delete(pdfId)
+  }
+  queued.then(clear, clear)
+  return queued
 }
 
 // Papers newer than gradingSince with no index entry, local note, recorded error or session grade, newest first.
@@ -162,9 +171,10 @@ function schedulePass(deps: GraderDeps, gen: number): void {
     .catch(() => {})
     .finally(() => {
       running = null
-      if (rerun) {
+      if (rerun && active) {
         rerun = false
-        setTimeout(() => schedulePass(deps, gen), 0)
+        const { deps: liveDeps, gen: liveGen } = active
+        setTimeout(() => schedulePass(liveDeps, liveGen), 0)
       }
     })
 }
@@ -172,6 +182,7 @@ function schedulePass(deps: GraderDeps, gen: number): void {
 /** Watches the library and settings; grades ungraded papers one at a time, newest first; returns a stop function. */
 export function startGrader(deps: GraderDeps = defaultDeps): () => void {
   const gen = ++generation
+  active = { deps, gen }
   const stop = effect(() => {
     library.value
     sidecarRevision.value
@@ -181,7 +192,10 @@ export function startGrader(deps: GraderDeps = defaultDeps): () => void {
   return () => {
     stop()
     generation++
-    rerun = false
+    if (active?.gen === gen) {
+      active = null
+      rerun = false
+    }
   }
 }
 

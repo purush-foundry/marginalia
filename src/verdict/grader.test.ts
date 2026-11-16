@@ -232,6 +232,24 @@ describe('one lane', () => {
     expect(d.calls).toHaveLength(1)
   })
 
+  it('runs a pass for a restarted grader after the old pass finishes', async () => {
+    const [a, b] = [uid(), uid()]
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    const d = deferredGrader()
+    const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
+    const stop = startGrader(deps)
+    await tick()
+    stop()
+    const stop2 = startGrader(deps)
+    setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-04-01T00:00:00Z' })
+    d.calls[0].resolve()
+    await tick()
+    expect(d.calls.map((c) => c.id)).toEqual([a, b])
+    d.calls[1].resolve()
+    await tick()
+    stop2()
+  })
+
   it('leaves gradeErrors empty when the remote check throws', async () => {
     const a = uid()
     setPapers({ [a]: '2026-03-01T00:00:00Z' })
