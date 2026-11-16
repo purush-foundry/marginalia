@@ -9,7 +9,11 @@
     "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "host:install": "npm --prefix host install",
+    "host:check": "tsc -p host/tsconfig.json",
+    "host:build": "npm run host:check && vite build --config host/vite.config.ts",
+    "host": "npm run host:build && node host/dist/main.js"
   },
   "dependencies": {
     "@preact/signals": "^2.11.4",

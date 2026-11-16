@@ -1,6 +1,8 @@
 // App shell: onboarding, library, map or reader by route, settings sheet, toast, theme and root gesture hooks.
 import { signal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
+import { probeHost } from '../agent/host'
+import { HOST_PROBE_INTERVAL_MS } from '../config'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
 import { startGrader } from '../verdict/grader'
@@ -103,6 +105,20 @@ export function App() {
 
   useEffect(() => (hasLibrary ? startAutoSync() : undefined), [hasLibrary])
   useEffect(() => (hasLibrary ? startGrader() : undefined), [hasLibrary])
+
+  const paired = Boolean(s.hostToken)
+  useEffect(() => {
+    if (!paired) return undefined
+    const probe = () => void probeHost(false)
+    const onVisible = () => document.visibilityState === 'visible' && probe()
+    probe()
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = setInterval(probe, HOST_PROBE_INTERVAL_MS)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(timer)
+    }
+  }, [paired])
 
   return (
     <div class="mg-app" onPointerDownCapture={onRootPointerDown} onPointerUpCapture={maybeRenew} onClickCapture={maybeRenew}>

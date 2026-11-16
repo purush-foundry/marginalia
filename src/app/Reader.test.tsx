@@ -9,7 +9,8 @@ import { clipboard } from '../notes/clipboard'
 import { emptyNotebook, type NotesDocV2, type TextObject } from '../notes/model'
 import type { NotebookProps } from '../notes/Notebook'
 import type { ViewerHandle, ViewerProps } from '../pdf/Viewer'
-import { emptySidecar, type InkStroke, type Sidecar, type TextHighlight } from '../types'
+import { emptySidecar, type InkStroke, type Sidecar, type TextHighlight, type Thread } from '../types'
+import * as host from '../agent/host'
 import { Reader } from './Reader'
 import { DEFAULT_SETTINGS, settings } from './settings'
 import { toast } from './ui'
@@ -89,6 +90,20 @@ vi.mock('../drive/library', async () => {
   return { ...drive, library: signal(null) }
 })
 
+vi.mock('../agent/host', async () => {
+  const { signal } = await import('@preact/signals')
+  return {
+    hostState: signal({ status: 'off' }),
+    uploadPaper: vi.fn(async () => {}),
+    openSession: vi.fn(() => new Promise<string>(() => {})),
+    sessionEvents: vi.fn(),
+    sendMessage: vi.fn(async () => {}),
+    interrupt: vi.fn(async () => {}),
+  }
+})
+
+const READY: host.HostState = { status: 'ready', info: { version: '0.1.0', model: 'opus 5.5', skill: 'h', auth: 'none', cwd: '/' } }
+
 const { openPdf } = await import('../pdf/document')
 
 let root: HTMLElement
@@ -112,6 +127,7 @@ function stubMedia(wide: boolean, fine = true) {
 }
 
 beforeEach(() => {
+  host.hostState.value = { status: 'off' }
   viewer.props = null
   notebook.props = null
   settings.value = DEFAULT_SETTINGS
@@ -937,5 +953,109 @@ describe('Reader tools', () => {
       act(() => render(null, page))
       page.remove()
     }
+  })
+})
+
+describe('Reader agent', () => {
+  const agentThread: Thread = {
+    kind: 'thread',
+    id: 'agent-1',
+    createdAt: 1,
+    updatedAt: 1,
+    anchor: { page: 0, boxes: [] },
+    model: 'agent',
+    session: 's-old',
+    messages: [
+      { role: 'user', content: 'What is eq 3?', createdAt: 1 },
+      { role: 'assistant', content: 'Scaled attention.', createdAt: 2 },
+    ],
+  }
+
+  test('the Agent button shows only while the host is ready', async () => {
+    await open()
+    expect(button('Agent')).toBeNull()
+
+    await act(async () => {
+      host.hostState.value = READY
+    })
+    expect(button('Agent')).not.toBeNull()
+
+    await act(async () => {
+      host.hostState.value = { status: 'unreachable' }
+    })
+    expect(button('Agent')).toBeNull()
+  })
+
+  test('the Agent button mounts a live terminal that uploads the loaded PDF bytes', async () => {
+    host.hostState.value = READY
+    await open()
+    await act(async () => button('Agent')!.click())
+
+    expect(root.querySelector('.mg-ask-wrap.mg-term-wrap .mg-term')).not.toBeNull()
+    expect(root.querySelector('.mg-term textarea')).not.toBeNull()
+    await vi.waitFor(() => expect(host.uploadPaper).toHaveBeenCalledOnce())
+    const [id, source] = vi.mocked(host.uploadPaper).mock.calls[0]
+    expect(id).toBe('p1')
+    expect(source.name).toBe('attention.pdf')
+    expect(new TextDecoder().decode(source.bytes)).toBe('%PDF')
+    expect(drive.getPdfBlob).toHaveBeenCalledOnce()
+  })
+
+  test('the current selection is offered as an attachment and stays after the bar closes', async () => {
+    host.hostState.value = READY
+    const props = await open()
+    await act(async () => button('Agent')!.click())
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'Attention', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
+
+    await act(async () => pointerDown(root.querySelector('.mg-term textarea')!))
+    expect(button('Green')).toBeNull()
+    expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
+  })
+
+  test('a selection made before Agent is clicked is attached, and closing the terminal drops it', async () => {
+    host.hostState.value = READY
+    const props = await open()
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'Attention', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => pointerDown(button('Agent')!))
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
+
+    await act(async () => root.querySelector<HTMLButtonElement>('.mg-term-close')!.click())
+    expect(root.querySelector('.mg-term')).toBeNull()
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term')).not.toBeNull()
+    expect(root.querySelector('.mg-term-attach')).toBeNull()
+  })
+
+  test('a selection dismissed elsewhere is not attached to a terminal opened later', async () => {
+    host.hostState.value = READY
+    const props = await open()
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'Attention', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => pointerDown(document.body))
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term')).not.toBeNull()
+    expect(root.querySelector('.mg-term-attach')).toBeNull()
+  })
+
+  test('an agent thread opened from the sidebar with no host mounts the read-only terminal', async () => {
+    drive.loadSidecar.mockImplementation(async (id: string) => ({ ...emptySidecar(id, 'attention.pdf', 1), threads: [agentThread] }))
+    await open()
+    await act(async () => button('Ask threads')!.click())
+    const row = [...root.querySelectorAll<HTMLButtonElement>('.mg-sidebar .mg-row')].find((b) => b.textContent!.includes('Whole paper · agent'))
+    expect(row).toBeDefined()
+    await act(async () => row!.click())
+
+    expect(root.querySelector('.mg-term-pair')?.textContent).toBe('Pair the agent host on the laptop to continue')
+    expect(root.querySelector('.mg-term textarea')).toBeNull()
+    expect(root.querySelector('.mg-term-log')!.textContent).toContain('Scaled attention.')
+    expect(root.querySelector('.ask-head')).toBeNull()
+    expect(host.uploadPaper).not.toHaveBeenCalled()
   })
 })

@@ -1,6 +1,7 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { hostState } from '../agent/host'
 import { settings } from './settings'
 
 const mocks = vi.hoisted(() => ({
@@ -138,5 +139,36 @@ describe('Settings', () => {
     expect(button('Regenerate 1 outdated')).toBeTruthy()
     mocks.ungraded = ['a', 'b', 'c']
     mocks.outdated = ['d', 'e']
+  })
+
+  test('the Agent host section offers Connect and Forget once paired but unreachable', () => {
+    act(() => render(<Settings />, root))
+    expect(root.textContent).toContain('Not paired')
+    expect([...root.querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(false)
+
+    act(() => {
+      settings.value = { ...settings.value, hostToken: 'tok' }
+      hostState.value = { status: 'unreachable' }
+    })
+    expect(root.textContent).toContain('Paired, not reachable')
+    expect(button('Connect')).toBeTruthy()
+    expect(button('Forget')).toBeTruthy()
+    act(() => {
+      settings.value = { ...settings.value, hostToken: '' }
+      hostState.value = { status: 'off' }
+    })
+  })
+
+  test('a token with an off state reads "Paired, not yet connected" and keeps Connect', () => {
+    act(() => {
+      settings.value = { ...settings.value, hostToken: 'tok' }
+    })
+    act(() => render(<Settings />, root))
+    expect(root.textContent).toContain('Paired, not yet connected')
+    expect(button('Connect')).toBeTruthy()
+    expect(button('Forget')).toBeTruthy()
+    act(() => {
+      settings.value = { ...settings.value, hostToken: '' }
+    })
   })
 })

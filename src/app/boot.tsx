@@ -1,12 +1,13 @@
 // Startup: consumes a redirect token, restores settings and the library, renders, then restores the Drive session in the background.
 import { render } from 'preact'
+import { pairHost } from '../agent/host'
 import { consumeRedirectToken, gisAvailable, initAuth } from '../drive/auth'
 import { loadLibrary } from '../drive/library'
 import { App } from './App'
 import { registerServiceWorker, requestPersistence } from './pwa'
-import { startRouter } from './route'
+import { route, startRouter } from './route'
 import { bindToolSettings, loadSettings, saveSettings, settings } from './settings'
-import { authReady, online } from './ui'
+import { authReady, online, showToast } from './ui'
 
 export async function boot(el: HTMLElement): Promise<void> {
   consumeRedirectToken()
@@ -14,6 +15,16 @@ export async function boot(el: HTMLElement): Promise<void> {
   if (s.gradingSince === 0) saveSettings({ gradingSince: Date.now() }).catch(console.error)
   bindToolSettings()
   startRouter()
+  const r = route.value
+  if (r.kind === 'pair') {
+    try {
+      await pairHost(r.token)
+    } finally {
+      history.replaceState(null, '', location.pathname + '#/')
+    }
+    route.value = { kind: 'library' }
+    showToast('Agent host paired')
+  }
   render(<App />, el)
   if (import.meta.env.PROD) registerServiceWorker().catch(console.error)
   requestPersistence().catch(() => undefined)
