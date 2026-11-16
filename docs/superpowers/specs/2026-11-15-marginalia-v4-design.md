@@ -265,12 +265,14 @@ Fruchterman–Reingold in a 1000×1000 map space.
    when it has several (those papers are the bridges). A paper with no topics (ungraded, no
    owner tags) has no target and feels only the centre gravity, so it floats in the middle
    until it is graded or tagged.
-3. Start position per paper from `mulberry32(hash32(pdfId))` around its target, so adding a
-   paper never moves another paper's start.
-4. Per iteration with `k = 0.9·sqrt(1000·1000 / n)`: repulsion `k²/d` between all pairs within
-   `2k`; attraction `d²/k · w` along links (w = 1.0 builds-on/extends, 0.8 baseline, 0.6
-   same-problem/contradicts, 0.4 related); topic gravity `0.08·(target − pos)`; centre gravity
-   `0.01`; pinned papers do not move.
+3. Start position per paper from `mulberry32(hash32(pdfId))` within `0.12·size` of its target
+   (the centre when it has none), so adding a paper never moves another paper's start.
+4. Per iteration with `k = min(0.9·sqrt(1000·1000 / n), 60)` (the cap lets a small library
+   cluster instead of filling the canvas): repulsion `k²/d` between all pairs within `2k`;
+   attraction `d²/k · w` along links (w = 1.0 builds-on/extends, 0.8 baseline, 0.6
+   same-problem/contradicts, 0.4 related); topic gravity `0.3·(target − pos)`; centre gravity
+   `0.05`; pinned papers do not move. **(call, revised during the build: the first constants
+   let repulsion push edgeless papers to the canvas edge.)**
 5. 200 iterations, temperature quenching linearly from 100 to `k/8` by iteration 120, then
    constant (FR's quench and simmer); displacement capped by the temperature; clamp to
    [10, 990]; nodes iterated in sorted id order so the result is reproducible.
