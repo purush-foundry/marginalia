@@ -1,7 +1,10 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { signal } from '@preact/signals'
+import type { AnnotationStore } from '../annot/store'
 import { settings } from '../app/settings'
+import type { Sidecar } from '../types'
 import type { VerdictNote } from './note'
 
 const note: VerdictNote = {
@@ -38,6 +41,9 @@ import { grading } from './grader'
 import { VerdictTab } from './VerdictTab'
 
 let root: HTMLElement
+const setGist = vi.fn()
+const store = (gist = 'my old gist') =>
+  ({ sidecar: signal({ gist: { text: gist, updatedAt: 1 } } as Sidecar), setGist }) as unknown as AnnotationStore
 beforeEach(() => {
   root = document.createElement('div')
   document.body.append(root)
@@ -46,6 +52,7 @@ beforeEach(() => {
   mocks.canGrade.mockReturnValue(true)
   mocks.gradeNow.mockReset()
   mocks.showToast.mockReset()
+  setGist.mockReset()
   grading.value = null
   settings.value = { ...settings.value, anthropicApiKey: '' }
 })
@@ -56,7 +63,7 @@ afterEach(() => {
 
 const show = async (onGo: (page: number) => void = vi.fn(), pdfId = 'p1', settle = true) => {
   await act(async () => {
-    render(<VerdictTab pdfId={pdfId} onGo={onGo} />, root)
+    render(<VerdictTab pdfId={pdfId} store={store()} onGo={onGo} />, root)
   })
   if (settle) await vi.waitFor(() => expect(root.textContent).not.toContain('Loading'))
 }
@@ -136,5 +143,32 @@ describe('VerdictTab', () => {
     await show()
     await act(async () => button('Regenerate')!.click())
     expect(mocks.gradeNow).toHaveBeenCalledWith('p1')
+  })
+
+  test('the gist field shows the saved gist and saves an edit on blur', async () => {
+    await show()
+    const area = root.querySelector<HTMLTextAreaElement>('#mg-verdict-gist')!
+    expect(root.querySelector('label[for="mg-verdict-gist"]')!.textContent).toBe('Your gist')
+    expect(area.value).toBe('my old gist')
+    await act(async () => {
+      area.value = '  a cleaner sampler  '
+      area.dispatchEvent(new Event('input', { bubbles: true }))
+      area.dispatchEvent(new Event('blur'))
+    })
+    expect(setGist).toHaveBeenCalledWith('a cleaner sampler')
+  })
+
+  test('a changed gist is saved when the tab closes without a blur, an unchanged one is not', async () => {
+    await show()
+    act(() => render(null, root))
+    expect(setGist).not.toHaveBeenCalled()
+    await show()
+    await act(async () => {
+      const area = root.querySelector<HTMLTextAreaElement>('#mg-verdict-gist')!
+      area.value = 'typed then closed'
+      area.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => render(null, root))
+    expect(setGist).toHaveBeenCalledWith('typed then closed')
   })
 })

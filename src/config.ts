@@ -43,5 +43,8 @@ export const HOST_PROBE_INTERVAL_MS = 60_000
 /** Side length of the paper map's coordinate space. */
 export const MAP_SIZE = 1000
 
+// Longest gist the map card and the reader's verdict tab accept.
+export const GIST_MAX_CHARS = 140
+
 /** Longest edge of a page crop sent to Claude. */
 export const IMAGE_MAX_EDGE_PX = 2576

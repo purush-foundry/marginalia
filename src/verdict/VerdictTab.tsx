@@ -1,14 +1,27 @@
-// Reader sidebar tab: the paper's verdict note with citations, regenerate and an outdated notice.
+// Reader sidebar tab: the reader's gist, then the paper's verdict note with citations, regenerate and an outdated notice.
 import { useEffect, useState } from 'preact/hooks'
+import type { AnnotationStore } from '../annot/store'
 import { renderMarkdown } from '../ai/markdown'
 import { showToast } from '../app/ui'
+import { GIST_MAX_CHARS } from '../config'
 import { loadVerdict, sidecarRevision } from '../drive/library'
+import { useDraft } from '../lib/draft'
 import { VerdictChip } from './VerdictChip'
 import { canGrade, currentSkillHash, gradeNow, grading, hostSkill } from './grader'
 import { isOutdated, type VerdictNote } from './note'
 import './verdict.css'
 
-export function VerdictTab({ pdfId, onGo }: { pdfId: string; onGo(page: number): void }) {
+function GistField({ store }: { store: AnnotationStore }) {
+  const gist = useDraft(store.sidecar.peek().gist?.text ?? '', (text) => store.setGist(text))
+  return (
+    <div class="mg-field">
+      <label for="mg-verdict-gist">Your gist</label>
+      <textarea id="mg-verdict-gist" placeholder="Your one line on this paper" maxLength={GIST_MAX_CHARS} rows={2} {...gist} />
+    </div>
+  )
+}
+
+export function VerdictTab({ pdfId, store, onGo }: { pdfId: string; store: AnnotationStore; onGo(page: number): void }) {
   const [note, setNote] = useState<VerdictNote | null>(null)
   const [outdated, setOutdated] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -45,33 +58,36 @@ export function VerdictTab({ pdfId, onGo }: { pdfId: string; onGo(page: number):
       (err: unknown) => showToast(err instanceof Error ? err.message : String(err)),
     )
 
-  if (!loaded) return <p class="mg-muted mg-pad">Loading…</p>
-  if (!note) {
-    return (
-      <div class="mg-verdict-tab">
-        <VerdictChip note={null} grading={busy === pdfId} />
-        <p class="mg-muted">No note yet</p>
-        {runnable ? (
-          <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
-            Grade now
-          </button>
-        ) : (
-          <p class="mg-muted">Add a Claude key or pair the agent host in Settings</p>
-        )}
-      </div>
-    )
-  }
   return (
     <div class="mg-verdict-tab">
-      <VerdictChip note={note} grading={busy === pdfId} />
-      <div class="mg-verdict-body">{renderMarkdown(note.body, (page) => onGo(page))}</div>
-      <p class="mg-muted">
-        {note.model} · skill {note.skill} · {new Date(note.generated).toLocaleDateString()}
-      </p>
-      {outdated && <p class="mg-muted">Written with an older version of the skill</p>}
-      <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
-        Regenerate
-      </button>
+      <GistField key={pdfId} store={store} />
+      {!loaded ? (
+        <p class="mg-muted">Loading…</p>
+      ) : !note ? (
+        <>
+          <VerdictChip note={null} grading={busy === pdfId} />
+          <p class="mg-muted">No note yet</p>
+          {runnable ? (
+            <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
+              Grade now
+            </button>
+          ) : (
+            <p class="mg-muted">Add a Claude key or pair the agent host in Settings</p>
+          )}
+        </>
+      ) : (
+        <>
+          <VerdictChip note={note} grading={busy === pdfId} />
+          <div class="mg-verdict-body">{renderMarkdown(note.body, (page) => onGo(page))}</div>
+          <p class="mg-muted">
+            {note.model} · skill {note.skill} · {new Date(note.generated).toLocaleDateString()}
+          </p>
+          {outdated && <p class="mg-muted">Written with an older version of the skill</p>}
+          <button type="button" class="btn" disabled={busy !== null} onClick={() => void run()}>
+            Regenerate
+          </button>
+        </>
+      )}
     </div>
   )
 }

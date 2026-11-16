@@ -160,7 +160,7 @@ export function Sidebar(props: SidebarProps) {
       <div class="mg-sidebar-body">
         {props.tab === 'outline' && <OutlineTab doc={props.doc} onGo={(p) => props.onGo(p)} />}
         {props.tab === 'highlights' && <HighlightsTab store={props.store} onGo={props.onGo} />}
-        {props.tab === 'verdict' && <VerdictTab pdfId={props.pdfId} onGo={(p) => props.onGo(p)} />}
+        {props.tab === 'verdict' && <VerdictTab pdfId={props.pdfId} store={props.store} onGo={(p) => props.onGo(p)} />}
         {props.tab === 'threads' && <ThreadsTab store={props.store} onOpen={props.onOpenThread} />}
       </div>
       <div class="mg-sidebar-foot">
