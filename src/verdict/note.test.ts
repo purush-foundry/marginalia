@@ -64,4 +64,22 @@ describe('note', () => {
     expect(isVerdictNote({ ...full, topics: 'a' })).toBe(false)
     expect(isVerdictNote(null)).toBe(false)
   })
+
+  it('keeps quote-bearing values stable across round trips', () => {
+    for (const v of ['"Quoted"', '"A" vs "B"', "'x' and 'y'"]) {
+      const n = { ...full, oneLine: v, venue: v, authors: v }
+      const once = serializeNote(n)
+      expect(parseNote(once)).toEqual(n)
+      expect(serializeNote(parseNote(once)!)).toBe(once)
+    }
+    expect(parseNote('---\nverdict: read\none_line: "A" vs "B"\n---\n')!.oneLine).toBe('"A" vs "B"')
+  })
+
+  it('treats a placeholder topics value as empty', () => {
+    expect(parseNote('---\nverdict: read\ntopics: <filled by the app>\n---\n')!.topics).toEqual([])
+  })
+
+  it('serializes an empty body without a blank tail', () => {
+    expect(serializeNote({ ...full, body: '' }).endsWith('generated: 2026-11-15T10:00:00Z\n---\n')).toBe(true)
+  })
 })

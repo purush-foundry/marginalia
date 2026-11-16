@@ -19,11 +19,25 @@ export interface VerdictNote {
 const CONFIDENCES = ['high', 'medium', 'low'] as const
 const PLACEHOLDER = '<filled by the app>'
 
-// Removes one pair of matching surrounding quotes.
+// Removes one pair of matching surrounding quotes, decoding JSON-style double-quoted strings.
 function unquote(s: string): string {
   const t = s.trim()
-  if (t.length >= 2 && (t[0] === '"' || t[0] === "'") && t[t.length - 1] === t[0]) return t.slice(1, -1).trim()
-  return t
+  if (t.length < 2 || (t[0] !== '"' && t[0] !== "'") || t[t.length - 1] !== t[0]) return t
+  if (t[0] === '"') {
+    try {
+      const v: unknown = JSON.parse(t)
+      if (typeof v === 'string') return v
+    } catch {
+      // not valid JSON; fall through to the plain slice
+    }
+  }
+  const inner = t.slice(1, -1)
+  return inner.includes(t[0]) ? t : inner.trim()
+}
+
+// Writes a scalar value, JSON-quoting it when plain text would not read back unchanged.
+function scalar(v: string): string {
+  return /^["']|["']$|^\s|\s$|[\r\n]/.test(v) || v === PLACEHOLDER ? JSON.stringify(v) : v
 }
 
 // Reads a `[a, b]` or bare comma list into trimmed items.
@@ -68,7 +82,7 @@ export function parseNote(markdown: string): VerdictNote | null {
       : 'medium',
     readTime: str('read_time'),
     oneLine: str('one_line'),
-    topics: parseList(fields.get('topics') ?? ''),
+    topics: fields.get('topics') === PLACEHOLDER ? [] : parseList(fields.get('topics') ?? ''),
     skill: str('skill'),
     model: str('model'),
     generated: str('generated'),
@@ -85,15 +99,16 @@ export function serializeNote(note: VerdictNote): string {
     '---',
     `verdict: ${note.verdict}`,
     `confidence: ${note.confidence}`,
-    `read_time: ${note.readTime}`,
-    `one_line: ${note.oneLine}`,
+    `read_time: ${scalar(note.readTime)}`,
+    `one_line: ${scalar(note.oneLine)}`,
     `topics: [${note.topics.join(', ')}]`,
   ]
   if (note.year !== undefined) out.push(`year: ${note.year}`)
-  if (note.venue !== undefined) out.push(`venue: ${note.venue}`)
-  if (note.authors !== undefined) out.push(`authors: ${note.authors}`)
-  out.push(`skill: ${note.skill}`, `model: ${note.model}`, `generated: ${note.generated}`, '---', '')
-  return `${out.join('\n')}\n${note.body}\n`
+  if (note.venue !== undefined) out.push(`venue: ${scalar(note.venue)}`)
+  if (note.authors !== undefined) out.push(`authors: ${scalar(note.authors)}`)
+  out.push(`skill: ${scalar(note.skill)}`, `model: ${scalar(note.model)}`, `generated: ${scalar(note.generated)}`, '---', '')
+  const head = out.join('\n')
+  return note.body === '' ? head : `${head}\n${note.body}\n`
 }
 
 // Structural check for a stored note object.
