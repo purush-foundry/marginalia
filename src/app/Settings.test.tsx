@@ -79,13 +79,28 @@ describe('Settings', () => {
     expect([...root.querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(false)
 
     act(() => {
+      settings.value = { ...settings.value, hostToken: 'tok' }
       hostState.value = { status: 'unreachable' }
     })
     expect(root.textContent).toContain('Paired, not reachable')
     expect(button('Connect')).toBeTruthy()
     expect(button('Forget')).toBeTruthy()
     act(() => {
+      settings.value = { ...settings.value, hostToken: '' }
       hostState.value = { status: 'off' }
+    })
+  })
+
+  test('a token with an off state reads "Paired, not yet connected" and keeps Connect', () => {
+    act(() => {
+      settings.value = { ...settings.value, hostToken: 'tok' }
+    })
+    act(() => render(<Settings />, root))
+    expect(root.textContent).toContain('Paired, not yet connected')
+    expect(button('Connect')).toBeTruthy()
+    expect(button('Forget')).toBeTruthy()
+    act(() => {
+      settings.value = { ...settings.value, hostToken: '' }
     })
   })
 })

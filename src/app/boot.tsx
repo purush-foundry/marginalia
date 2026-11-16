@@ -17,8 +17,11 @@ export async function boot(el: HTMLElement): Promise<void> {
   startRouter()
   const r = route.value
   if (r.kind === 'pair') {
-    await pairHost(r.token)
-    history.replaceState(null, '', location.pathname + '#/')
+    try {
+      await pairHost(r.token)
+    } finally {
+      history.replaceState(null, '', location.pathname + '#/')
+    }
     route.value = { kind: 'library' }
     showToast('Agent host paired')
   }

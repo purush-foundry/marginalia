@@ -82,7 +82,9 @@ export async function probeHost(gesture = false): Promise<HostState> {
 }
 
 export function pairHost(token: string, url: string = HOST_DEFAULT_URL): Promise<void> {
-  return saveSettings({ hostToken: token, hostUrl: url })
+  return saveSettings({ hostToken: token, hostUrl: url }).then(() => {
+    hostState.value = { status: 'unreachable' }
+  })
 }
 
 export async function forgetHost(): Promise<void> {
@@ -144,9 +146,14 @@ export async function interrupt(sessionId: string): Promise<void> {
 export async function hostVerdict(pdfId: string, source: PaperSource): Promise<string> {
   await uploadPaper(pdfId, source)
   const { jobId } = (await (await call('/verdicts', 'POST', { pdfId })).json()) as { jobId: string }
-  for await (const ev of events(`/verdicts/${encodeURIComponent(jobId)}/events`, new AbortController().signal)) {
-    if (ev.type === 'note') return ev.markdown
-    if (ev.type === 'error') throw new Error(ev.message)
+  const ctl = new AbortController()
+  try {
+    for await (const ev of events(`/verdicts/${encodeURIComponent(jobId)}/events`, ctl.signal)) {
+      if (ev.type === 'note') return ev.markdown
+      if (ev.type === 'error') throw new Error(ev.message)
+    }
+  } finally {
+    ctl.abort()
   }
   throw new Error('The agent host finished without a note.')
 }

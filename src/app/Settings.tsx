@@ -240,9 +240,12 @@ function ClaudeSection() {
 
 function AgentHostSection() {
   const state = hostState.value
+  const paired = Boolean(settings.value.hostToken)
   const line =
     state.status === 'off'
-      ? 'Not paired — run `npm run host` on the laptop and open the pairing link'
+      ? paired
+        ? 'Paired, not yet connected'
+        : 'Not paired — run `npm run host` on the laptop and open the pairing link'
       : state.status === 'unreachable'
         ? 'Paired, not reachable'
         : state.status === 'unauthorised'
@@ -262,7 +265,7 @@ function AgentHostSection() {
           onChange={(e) => void saveSettings({ hostUrl: e.currentTarget.value.trim() })}
         />
       </div>
-      {state.status !== 'off' && (
+      {paired && (
         <div class="mg-actions">
           <button type="button" class="btn" onClick={() => void probeHost(true)}>
             Connect

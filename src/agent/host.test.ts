@@ -79,6 +79,7 @@ describe('pairing', () => {
     await pairHost('t2', 'http://127.0.0.1:9')
     expect(settings.value.hostToken).toBe('t2')
     expect(settings.value.hostUrl).toBe('http://127.0.0.1:9')
+    expect(hostState.value.status).toBe('unreachable')
     await forgetHost()
     expect(settings.value.hostToken).toBe('')
     expect(hostState.value.status).toBe('off')
