@@ -187,6 +187,65 @@ describe('startGrader', () => {
   })
 })
 
+describe('one lane', () => {
+  it('queues a manual grade behind a running automatic pass', async () => {
+    const [a, b] = [uid(), uid()]
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    const d = deferredGrader()
+    const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
+    const stop = startGrader(deps)
+    await tick()
+    const manual = gradeNow(b, deps)
+    await tick()
+    expect(d.calls.map((c) => c.id)).toEqual([a])
+    d.calls[0].resolve()
+    await tick()
+    expect(d.calls.map((c) => c.id)).toEqual([a, b])
+    d.calls[1].resolve()
+    await manual
+    stop()
+  })
+
+  it('shares the in-flight result when the paper is already being graded', async () => {
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    const d = deferredGrader()
+    const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
+    const stop = startGrader(deps)
+    await tick()
+    const manual = gradeNow(a, deps)
+    d.calls[0].resolve()
+    await manual
+    expect(d.calls).toHaveLength(1)
+    stop()
+  })
+
+  it('stops chained passes when disposed', async () => {
+    const [a, b] = [uid(), uid()]
+    setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-02-01T00:00:00Z' })
+    const d = deferredGrader()
+    const stop = startGrader({ host: () => null, direct: () => d.grader, paper })
+    await tick()
+    stop()
+    d.calls[0].resolve()
+    await tick()
+    expect(d.calls).toHaveLength(1)
+  })
+
+  it('leaves gradeErrors empty when the remote check throws', async () => {
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    const lib2 = await import('../drive/library')
+    vi.mocked(lib2.hasRemoteVerdict).mockRejectedValueOnce(new Error('signed out'))
+    const direct = vi.fn(async () => note())
+    const stop = startGrader({ host: () => null, direct: () => direct, paper })
+    await tick()
+    expect(gradeErrors.value).toEqual({})
+    expect(direct).not.toHaveBeenCalled()
+    stop()
+  })
+})
+
 describe('back catalogue and regrading', () => {
   it('gradeNow throws on failure and clears grading', async () => {
     const a = uid()

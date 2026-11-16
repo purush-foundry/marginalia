@@ -69,17 +69,38 @@ async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> 
   throw hostError ?? new Error('No grader available: set an API key or pair a host')
 }
 
-// Grades one paper, tracking it in `grading`, and stores the note.
+const inFlight = new Map<string, Promise<VerdictNote>>()
+let lane: Promise<unknown> = Promise.resolve()
+let generation = 0
+
+// Queues a job behind every grading already queued or running.
+function serial<T>(job: () => Promise<T>): Promise<T> {
+  const p = lane.then(job)
+  lane = p.catch(() => {})
+  return p
+}
+
+// Grades one paper, tracking it in `grading` and `inFlight`, and stores the note; runs inside the lane.
 async function gradeAndSave(pdfId: string, deps: GraderDeps): Promise<VerdictNote> {
-  grading.value = pdfId
-  try {
-    const note = await gradeWith(pdfId, deps)
-    saveVerdict(pdfId, note)
-    gradedThisSession.add(pdfId)
-    return note
-  } finally {
-    grading.value = null
-  }
+  const work = (async () => {
+    grading.value = pdfId
+    try {
+      const note = await gradeWith(pdfId, deps)
+      saveVerdict(pdfId, note)
+      gradedThisSession.add(pdfId)
+      return note
+    } finally {
+      grading.value = null
+      inFlight.delete(pdfId)
+    }
+  })()
+  inFlight.set(pdfId, work)
+  return work
+}
+
+// Grades one paper through the lane, sharing the result when that paper is already being graded.
+function gradeQueued(pdfId: string, deps: GraderDeps): Promise<VerdictNote> {
+  return inFlight.get(pdfId) ?? serial(() => gradeAndSave(pdfId, deps))
 }
 
 // Papers newer than gradingSince with no index entry, local note, recorded error or session grade, newest first.
@@ -98,30 +119,43 @@ async function candidates(): Promise<string[]> {
   return found.sort((a, b) => b.time - a.time).map((c) => c.id)
 }
 
-// Handles one candidate; resolves true when another pass should follow.
-async function passOnce(deps: GraderDeps): Promise<boolean> {
-  if (!settings.peek().gradeOnThisDevice || (!deps.host() && !deps.direct())) return false
-  const [next, ...rest] = await candidates()
-  if (!next) return false
+class RemoteCheckError extends Error {}
+
+// Checks Drive for an existing note, marking a failed check so the paper is retried later.
+async function remoteVerdict(pdfId: string): Promise<boolean> {
   try {
-    if (await hasRemoteVerdict(next)) {
+    return await hasRemoteVerdict(pdfId)
+  } catch {
+    throw new RemoteCheckError()
+  }
+}
+
+// Handles one candidate; resolves true when another pass should follow.
+async function passOnce(deps: GraderDeps, gen: number): Promise<boolean> {
+  if (gen !== generation || !settings.peek().gradeOnThisDevice || (!deps.host() && !deps.direct())) return false
+  const [next, ...rest] = await candidates()
+  if (!next || gen !== generation) return false
+  try {
+    if (await remoteVerdict(next)) {
       gradedThisSession.add(next)
     } else {
       await gradeAndSave(next, deps)
     }
   } catch (err) {
+    if (err instanceof RemoteCheckError) return false
     gradeErrors.value = { ...gradeErrors.peek(), [next]: messageOf(err) }
   }
   return rest.length > 0
 }
 
-// Runs one pass unless one is running, then chains the next while candidates remain.
-function schedulePass(deps: GraderDeps): void {
+// Runs one pass in the lane unless one is pending, then chains the next while candidates remain.
+function schedulePass(deps: GraderDeps, gen: number): void {
+  if (gen !== generation) return
   if (running) {
     rerun = true
     return
   }
-  running = passOnce(deps)
+  running = serial(() => passOnce(deps, gen))
     .then((more) => {
       rerun ||= more
     })
@@ -130,19 +164,25 @@ function schedulePass(deps: GraderDeps): void {
       running = null
       if (rerun) {
         rerun = false
-        setTimeout(() => schedulePass(deps), 0)
+        setTimeout(() => schedulePass(deps, gen), 0)
       }
     })
 }
 
 /** Watches the library and settings; grades ungraded papers one at a time, newest first; returns a stop function. */
 export function startGrader(deps: GraderDeps = defaultDeps): () => void {
-  return effect(() => {
+  const gen = ++generation
+  const stop = effect(() => {
     library.value
     sidecarRevision.value
     settings.value
-    schedulePass(deps)
+    schedulePass(deps, gen)
   })
+  return () => {
+    stop()
+    generation++
+    rerun = false
+  }
 }
 
 /** True when a host or an API key can grade. */
@@ -152,7 +192,7 @@ export function canGrade(): boolean {
 
 /** Grades one paper now, replacing any note. */
 export function gradeNow(pdfId: string, deps: GraderDeps = defaultDeps): Promise<VerdictNote> {
-  return gradeAndSave(pdfId, deps)
+  return gradeQueued(pdfId, deps)
 }
 
 /** Every paper without a note, regardless of date (the back catalogue). */
@@ -172,7 +212,7 @@ async function gradeAll(ids: string[], deps: GraderDeps): Promise<number> {
   let count = 0
   for (const id of ids) {
     try {
-      await gradeAndSave(id, deps)
+      await gradeQueued(id, deps)
       count++
     } catch (err) {
       gradeErrors.value = { ...gradeErrors.peek(), [id]: messageOf(err) }
