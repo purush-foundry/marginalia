@@ -802,8 +802,10 @@ export function refreshNotebook(pdfId: string): Promise<NotesDocV2 | null> {
   return refresh(NOTEBOOK, pdfId)
 }
 
-/** The stored verdict note for the paper, or null. */
+/** The latest local verdict note (including an unsaved debounced edit), or null. */
 export async function loadVerdict(pdfId: string): Promise<VerdictNote | null> {
+  const pending = pendingSaves.get(VERDICT.queueKey(pdfId))
+  if (pending) return pending.doc as VerdictNote
   return (await readStored(VERDICT, pdfId))?.sidecar ?? null
 }
 

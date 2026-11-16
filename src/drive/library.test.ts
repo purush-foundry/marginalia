@@ -1130,6 +1130,17 @@ describe('verdict notes', () => {
     expect(await idb.idbKeys('queue')).toEqual([])
   })
 
+  test('loadVerdict returns a saved note before the debounce fires', async () => {
+    paper('p1', 'root')
+    await lib.setRootFolder(ROOT)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    lib.saveVerdict('p1', verdictNote(OLDER))
+
+    expect(await idb.idbGet('verdicts', 'p1')).toBeUndefined()
+    expect(await lib.loadVerdict('p1')).toEqual(verdictNote(OLDER))
+  })
+
   test('two notes merge to the newer generated', async () => {
     paper('p1', 'root')
     remoteVerdict('v1', 'p1', 'root', serializeNote(verdictNote(NEWER, 'skim')))
