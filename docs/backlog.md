@@ -323,3 +323,6 @@ Items deferred from the v1 reviews, grouped by module. None loses data; each was
 - Nothing tests that the browser and host skill hashes agree on the same file.
 - `gradingSince` compares Drive modifiedTime, so an old PDF moved into the library later is never auto-graded; "first seen in the index" would match the intent better.
 - Chrome Local Network Access vs the older Private Network Access preflight header: unverified across Chrome versions.
+- With no API key, a definite host 4xx (for example 413 on a PDF over about 45 MB) is treated as a transport failure, so that paper stays first in the queue and automatic grading stalls for the session; a 4xx other than 401 should be recorded like a failed run.
+- The spec's grading-trigger section predates the rules that transport failures retry, a host without credentials is not a runner, and an unreadable Drive note blocks grading.
+- README "Who grades" says the host grades when it "has a key"; the host accepts an OAuth token too, so "has Claude credentials" is the accurate wording.
