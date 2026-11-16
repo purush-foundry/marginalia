@@ -5,6 +5,7 @@ import { authState } from '../drive/auth'
 import { flushPendingWrites, getPdfBlob, saveSidecar, saveVerdict, setRootFolder, syncLibrary } from '../drive/library'
 import { FakeDrive, signIn } from '../drive/test-helpers'
 import { FOLDER_MIME, PDF_MIME, emptySidecar } from '../types'
+import { grading } from '../verdict/grader'
 import { Library } from './Library'
 
 const ROOT = { id: 'lib-root', name: 'Papers', mimeType: FOLDER_MIME, parents: ['mydrive'], modifiedTime: 't', version: '1' }
@@ -91,6 +92,30 @@ describe('Library', () => {
     await act(async () => render(<Library />, root))
     await vi.waitFor(() => expect(row('attention').querySelector('.mg-verdict-read')!.textContent).toBe('Read'))
     expect(row('adam').querySelector('.mg-verdict')).toBeNull()
+  })
+
+  test('a grade that finishes while the library is open shows its chip', async () => {
+    await act(async () => render(<Library />, root))
+    await vi.waitFor(() => expect(row('adam').querySelector('.mg-badge')).not.toBeNull())
+    await act(async () => {
+      grading.value = 'adam'
+    })
+    expect(row('adam').querySelector('.mg-verdict-read')).toBeNull()
+    saveVerdict('adam', {
+      verdict: 'read',
+      confidence: 'high',
+      readTime: '10 min',
+      oneLine: 'x',
+      topics: [],
+      skill: 'h',
+      model: 'm',
+      generated: '2026-01-01T00:00:00Z',
+      body: 'b',
+    })
+    await act(async () => {
+      grading.value = null
+    })
+    await vi.waitFor(() => expect(row('adam').querySelector('.mg-verdict-read')!.textContent).toBe('Read'))
   })
 
   test('a badge follows a reading state another device synced to Drive', async () => {

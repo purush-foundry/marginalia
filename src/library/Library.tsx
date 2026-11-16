@@ -67,7 +67,7 @@ export function Library({ folderId }: { folderId?: string }) {
   const { folders, papers } = current ? childrenOf(current) : { folders: [], papers: [] }
   const crumbs = current ? pathTo(current) : []
   const [info, setInfo] = useState<Record<string, PaperInfo>>({})
-  const paperKey = `${papers.map((p) => `${p.id}@${p.version}`).join(',')}#${sidecarRevision.value}`
+  const paperKey = `${papers.map((p) => `${p.id}@${p.version}`).join(',')}#${sidecarRevision.value}#${grading.value}`
 
   useEffect(() => {
     let live = true
