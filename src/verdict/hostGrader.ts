@@ -1,17 +1,18 @@
 // Grades through the paired agent host and plugs that grader into the queue while the host is ready.
 import { effect } from '@preact/signals'
-import { hostState, hostVerdict, probeHost } from '../agent/host'
+import { HostRunError, hostState, hostVerdict, probeHost } from '../agent/host'
 import type { StatusResponse } from '../../host/src/protocol.ts'
-import { setHostGrader, setHostSkillHash, type Grader } from './grader'
+import { HostUnavailableError, setHostGrader, setHostSkillHash, type Grader } from './grader'
 import { parseNote } from './note'
 import { VerdictFormatError } from './runner'
 
-/** Runs the skill on the host and stamps the host's skill hash and model and the time on the note; a failed run re-probes the host. */
+/** Runs the skill on the host and stamps the host's skill hash and model and the time on the note; a transport failure re-probes the host and throws HostUnavailableError. */
 export function hostGrader(info: StatusResponse, now: () => Date = () => new Date()): Grader {
   return async (paper) => {
     const markdown = await hostVerdict(paper.pdfId, paper).catch((err: unknown) => {
+      if (err instanceof HostRunError) throw err
       void probeHost()
-      throw err
+      throw new HostUnavailableError(err instanceof Error ? err.message : String(err), { cause: err })
     })
     const note = parseNote(markdown)
     if (!note) throw new VerdictFormatError(`The agent host's note could not be parsed: ${markdown.slice(0, 200)}`)

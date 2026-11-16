@@ -85,9 +85,9 @@ sidecar.
   note takes the Drive copy on its next sync, so your edit wins. If the file no longer reads as a
   note, the Verdict tab names it and offers no grading until you fix or delete it.
 - **Who grades:** the agent host when it is paired, connected and has a key, else this browser
-  with your Anthropic key; a host failure falls back to the key, or with no key the paper is
-  tried again later. **Grade new papers on this device** in Settings → Claude turns grading off
-  for a device.
+  with your Anthropic key; a host failure falls back to the key. With no key, a paper the host
+  could not be reached for is tried again later, and a run that failed on the host is not.
+  **Grade new papers on this device** in Settings → Claude turns grading off for a device.
 
 ### Map
 

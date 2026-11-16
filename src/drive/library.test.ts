@@ -1186,13 +1186,15 @@ describe('verdict notes', () => {
     expect(await lib.loadVerdict('p1')).toEqual(verdictNote(NEWER, 'skip'))
   })
 
-  test('an unparseable note is kept, named as unreadable, and a queued upload for it is dropped with one report', async () => {
+  test('an unparseable note is kept, named as unreadable, not counted as a failed download, and a queued upload for it is dropped with one report', async () => {
     paper('p1', 'root')
     remoteVerdict('v1', 'p1', 'root', 'garbage')
 
     await lib.setRootFolder(ROOT)
 
-    expect(lib.syncState.value).toMatchObject({ status: 'error', message: '1 verdict download(s) failed' })
+    expect(lib.syncState.value.status).toBe('idle')
+    await lib.syncLibrary()
+    expect(lib.syncState.value.status).toBe('idle')
     expect(await lib.loadVerdict('p1')).toBeNull()
     expect(lib.unreadableVerdicts.value).toEqual({ p1: 'p1.worth-reading.md' })
 

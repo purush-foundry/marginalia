@@ -52,9 +52,10 @@ export async function currentSkillHash(): Promise<string> {
   return hostSkillHash.value() ?? (await skillHash(SKILL_TEXT))
 }
 
-class HostGradeError extends Error {}
+/** The host could not be reached or dropped the run; the paper is retried later. */
+export class HostUnavailableError extends Error {}
 
-// Grades with the host, falling back to direct when the host fails or is absent.
+// Grades with the host, falling back to direct when the host fails or is absent; with no direct grader the host's error is rethrown.
 async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> {
   const paper = await deps.paper(pdfId)
   const host = deps.host()
@@ -68,8 +69,7 @@ async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> 
   }
   const direct = deps.direct()
   if (direct) return direct(paper)
-  if (hostError) throw new HostGradeError(messageOf(hostError), { cause: hostError })
-  throw new Error('No grader available: set an API key or pair a host')
+  throw hostError ?? new Error('No grader available: set an API key or pair a host')
 }
 
 const inFlight = new Map<string, Promise<VerdictNote>>()
@@ -142,7 +142,7 @@ async function remoteVerdict(pdfId: string): Promise<boolean> {
   }
 }
 
-// Handles one candidate; resolves true when another pass should follow; a failed remote check or host-only grade ends the pass unrecorded.
+// Handles one candidate; resolves true when another pass should follow; a failed remote check or an unreachable host ends the pass unrecorded.
 async function passOnce(deps: GraderDeps, gen: number): Promise<boolean> {
   if (gen !== generation || !settings.peek().gradeOnThisDevice || (!deps.host() && !deps.direct())) return false
   const [next, ...rest] = await candidates()
@@ -154,7 +154,7 @@ async function passOnce(deps: GraderDeps, gen: number): Promise<boolean> {
       await gradeAndSave(next, deps)
     }
   } catch (err) {
-    if (err instanceof RemoteCheckError || err instanceof HostGradeError) return false
+    if (err instanceof RemoteCheckError || err instanceof HostUnavailableError) return false
     gradeErrors.value = { ...gradeErrors.peek(), [next]: messageOf(err) }
   }
   return rest.length > 0

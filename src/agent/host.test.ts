@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { json, mockFetch } from '../drive/test-helpers'
 import { settings } from '../app/settings'
 import type { HostEvent } from '../../host/src/protocol.ts'
-import { forgetHost, hostState, hostVerdict, pairHost, probeHost, sessionEvents, uploadPaper, type PaperSource } from './host'
+import { forgetHost, HostRunError, hostState, hostVerdict, pairHost, probeHost, sessionEvents, uploadPaper, type PaperSource } from './host'
 
 const INFO = { version: '0.1.0', model: 'm', skill: 'abc', auth: 'api-key', cwd: '/x' }
 
@@ -121,5 +121,14 @@ describe('papers and verdicts', () => {
     await expect(hostVerdict('p2', source())).rejects.toThrow('boom')
     mockFetch((c) => (c.url.pathname === '/verdicts' ? json({ jobId: 'j' }) : sse({ type: 'status', text: 'x' })))
     await expect(hostVerdict('p2', source())).rejects.toThrow(/without a note/)
+  })
+
+  test('only an error event from the host is a HostRunError; HTTP errors and a dropped stream are not', async () => {
+    mockFetch((c) => (c.url.pathname === '/verdicts' ? json({ jobId: 'j' }) : sse({ type: 'error', message: 'max turns' })))
+    await expect(hostVerdict('p3', source())).rejects.toBeInstanceOf(HostRunError)
+    mockFetch((c) => (c.url.pathname === '/verdicts' ? json({ jobId: 'j' }) : sse({ type: 'status', text: 'x' })))
+    await expect(hostVerdict('p3', source())).rejects.not.toBeInstanceOf(HostRunError)
+    mockFetch((c) => (c.url.pathname === '/verdicts' ? new Response(null, { status: 500 }) : new Response(null, { status: 204 })))
+    await expect(hostVerdict('p3', source())).rejects.not.toBeInstanceOf(HostRunError)
   })
 })

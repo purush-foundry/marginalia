@@ -856,7 +856,7 @@ function failureMessage(failed: Map<Companion<unknown>, number>, action: 'downlo
     .join(' · ')
 }
 
-// Merges every indexed companion of the kind whose Drive version differs from the local record and returns the failure count; rethrows an offline failure.
+// Merges every indexed companion of the kind whose Drive version differs from the local record and returns the failure count, not counting an unparseable verdict note; rethrows an offline failure.
 async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
   let pulled = 0
   let failed = 0
@@ -867,7 +867,7 @@ async function pull<T>(c: Companion<T>, index: LibraryIndex): Promise<number> {
         if ((await mergeRemote(c, pdfId, node)) !== null) pulled++
       } catch (err) {
         if (failureState(err).status === 'offline') throw err
-        failed++
+        if (c.kind !== 'verdict' || !(err instanceof SyntaxError)) failed++
       }
     }
   } finally {

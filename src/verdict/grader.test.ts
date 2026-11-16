@@ -36,11 +36,11 @@ vi.mock('./runner', async (orig) => ({
   paperInput: async (pdfId: string) => ({ pdfId, name: pdfId, title: null, pages: [], bytes: new ArrayBuffer(0) }),
 }))
 
-const host = vi.hoisted(() => ({ state: null as unknown, hostVerdict: vi.fn(), probeHost: vi.fn() }))
+const host = vi.hoisted(() => ({ state: null as unknown, hostVerdict: vi.fn(), probeHost: vi.fn(), HostRunError: class HostRunError extends Error {} }))
 vi.mock('../agent/host', async () => {
   const { signal: sig } = await import('@preact/signals')
   host.state = sig({ status: 'off' })
-  return { hostState: host.state, hostVerdict: host.hostVerdict, probeHost: host.probeHost }
+  return { hostState: host.state, hostVerdict: host.hostVerdict, probeHost: host.probeHost, HostRunError: host.HostRunError }
 })
 
 import type { HostState } from '../agent/host'
@@ -52,6 +52,7 @@ import {
   gradeNow,
   gradeUngraded,
   grading,
+  HostUnavailableError,
   outdatedPapers,
   regradeOutdated,
   setHostSkillHash,
@@ -222,13 +223,13 @@ describe('startGrader', () => {
     stop()
   })
 
-  it('a failing host with no direct grader ends the pass without recording errors and retries later', async () => {
+  it('an unreachable host with no direct grader ends the pass without recording errors and retries later', async () => {
     settings.value = { ...settings.value, anthropicApiKey: '' }
     const [a, b] = [uid(), uid()]
     setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-02-01T00:00:00Z' })
     let up = false
     const host = vi.fn(async () => {
-      if (!up) throw new Error('host down')
+      if (!up) throw new HostUnavailableError('host down')
       return note('host')
     })
     const stop = startGrader({ host: () => host, direct: () => null, paper })
@@ -428,6 +429,36 @@ describe('host grading', () => {
     hostSig.value = ready
     await vi.waitFor(() => expect(lib.saved).toEqual([a, b]))
     expect(gradeErrors.value).toEqual({})
+  })
+
+  it('a run the host finished with an error is recorded once, not probed and not retried', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    host.hostVerdict.mockRejectedValue(new host.HostRunError('max turns'))
+    connectHostGrading()
+    startGrader()
+    hostSig.value = ready
+    await vi.waitFor(() => expect(gradeErrors.value[a]).toBe('max turns'))
+    libSig.value = { ...libSig.value! }
+    await tick()
+    expect(host.hostVerdict).toHaveBeenCalledTimes(1)
+    expect(host.probeHost).not.toHaveBeenCalled()
+  })
+
+  it('a bad host note is recorded once, not probed and not retried', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    host.hostVerdict.mockResolvedValue('not a note')
+    connectHostGrading()
+    startGrader()
+    hostSig.value = ready
+    await vi.waitFor(() => expect(gradeErrors.value[a]).toMatch(/agent host's note could not be parsed/))
+    libSig.value = { ...libSig.value! }
+    await tick()
+    expect(host.hostVerdict).toHaveBeenCalledTimes(1)
+    expect(host.probeHost).not.toHaveBeenCalled()
   })
 
   it('a host with no Claude credentials is not plugged in', async () => {

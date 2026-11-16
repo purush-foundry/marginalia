@@ -25,6 +25,9 @@ export const hostState = signal<HostState>({ status: 'off' })
 
 const uploaded = new Set<string>()
 
+/** A verdict run the host finished with an error event; not a transport failure. */
+export class HostRunError extends Error {}
+
 class HostHttpError extends Error {
   status: number
 
@@ -150,7 +153,7 @@ export async function hostVerdict(pdfId: string, source: PaperSource): Promise<s
   try {
     for await (const ev of events(`/verdicts/${encodeURIComponent(jobId)}/events`, ctl.signal)) {
       if (ev.type === 'note') return ev.markdown
-      if (ev.type === 'error') throw new Error(ev.message)
+      if (ev.type === 'error') throw new HostRunError(ev.message)
     }
   } finally {
     ctl.abort()
