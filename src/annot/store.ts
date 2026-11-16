@@ -28,6 +28,8 @@ export interface AnnotationStore {
   upsertThread(t: Thread): void
   removeThread(id: string): void
   setReading(patch: Partial<ReadingState>): void
+  /** Sets the one-line gist; not an undo step. */
+  setGist(text: string): void
   setColorLabel(color: HighlightColor, label: string): void
   undo(): void
   redo(): void
@@ -227,6 +229,9 @@ export function createAnnotationStore(
     removeThread: (id) => tombstone('threads', id),
     setReading(patch) {
       commit({ ...state.value, reading: { ...state.value.reading, ...patch, updatedAt: now() } })
+    },
+    setGist(text) {
+      commit({ ...state.value, gist: { text, updatedAt: now() } })
     },
     setColorLabel(color, label) {
       commit({ ...state.value, colorLabels: { ...state.value.colorLabels, [color]: label } })

@@ -15,6 +15,7 @@ export function sidecarToMarkdown(sidecar: Sidecar, opts: ExportOptions): string
   const labels = { ...sidecar.colorLabels, ...opts.colorLabels }
   const link = (text: string, page: number) => (opts.pageLink ? `[${text}](${opts.pageLink(page)})` : text)
   const out: string[] = [`# ${opts.title}`]
+  if (sidecar.gist?.text) out.push(`> ${sidecar.gist.text}`)
 
   for (const h of sortHighlights(sidecar.highlights.filter((x) => !x.deleted), opts.columns)) {
     const label = labels[h.color] || h.color
