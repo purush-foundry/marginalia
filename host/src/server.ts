@@ -30,6 +30,49 @@ export interface ServerOptions {
 const MAX_BODY = 64 * 1024 * 1024
 const KEEP_ALIVE_MS = 15000
 
+interface Entry {
+  session: Session
+  pdfId: string
+  pump: Pump
+}
+
+// Drains a session's events into a queue so a later subscriber sees what an earlier one missed.
+class Pump {
+  readonly queue: HostEvent[] = []
+  done = false
+  subscriber: object | null = null
+  private waiter: (() => void) | null = null
+
+  constructor(events: AsyncIterable<HostEvent>) {
+    void this.run(events)
+  }
+
+  private async run(events: AsyncIterable<HostEvent>) {
+    try {
+      for await (const ev of events) {
+        this.queue.push(ev)
+        this.wake()
+      }
+    } catch (err) {
+      this.queue.push({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
+    this.done = true
+    this.wake()
+  }
+
+  wait(): Promise<void> {
+    return new Promise((resolve) => {
+      this.waiter = resolve
+    })
+  }
+
+  wake() {
+    const w = this.waiter
+    this.waiter = null
+    w?.()
+  }
+}
+
 class HttpError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
@@ -73,29 +116,70 @@ async function readJson<T>(req: http.IncomingMessage): Promise<T> {
 
 export function createServer(opts: ServerOptions): http.Server {
   const { runner, token, origins } = opts
-  const sessions = new Map<string, Session>()
+  const sessions = new Map<string, Entry>()
+  const byPaper = new Map<string, Entry>()
   const jobs = new Map<string, string>()
 
-  async function stream(res: http.ServerResponse, headers: Record<string, string>, events: AsyncIterable<HostEvent>, onEnd: () => void) {
+  async function streamSession(res: http.ServerResponse, headers: Record<string, string>, entry: Entry) {
     sseStart(res, headers)
     const stop = sseKeepAlive(res, KEEP_ALIVE_MS)
-    const closed = new Promise<'closed'>((resolve) => res.on('close', () => resolve('closed')))
-    const it = events[Symbol.asyncIterator]()
+    const pump = entry.pump
+    const token = {}
+    pump.subscriber = token
+    pump.wake()
+    res.on('close', () => {
+      if (pump.subscriber === token) pump.subscriber = null
+      pump.wake()
+    })
     try {
-      for (;;) {
-        const next = await Promise.race([it.next(), closed])
-        if (next === 'closed') return
-        if (next.done) break
-        sseSend(res, next.value)
+      while (pump.subscriber === token && !res.destroyed) {
+        const ev = pump.queue.shift()
+        if (ev) sseSend(res, ev)
+        else if (pump.done) {
+          dropSession(entry)
+          break
+        } else await pump.wait()
       }
-      onEnd()
-    } catch (err) {
-      sseSend(res, { type: 'error', message: err instanceof Error ? err.message : String(err) })
-      onEnd()
     } finally {
       stop()
       res.end()
     }
+  }
+
+  async function streamVerdict(res: http.ServerResponse, headers: Record<string, string>, events: AsyncIterable<HostEvent>) {
+    sseStart(res, headers)
+    const stop = sseKeepAlive(res, KEEP_ALIVE_MS)
+    const closed = new Promise<'closed'>((resolve) => res.on('close', () => resolve('closed')))
+    const it = events[Symbol.asyncIterator]()
+    let finished = false
+    try {
+      for (;;) {
+        const next = await Promise.race([it.next(), closed])
+        if (next === 'closed') return
+        if (next.done) {
+          finished = true
+          break
+        }
+        sseSend(res, next.value)
+      }
+    } catch (err) {
+      finished = true
+      sseSend(res, { type: 'error', message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      stop()
+      if (!finished) void Promise.resolve(it.return?.()).catch(() => {})
+      res.end()
+    }
+  }
+
+  function dropSession(entry: Entry) {
+    if (sessions.get(entry.session.id) === entry) sessions.delete(entry.session.id)
+    if (byPaper.get(entry.pdfId) === entry) byPaper.delete(entry.pdfId)
+  }
+
+  function closeEntry(entry: Entry) {
+    dropSession(entry)
+    entry.session.close()
   }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -131,18 +215,21 @@ export function createServer(opts: ServerOptions): http.Server {
       const body = await readJson<{ pdfId?: string; sessionId?: string; fresh?: boolean }>(req)
       if (typeof body.pdfId !== 'string') return json(400, { error: 'pdfId required' })
       if (!(await runner.paperReady(body.pdfId))) return json(404, { error: 'paper not uploaded' })
-      const session = await runner.openSession(body.pdfId, body.sessionId ?? null, body.fresh === true)
-      sessions.set(session.id, session)
+      const fresh = body.fresh === true
+      const prev = byPaper.get(body.pdfId)
+      if (prev && !fresh && body.sessionId === prev.session.id) return json(200, { sessionId: prev.session.id })
+      if (prev) closeEntry(prev)
+      const session = await runner.openSession(body.pdfId, body.sessionId ?? null, fresh)
+      const entry: Entry = { session, pdfId: body.pdfId, pump: new Pump(session.events) }
+      sessions.set(session.id, entry)
+      byPaper.set(body.pdfId, entry)
       return json(200, { sessionId: session.id })
     }
     if (parts[0] === 'sessions' && parts.length === 3) {
-      const session = sessions.get(parts[1])
-      if (!session) return json(404, { error: 'unknown session' })
-      if (method === 'GET' && parts[2] === 'events') {
-        return stream(res, cors, session.events, () => {
-          sessions.delete(session.id)
-        })
-      }
+      const entry = sessions.get(parts[1])
+      if (!entry) return json(404, { error: 'unknown session' })
+      const session = entry.session
+      if (method === 'GET' && parts[2] === 'events') return streamSession(res, cors, entry)
       if (method === 'POST' && parts[2] === 'messages') {
         const body = await readJson<MessageBody>(req)
         if (typeof body.text !== 'string') return json(400, { error: 'text required' })
@@ -166,12 +253,12 @@ export function createServer(opts: ServerOptions): http.Server {
       const pdfId = jobs.get(parts[1])
       if (pdfId === undefined) return json(404, { error: 'unknown job' })
       jobs.delete(parts[1])
-      return stream(res, cors, runner.verdict(pdfId), () => {})
+      return streamVerdict(res, cors, runner.verdict(pdfId))
     }
     return json(404, { error: 'not found' })
   }
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
       if (res.headersSent) {
         res.end()
@@ -183,4 +270,8 @@ export function createServer(opts: ServerOptions): http.Server {
       res.end(JSON.stringify({ error: message }))
     })
   })
+  server.on('close', () => {
+    for (const entry of [...sessions.values()]) closeEntry(entry)
+  })
+  return server
 }
