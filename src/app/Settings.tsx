@@ -1,5 +1,6 @@
 // Settings: Google client id and Drive session, Claude key and models, reading switches, cache, version.
 import { useEffect, useRef, useState } from 'preact/hooks'
+import { forgetHost, hostState, probeHost } from '../agent/host'
 import { checkApiKey } from '../ai/claude'
 import { authError, authState, connect, connectWithRedirect, initAuth, signOut } from '../drive/auth'
 import { clearPdfCache, library, pdfCacheBytes, syncLibrary } from '../drive/library'
@@ -237,6 +238,44 @@ function ClaudeSection() {
   )
 }
 
+function AgentHostSection() {
+  const state = hostState.value
+  const line =
+    state.status === 'off'
+      ? 'Not paired — run `npm run host` on the laptop and open the pairing link'
+      : state.status === 'unreachable'
+        ? 'Paired, not reachable'
+        : state.status === 'unauthorised'
+          ? 'Token rejected — pair again'
+          : `Connected · ${state.info.model} · skill ${state.info.skill}`
+  return (
+    <section>
+      <h2>Agent host</h2>
+      <p class="mg-muted">{line}</p>
+      <div class="mg-field">
+        <label for="mg-host-url">Host URL</label>
+        <input
+          id="mg-host-url"
+          type="text"
+          spellcheck={false}
+          value={settings.value.hostUrl}
+          onChange={(e) => void saveSettings({ hostUrl: e.currentTarget.value.trim() })}
+        />
+      </div>
+      {state.status !== 'off' && (
+        <div class="mg-actions">
+          <button type="button" class="btn" onClick={() => void probeHost(true)}>
+            Connect
+          </button>
+          <button type="button" class="btn" onClick={() => void forgetHost()}>
+            Forget
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function CacheSection() {
   const [bytes, setBytes] = useState<number | null>(null)
   const refresh = () => void pdfCacheBytes().then(setBytes, () => setBytes(null))
@@ -279,6 +318,7 @@ export function Settings(props: { onboarding?: boolean }) {
       </header>
       <DriveSection />
       <ClaudeSection />
+      <AgentHostSection />
       <section>
         <h2>Reading</h2>
         <Toggle label="Night mode" field="nightMode" />

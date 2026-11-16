@@ -50,4 +50,19 @@ describe('boot', () => {
     await act(() => boot(root))
     expect((await idbGet<{ gradingSince: number }>('settings', 'app'))!.gradingSince).toBe(42)
   })
+
+  test('a #/pair/<token> link stores the token, drops it from the URL and shows the library', async () => {
+    history.replaceState(null, '', '/#/pair/tok')
+    document.body.append(root)
+    const { boot } = await import('./boot')
+    const { route } = await import('./route')
+
+    await act(() => boot(root))
+
+    expect((await idbGet<{ hostToken: string }>('settings', 'app'))!.hostToken).toBe('tok')
+    expect(location.hash).toBe('#/')
+    expect(location.href).not.toContain('tok')
+    expect(route.value).toEqual({ kind: 'library' })
+    history.replaceState(null, '', '/')
+  })
 })

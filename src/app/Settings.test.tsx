@@ -2,6 +2,7 @@ import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { settings } from './settings'
+import { hostState } from '../agent/host'
 import { Settings } from './Settings'
 
 const root = document.createElement('div')
@@ -70,5 +71,21 @@ describe('Settings', () => {
     await act(async () => button('Paste').click())
 
     await vi.waitFor(() => expect(root.textContent).toContain('Clipboard access denied — paste manually'))
+  })
+
+  test('the Agent host section offers Connect and Forget once paired but unreachable', () => {
+    act(() => render(<Settings />, root))
+    expect(root.textContent).toContain('Not paired')
+    expect([...root.querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(false)
+
+    act(() => {
+      hostState.value = { status: 'unreachable' }
+    })
+    expect(root.textContent).toContain('Paired, not reachable')
+    expect(button('Connect')).toBeTruthy()
+    expect(button('Forget')).toBeTruthy()
+    act(() => {
+      hostState.value = { status: 'off' }
+    })
   })
 })
