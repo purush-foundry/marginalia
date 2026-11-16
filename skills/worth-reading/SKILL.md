@@ -47,17 +47,18 @@ tag only when nothing fits.
   Without them, state `venue` only if the paper itself says it; otherwise leave `venue` out.
 - Leave `year`, `venue` and `authors` out when unknown.
 - Leave `skill`, `model` and `generated` as `<filled by the app>`; the runner overwrites them.
-- The note starts with the `---` line. Nothing comes before it and no code fence wraps it.
+- Output only the note. It starts with the `---` line and ends with the last section: no preamble,
+  no code fence, no closing remarks.
 
 ## Note format
 
 ```
 ---
-verdict: read | skim | skip
-confidence: high | medium | low
+verdict: read
+confidence: high
 read_time: 45 min
-one_line: <one sentence: what the paper did and the result>
-topics: [primary-tag, second-tag]
+one_line: Trains a bimanual diffusion policy from 200 teleoperated demos and beats ACT by 18 points.
+topics: [diffusion-policy, bimanual]
 year: 2025
 venue: CoRL
 authors: Smith, Lee, Zhao
@@ -72,14 +73,22 @@ generated: <filled by the app>
 ## Where to look first
 ```
 
-Under `## Verdict` give the call and the one reason that decides it. `## What it does` is the method and
-the headline result. `## Why it matters (or doesn't) for you` ties it to the owner's work.
-`## Weak points` lists the evidence gaps. `## Where to look first` points to the pages, figures and
-tables worth opening first.
+Value rules: `verdict` is one of read, skim, skip. `confidence` is one of high, medium, low. Write one
+value only, never the alternatives. `read_time` is an integer and `min`, such as `45 min`. `one_line`
+is plain text on a single line with no colon and no leading quote or bracket. `topics` is a bracketed
+list. `authors` is a comma-separated string of surnames.
 
-## A good note
+Section shapes:
+- `## Verdict`: 2 to 3 sentences with the call and the reason that decides it.
+- `## What it does`: one short paragraph on the method and the headline result.
+- `## Why it matters (or doesn't) for you`: one short paragraph tied to the owner's work.
+- `## Weak points`: 2 to 5 bullets on evidence gaps.
+- `## Where to look first`: 3 to 5 bullets, each starting with `p. N`, naming the page, figure or table.
 
-- Uses concrete numbers: success rates, trial counts, dataset sizes, hardware.
-- Names the baselines the paper beats or fails to beat.
-- Points to pages with `p. N`.
-- Is short, plain and specific; no filler and no praise that the evidence does not support.
+## Checklist
+
+- Starts with `---`; keys in the order shown; unknown optional keys omitted.
+- One value per line; topics from the list, primary first.
+- All five headings present, in order; nothing after the last section.
+- Concrete numbers (success rates, trial counts, dataset sizes) and named baselines.
+- Every page reference is written `p. N`.
