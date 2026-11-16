@@ -152,9 +152,18 @@ Read. …two or three sentences…
 ```
 
 `skill` is the first 12 hex characters of the SHA-256 of the SKILL.md text, computed by
-whichever runner produced the note. The app compares it to the hash of the SKILL.md it was
-built with; a mismatch shows "note from an older skill" with a **Regenerate** button. Nothing
-regenerates on its own. **(call)**
+whichever runner produced the note. The current hash is the paired host's (`/status`) when
+it is reachable, else the hash of the SKILL.md the app was built with; a mismatch shows
+"note from an older skill" with a **Regenerate** button. Nothing regenerates on its own.
+**(call)**
+
+**Topic vocabulary.** The skill carries a short list of topic tags the owner maintains
+(initially: `vla`, `imitation-learning`, `diffusion-policy`, `action-chunking`, `bimanual`,
+`teleoperation`, `data-collection`, `sim2real`, `tactile`, `grasping`, `world-models`, `rl`,
+`vision`, `language`, `evaluation`, `hardware`). The note's `topics` are one to three tags
+from that list, primary first; the model may add one new tag only when nothing fits. The
+parser does not validate against the list (it is prose in the skill); the map copes with
+stray tags (§2). **(call)**
 
 **Storage and sync.** A third companion kind beside annotations and notes:
 
@@ -173,8 +182,13 @@ come for free from `library.ts`.
 
 **Trigger.** After every `syncLibrary` pass, the app lists papers that have no verdict
 companion (index) and no local verdict record, are not already queued, and have not failed
-in this app session. If the device may grade (Settings → "Grade new papers on this device",
-default on **(call)**) and a runner is available, they are graded one at a time, newest
+in this app session. Only papers that **arrived after v4 first ran** count as new: each
+device stamps `gradingSince` in its settings on first v4 boot and auto-grades papers whose
+Drive `modifiedTime` is later **(call: the owner asked for "every time I upload", and grading
+the whole back catalogue at Opus prices on day one is a cost decision, not a default)**. The
+back catalogue is graded only from Settings → **Grade N ungraded papers**, which shows the
+count first. If the device may grade (Settings → "Grade new papers on this device", default
+on **(call)**) and a runner is available, new papers are graded one at a time, newest
 `modifiedTime` first. A runner is available when the host is paired and reachable, or when an
 Anthropic key is set. Grading a paper means: `getPdfBlob` (cached or downloaded) → open with
 pdf.js → text of every page → run the skill → parse the front matter (reject and report a note
@@ -227,18 +241,30 @@ interface PaperLink extends Item {
 `builds-on`, `extends`, `baseline` are directed (from = the newer paper). `contradicts`,
 `same-problem`, `related` are symmetric and stored on the lexically smaller pdfId so each
 edge has one home. `mergeSidecars` merges `links` per item like highlights and takes the newer
-`gist`, `topics` and `pin` by their `updatedAt`. Topics have no table of their own: the topic
-list is the union of every paper's ids, hue = hash of the id, order = the deterministic greedy
-chain below. Edges to a paper no longer in the library are hidden, not deleted. No AI edges in
-v4; the model is left open (`src` can be added later).
+`gist`, `topics` and `pin` by their `updatedAt`. A paper's topics are **derived at render
+time**: `sidecar.topics` when the owner has set them, else the verdict note's `topics`;
+regenerating a note never touches the sidecar **(call)**. Topics have no table of their own:
+the topic list is the union of every paper's ids, hue = hash of the id, order = the
+deterministic greedy chain below. Edges to a paper no longer in the library are hidden, not
+deleted. No AI edges in v4; the model is left open (`src` can be added later).
+
+Existing sidecars have none of these fields, so all four stay optional and `schema` stays 1.
+A device still on v3 that edits a sidecar (every open updates the reading position) uploads
+it without the v4 fields; the v4 device merges that with its local copy, where the fields win
+by `updatedAt`, and uploads them back. The fields are lost only if no v4 device holds a local
+copy, so reload the iPad and phone apps soon after the deploy **(call: accepted window;
+README known limit)**.
 
 **Layout** (`src/map/layout.ts`, pure, ~200 lines, no dependency): topic-anchored
 Fruchterman–Reingold in a 1000×1000 map space.
 
-1. Topic anchors on a circle of radius 360 around the centre, ordered by a greedy chain
-   (adjacent topics share the most links; ties by id).
-2. Each paper's target = its primary anchor, or the 2:1-weighted mean of its anchors when it
-   has several (those papers are the bridges).
+1. Topic anchors on a circle of radius 360 around the centre, one per topic that is the
+   **primary** topic of at least one paper (so stray secondary tags never add anchors),
+   ordered by a greedy chain (adjacent topics share the most links; ties by id).
+2. Each paper's target = its primary anchor, or the 2:1-weighted mean of its anchored topics
+   when it has several (those papers are the bridges). A paper with no topics (ungraded, no
+   owner tags) has no target and feels only the centre gravity, so it floats in the middle
+   until it is graded or tagged.
 3. Start position per paper from `mulberry32(hash32(pdfId))` around its target, so adding a
    paper never moves another paper's start.
 4. Per iteration with `k = 0.9·sqrt(1000·1000 / n)`: repulsion `k²/d` between all pairs within
@@ -304,15 +330,16 @@ Paper: <title>
 <paper pages="12">
 <page n="1">…</page>
 …
-<page n="3">…with the selected passage marked <<…>>…</page>
-…
 </paper>
 ```
 
-That block is the first text block of the first user turn and carries
-`cache_control: { type: 'ephemeral' }`; the question follows as a second block, and follow-up
-turns append after it, so every follow-up reads the paper from cache (512-token minimum on the
-current models; the API version in `claude.ts` already accepts `cache_control`). The system
+That block is the first text block of the first user turn, is **identical for every thread
+on the paper** (no selection marks inside it) and carries `cache_control: { type: 'ephemeral'
+}`, so follow-ups in a thread and new threads on the same paper within five minutes all read
+the paper from cache (512-token minimum on the current models; the API version in
+`claude.ts` already accepts `cache_control`). The second block is the selection: the anchor
+page's text again with the passage marked `<<…>>` (one page, cheap), or the "not found
+verbatim" line, or the area line; then the crop image if any; then the question. The system
 prompt now says the whole paper is provided and that cross-references ("Section 5", "Eq. 3",
 "Fig. 2") should be resolved by reading that part and quoting it with its page. The status
 line becomes "Sending the whole paper (12 pages) + image". `AskPanelProps.getPageText`
@@ -329,15 +356,17 @@ selected page.
 |---|---|
 | `GET /status` | `{ version, model, skill: <hash>, auth: 'api-key' \| 'oauth-token' \| 'none', cwd }` |
 | `PUT /papers/:pdfId` | Body: `{ name, title, pages: [{ n, text }], pdf: <base64> }` → writes `~/.marginalia/papers/<pdfId>/paper.pdf`, `paper.txt` (page-tagged), `meta.json` |
-| `POST /sessions` | `{ pdfId, fresh?: boolean }` → `{ sessionId }`; resumes the paper's stored SDK session unless `fresh` |
+| `POST /sessions` | `{ pdfId, sessionId?: string, fresh?: boolean }` → `{ sessionId }`; resumes the given SDK session, else the paper's stored one, unless `fresh` |
 | `GET /sessions/:id/events` | SSE stream of the events below |
 | `POST /sessions/:id/messages` | `{ text, quote?: { text, page }, image?: <base64 png> }` → queued into the session's input stream |
 | `POST /sessions/:id/interrupt` | `query.interrupt()` |
 | `POST /verdicts` | `{ pdfId }` → `{ jobId }`; `GET /verdicts/:jobId/events` streams the run and ends with `{ type: 'note', markdown }` |
 
-Every request needs `Authorization: Bearer <token>`; the token is random per host start
-(or fixed with `--token`), printed as `https://purush-foundry.github.io/marginalia/#/pair/<token>`
-(`--app <origin>` for the dev server). CORS allows only the app's origins (the deployed site
+Every request needs `Authorization: Bearer <token>`; the token is generated on the first
+start, kept in `~/.marginalia/host-token` (mode 0600) and reused, so pairing happens once
+(`--token` overrides, `--new-token` rotates) **(call)**. It is printed as
+`https://purush-foundry.github.io/marginalia/#/pair/<token>` (`--app <origin>` for the dev
+server). A 401 puts the app's host state at `unauthorised` ("Token rejected — pair again"). CORS allows only the app's origins (the deployed site
 and `http://localhost:5173`); the bearer header makes every request preflighted, so a page on
 any other origin cannot drive the host. Chrome asks once for the "loopback network" permission;
 the app's first probe runs from a click (Settings → Connect, or the toolbar Agent button) with
@@ -349,14 +378,20 @@ the panel is open; `interrupt`, `setModel` need streaming mode):
 - `cwd`: `~/.marginalia/papers/<pdfId>/`; `settingSources: []` so the owner's global CLAUDE.md
   and skills do not leak in; `plugins: [{ type: 'local', path: <repo root> }]` for the skill.
 - `systemPrompt: { type: 'preset', preset: 'claude_code', append }` where the append says: you
-  are inside Marginalia; the paper's text is `paper.txt` (page-tagged) and the original is
-  `paper.pdf`; read `paper.txt` in full before answering about the paper; quote as
-  `"words" (p. N)` so the app can jump there; the user's other folders under `$HOME` are
-  readable; web search and fetch are allowed; write only inside this folder.
+  are inside Marginalia; the whole paper was given in the first message, page-tagged; the
+  same text is in `paper.txt` and the original PDF in `paper.pdf` for Grep or a second look;
+  quote as `"words" (p. N)` so the app can jump there; the user's other folders under `$HOME`
+  are readable except private configuration; web search and fetch are allowed; write only
+  inside this folder.
 - `tools: ['Read','Glob','Grep','WebSearch','WebFetch','Write','Edit','Skill']` plus `Bash`
   only with `--allow-bash`; `allowedTools` pre-approves the read and web tools by bare name;
-  a `PreToolUse` hook denies `Write|Edit|NotebookEdit|Bash` outside the paper folder, and
-  `canUseTool` denies anything that reaches it, so the terminal never shows a permission
+  one `PreToolUse` hook is the fence: it denies `Write|Edit|NotebookEdit|Bash` outside the
+  paper folder **and denies `Read|Glob|Grep` on private paths** (`~/.ssh`, `~/.aws`,
+  `~/.gnupg`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.config/gcloud`,
+  `~/.config/marginalia`, `~/.claude`, `~/.claude.json`, `~/.marginalia/host-token`,
+  `~/.marginalia/sessions.json`, any path segment `.env`, any file ending `.pem` or `.key`),
+  so a paper carrying injected instructions cannot read a key and put it in a fetch URL;
+  `canUseTool` denies anything else that reaches it, so the terminal never shows a permission
   prompt. **(call)**
 - `model: 'claude-opus-5-5'` (the SDK default when unset), `effort: 'medium'`,
   `includePartialMessages: true`, `maxTurns: 40`, `maxBudgetUsd: 2` per turn batch **(call)**.
@@ -412,22 +447,30 @@ running turn, `/clear` starts a fresh session, `/model opus|sonnet|haiku` switch
 re-sends the paper, `/help` lists these. Tool lines collapse to one `⎿` summary; clicking
 expands the input. Assistant text renders through the existing Markdown renderer so
 `"quote" (p. N)` citations stay clickable and jump the paper. The current selection, if any,
-is offered as a chip above the prompt ("Attach: “…” p. 3") and sent as `quote`. Each turn's
-user text and final assistant text are saved into the sidecar as a `Thread` with
-`anchor: { page: 0, boxes: [] }` (the whole paper) and `model: 'agent'`, so the Threads tab
-lists agent conversations ("Whole paper · agent") and they sync; tool lines live only in the
-host's session. Below 700 px the panel is the usual bottom sheet.
+is offered as a chip above the prompt ("Attach: “…” p. 3") and sent as `quote`. One
+`Thread` per host session: `anchor: { page: 0, boxes: [] }` (the whole paper), `model:
+'agent'`, and a new optional `session` field holding the SDK session id; each turn's user
+text and final assistant text are appended to it, so the Threads tab lists agent
+conversations ("Whole paper · agent") and they sync. Reopening the panel re-renders the
+Thread's turns (no tool lines; those live only in the host's session) and resumes its
+session by id; `/clear` starts a new Thread and a fresh session. On a device without a host
+(iPad, phone), opening an agent thread shows the same transcript read-only with the prompt
+replaced by "Pair the agent host on the laptop to continue". Below 700 px the panel is the
+usual bottom sheet.
 
 **Pairing and status.** Route `#/pair/<token>` stores `{ hostUrl: 'http://127.0.0.1:7700',
 hostToken }` in settings, replaces the hash, shows a toast. Settings → **Agent host** section:
-status line (Not paired / Paired, not reachable / Connected, model, skill hash), a
-**Connect** button (the user-gesture probe), **Forget**. A `hostState` signal
-(`'off' | 'unreachable' | 'ready'`) drives the toolbar button, the verdict runner choice, and
-the Settings line; the app re-probes on focus and every 60 s while `ready`.
+status line (Not paired / Paired, not reachable / Token rejected — pair again / Connected,
+model, skill hash), a **Connect** button (the user-gesture probe), **Forget**. A `hostState`
+signal (`'off' | 'unreachable' | 'unauthorised' | 'ready'`) drives the toolbar button, the
+verdict runner choice, and the Settings line; the app re-probes on focus and every 60 s while
+`ready`.
 
 ### 4. Settings and config additions
 
-- `AppSettings`: `hostUrl`, `hostToken`, `gradeOnThisDevice`.
+- `AppSettings`: `hostUrl`, `hostToken`, `gradeOnThisDevice`, `gradingSince` (ms, stamped on
+  the first v4 boot of the device).
+- `Thread.session?: string` in `src/types.ts`.
 - `config.ts`: `VERDICT_SUFFIX = '.worth-reading.md'`, `HOST_DEFAULT_URL`, `PAPER_CONTEXT_MAX_CHARS`.
 - `.env.example` is not used by this app; the host documents `ANTHROPIC_API_KEY` /
   `CLAUDE_CODE_OAUTH_TOKEN` in `host/README.md` and reads them from its environment or from
