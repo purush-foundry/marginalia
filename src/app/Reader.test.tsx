@@ -63,6 +63,7 @@ const doc = {
     ],
     text: '',
   })),
+  getAllText: vi.fn(async () => []),
   getLinks: vi.fn(async () => []),
   renderCrop: vi.fn(),
   destroy: vi.fn(),

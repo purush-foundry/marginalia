@@ -75,6 +75,14 @@ describe('openPdf on attention.pdf', () => {
     expect(a.text).toContain('Introduction')
   })
 
+  it('getAllText returns every page once', async () => {
+    const all = await doc.getAllText()
+    expect(all).toHaveLength(15)
+    expect(all.map((t) => t.page)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
+    expect(await doc.getAllText()).toBe(all)
+    expect(await doc.getPageText(4)).toBe(all[3])
+  })
+
   it('returns a page proxy', async () => {
     const page = await doc.getPage(3)
     expect(page.pageNumber).toBe(3)

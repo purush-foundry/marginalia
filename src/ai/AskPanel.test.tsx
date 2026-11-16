@@ -13,6 +13,8 @@ const pageText: PageText = {
   text: 'Intro words here. We call our particular attention Scaled Dot-Product Attention. More words.',
 }
 
+const page1: PageText = { page: 1, lines: [], columns: [], text: 'Abstract words.' }
+
 function thread(anchor: Anchor): Thread {
   return { id: 't1', kind: 'thread', createdAt: 1, updatedAt: 1, anchor, model: '', messages: [] }
 }
@@ -45,7 +47,7 @@ function mount(over: Partial<AskPanelProps> = {}) {
     apiKey: 'sk-ant-test',
     textModel: 'claude-haiku-5-5',
     visionModel: 'claude-opus-5-5',
-    getPageText: vi.fn(async () => pageText),
+    getPaperText: vi.fn(async () => [page1, pageText]),
     getCrop: vi.fn(async () => ({ mediaType: 'image/png' as const, dataBase64: 'iVBORw0KGgo=' })),
     onThreadChange: vi.fn(),
     onCite: vi.fn(),
@@ -97,10 +99,11 @@ describe('AskPanel', () => {
     button('Explain').click()
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
-    await vi.waitFor(() => expect(root.textContent).toContain('Sending 13 words from p.3'))
-    expect(root.textContent).not.toContain('(+ image)')
+    await vi.waitFor(() => expect(root.textContent).toContain('Sending the whole paper (2 pages)'))
+    expect(root.textContent).not.toContain('+ image')
     const body = requestBody(fetchMock)
     expect(body.model).toBe('claude-haiku-5-5')
+    expect(body.messages[0].content[0].text).toContain('<paper pages="2">')
     expect(JSON.stringify(body.messages)).toContain('Explain the selected passage in plain terms.')
 
     release(okResponse(sseAnswer(['It is ', '"Scaled Dot-Product Attention" (p. 3).'])))
@@ -108,7 +111,7 @@ describe('AskPanel', () => {
     await vi.waitFor(() => expect(root.querySelector('button.cite')).not.toBeNull())
     root.querySelector<HTMLButtonElement>('button.cite')!.click()
     expect(props.onCite).toHaveBeenCalledWith(3, 'Scaled Dot-Product Attention')
-    expect(root.textContent).not.toContain('Sending 13 words')
+    expect(root.textContent).not.toContain('Sending the whole paper')
 
     await vi.waitFor(() => expect(props.onThreadChange).toHaveBeenCalledOnce())
     const saved = (props.onThreadChange as ReturnType<typeof vi.fn>).mock.calls[0][0] as Thread

@@ -826,7 +826,7 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               apiKey={s.anthropicApiKey}
               textModel={s.textModel}
               visionModel={s.visionModel}
-              getPageText={(p) => doc.getPageText(p)}
+              getPaperText={() => doc.getAllText()}
               getCrop={(p, b) => cropBase64(doc, p, b)}
               onThreadChange={store.upsertThread}
               onCite={onCite}

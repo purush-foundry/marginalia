@@ -27,6 +27,8 @@ export interface PdfDoc {
   getPage(page: number): Promise<PDFPageProxy>
   getOutline(): Promise<OutlineItem[]>
   getPageText(page: number): Promise<PageText>
+  /** Text of every page in order, loaded once and shared. */
+  getAllText(): Promise<PageText[]>
   getLinks(page: number): Promise<PageLink[]>
   renderCrop(page: number, box: Box, maxEdgePx: number): Promise<{ blob: Blob; mediaType: 'image/png' }>
   destroy(): void
@@ -128,6 +130,7 @@ export async function openPdf(data: ArrayBuffer | Blob): Promise<PdfDoc> {
   const [views, title] = await Promise.all([pageViews(pdf), readTitle(pdf)])
   const texts = new Map<number, Promise<PageText>>()
   const links = new Map<number, Promise<PageLink[]>>()
+  let allText: Promise<PageText[]> | null = null
 
   const size = (n: number) => {
     const [x0, y0, x1, y1] = views[n - 1]
@@ -143,6 +146,21 @@ export async function openPdf(data: ArrayBuffer | Blob): Promise<PdfDoc> {
       })),
     )
 
+  const getPageText = (n: number): Promise<PageText> =>
+    memo(texts, n, async () => {
+      const page = await pdf.getPage(n)
+      const [x0, y0] = views[n - 1]
+      const { w, h } = size(n)
+      const content = await page.getTextContent()
+      const items = content.items
+        .filter((i): i is TextItem => 'str' in i)
+        .map((i) => {
+          const [a, b, c, d, e, f] = i.transform as number[]
+          return { ...i, transform: [a, b, c, d, e - x0, f - y0] }
+        })
+      return buildPageText(n, items, w, h)
+    })
+
   return {
     numPages: pdf.numPages,
     title,
@@ -152,20 +170,17 @@ export async function openPdf(data: ArrayBuffer | Blob): Promise<PdfDoc> {
       const raw = (await pdf.getOutline()) as RawOutline[] | null
       return raw ? mapOutline(raw) : []
     },
-    getPageText: (n) =>
-      memo(texts, n, async () => {
-        const page = await pdf.getPage(n)
-        const [x0, y0] = views[n - 1]
-        const { w, h } = size(n)
-        const content = await page.getTextContent()
-        const items = content.items
-          .filter((i): i is TextItem => 'str' in i)
-          .map((i) => {
-            const [a, b, c, d, e, f] = i.transform as number[]
-            return { ...i, transform: [a, b, c, d, e - x0, f - y0] }
-          })
-        return buildPageText(n, items, w, h)
-      }),
+    getPageText,
+    getAllText() {
+      if (!allText) {
+        const all = Promise.all(Array.from({ length: pdf.numPages }, (_, i) => getPageText(i + 1)))
+        allText = all
+        all.catch(() => {
+          if (allText === all) allText = null
+        })
+      }
+      return allText
+    },
     getLinks: (n) =>
       memo(links, n, async () => {
         const page = await pdf.getPage(n)

@@ -17,6 +17,7 @@ const doc: PdfDoc = {
   getPage: () => new Promise(() => {}),
   getOutline: async () => [],
   getPageText: async (page) => ({ page, lines: [], columns: [], text: '' }),
+  getAllText: async () => [],
   getLinks: async () => [],
   renderCrop: () => Promise.reject(new Error('no canvas')),
   destroy() {},
