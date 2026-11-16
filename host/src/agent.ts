@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { query, type CanUseTool, type HookCallback, type HookJSONOutput, type Options, type PreToolUseHookInput, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createNormalizer, type SdkMsg } from './events'
-import { denyAll, fenceHook, insideDir, resolveToolPath } from './fence'
+import { denyAll, fenceHook, writeAllowed } from './fence'
 import { paperDir, readSessions, writeSession } from './papers'
 import type { HostEvent, MessageBody, StatusResponse } from './protocol'
 import type { Runner, Session } from './server'
@@ -29,7 +29,7 @@ export interface AgentSession extends Session {
 export function marginaliaAppend(readDirs: string[]): string {
   const folders =
     readDirs.length > 0
-      ? `The folders the host was started with are readable: ${readDirs.join(', ')}; everything else, including private configuration, is off limits.`
+      ? `The folders the host was started with can be listed with Glob and read with Read, not searched with Grep: ${readDirs.join(', ')}; everything else, including private configuration, is off limits.`
       : 'No folders besides this one are readable; private configuration is off limits.'
   return `You are the paper agent inside Marginalia, the user's paper reader. The whole paper was given to you in the first message, page-tagged with <page n="…"> blocks; the same text is in paper.txt and the original PDF in paper.pdf in your working directory, for Grep or a second look. When you quote the paper, write "quoted words" (p. N) so the app can jump to the page. Resolve cross-references ("Section 5", "Eq. 3", "Fig. 2") by reading that part of the paper. ${folders} Web search and web fetch are allowed. Write only inside this folder. Answer in plain Markdown: short paragraphs, lists, bold, code; no tables.`
 }
@@ -38,7 +38,7 @@ export const ENDED_MESSAGE = 'The agent session has ended; use /clear to start a
 
 const PAPER_LEAD = 'The paper above is the one we are discussing.'
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit'])
-const FENCED_TOOLS = 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash'
+const UNFENCED_TOOLS = new Set(['WebSearch', 'WebFetch', 'Skill'])
 const HOOK_TIMEOUT_S = 30
 
 type UserContent = SDKUserMessage['message']['content']
@@ -117,22 +117,20 @@ export function createRunner(opts: AgentOptions): Runner {
   const { root, repoDir, model, effort, allowBash, readDirs } = opts
   const home = os.homedir()
   const append = marginaliaAppend(readDirs)
-  const fenceDirs = [path.join(repoDir, 'skills'), ...readDirs]
+  const skillsDir = path.join(repoDir, 'skills')
   const readPaper = (pdfId: string) => readFile(path.join(paperDir(root, pdfId), 'paper.txt'), 'utf8')
 
   function options(dir: string, write: boolean): Options {
     const extra = allowBash ? ['Bash'] : []
-    const fence = fenceHook(dir, home, fenceDirs)
+    const fence = fenceHook(dir, home, readDirs, [skillsDir])
     const hook: HookCallback = async (input) => {
       const pre = input as PreToolUseHookInput
-      if (allowBash && pre.tool_name === 'Bash') return {}
+      if (UNFENCED_TOOLS.has(pre.tool_name) || (allowBash && pre.tool_name === 'Bash')) return {}
       return (await fence({ tool_name: pre.tool_name, tool_input: (pre.tool_input ?? {}) as Record<string, unknown> })) as HookJSONOutput
     }
     const canUseTool: CanUseTool = async (name, input) => {
-      const file = input.file_path ?? input.notebook_path
-      if (write && WRITE_TOOLS.has(name) && typeof file === 'string' && file !== '') {
-        const [target, realDir] = await Promise.all([resolveToolPath(file, dir, home), resolveToolPath(dir, dir, home)])
-        if (insideDir(target, realDir)) return { behavior: 'allow', updatedInput: input }
+      if (write && WRITE_TOOLS.has(name) && (await writeAllowed(input.file_path ?? input.notebook_path, dir, home))) {
+        return { behavior: 'allow', updatedInput: input }
       }
       return denyAll(name)
     }
@@ -143,7 +141,7 @@ export function createRunner(opts: AgentOptions): Runner {
       systemPrompt: { type: 'preset', preset: 'claude_code', append },
       tools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', ...(write ? ['Write', 'Edit'] : []), 'Skill', ...extra],
       allowedTools: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', ...extra],
-      hooks: { PreToolUse: [{ matcher: FENCED_TOOLS, hooks: [hook], timeout: HOOK_TIMEOUT_S, onFailure: 'block' }] },
+      hooks: { PreToolUse: [{ hooks: [hook], timeout: HOOK_TIMEOUT_S, onFailure: 'block' }] },
       canUseTool,
       permissionMode: 'default',
       model,

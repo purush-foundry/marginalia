@@ -48,7 +48,9 @@ The agent works in the paper's folder under `~/.marginalia/papers/`. It writes o
 
 It reads only from an allowlist: the paper's folder, the repo's `skills/` folder, and the owner folders the host was started with. Owner folders come from the `--read <dir>` flags; without any, from `MARGINALIA_READ_DIRS` (colon-separated, also accepted in `host.env`); without that, from `~/Documents`, `~/Desktop` and `~/ToRead`, keeping those that exist. The host prints the list on start. Everything else is unreadable. Inside allowed folders, private paths stay denied: `~/.ssh`, `~/.aws`, `~/.config/marginalia`, `.env` files, `.pem` and `.key` files and similar.
 
-If the fence check fails or times out, the tool call is blocked.
+Grep searches only the paper's folder and `skills/`. Owner folders are reached with Glob and Read, and each Read is checked against the private paths, including through symlinks. Paths are trimmed of surrounding whitespace before they are checked, as the agent's tools do.
+
+Every tool call goes through the fence. Web search, web fetch and skills pass; any other tool the fence does not know is denied. If the fence check fails or times out, the tool call is blocked.
 
 ## Bash
 

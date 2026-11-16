@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -99,11 +99,12 @@ describe('openSession', () => {
     expect(o.settingSources).toEqual([])
     expect(o.tools).toEqual(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Write', 'Edit', 'Skill'])
     expect(o.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill'])
-    expect(o.hooks.PreToolUse[0]).toMatchObject({ matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash', onFailure: 'block' })
+    expect(o.hooks.PreToolUse[0]).toMatchObject({ onFailure: 'block' })
+    expect(o.hooks.PreToolUse[0].matcher).toBeUndefined()
     expect(o.hooks.PreToolUse[0].timeout).toBeGreaterThan(0)
     expect(o.systemPrompt).toMatchObject({ type: 'preset', preset: 'claude_code' })
     expect(o.systemPrompt.append).toContain('paper agent inside Marginalia')
-    expect(o.systemPrompt.append).toContain('The folders the host was started with are readable: /data/papers;')
+    expect(o.systemPrompt.append).toContain('The folders the host was started with can be listed with Glob and read with Read, not searched with Grep: /data/papers;')
     expect(o).toMatchObject({ permissionMode: 'default', model: 'claude-opus-5-5', effort: 'medium', includePartialMessages: true, maxTurns: 40, maxBudgetUsd: 2 })
     expect(o.resume).toBe('abc')
     expect(session.id).toBe('abc')
@@ -143,6 +144,22 @@ describe('openSession', () => {
     expect(await read(path.join(owner, 'a.pdf'))).toEqual({})
     expect(await read(path.join(repoDir, 'skills', 'worth-reading', 'SKILL.md'))).toEqual({})
     expect((await read(path.join(repoDir, 'package.json'))).hookSpecificOutput.permissionDecision).toBe('deny')
+    const grep = (p: string) => hook({ hook_event_name: 'PreToolUse', tool_name: 'Grep', tool_input: { path: p, pattern: 'x' } }, 't', { signal })
+    expect(await grep(path.join(repoDir, 'skills'))).toEqual({})
+    expect((await grep(owner)).hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  it('runs every tool through the hook and denies the ones it does not know', async () => {
+    ;(await createRunner(opts).openSession('p1', null, false)).close()
+    const hook = sdk.state.calls[0].options.hooks.PreToolUse[0].hooks[0]
+    const signal = new AbortController().signal
+    const run = (tool_name: string, tool_input: Record<string, unknown>) => hook({ hook_event_name: 'PreToolUse', tool_name, tool_input }, 't', { signal })
+    for (const [name, input] of [['WebSearch', { query: 'x' }], ['WebFetch', { url: 'https://x', prompt: 'x' }], ['Skill', { skill: 'marginalia:worth-reading' }]] as const) {
+      expect(await run(name, input), name).toEqual({})
+    }
+    for (const [name, input] of [['MultiEdit', { file_path: '~/x' }], ['Task', { prompt: 'x' }], ['mcp__x__y', {}], ['TodoWrite', { todos: [] }]] as const) {
+      expect((await run(name, input)).hookSpecificOutput.permissionDecision, name).toBe('deny')
+    }
   })
 
   it('resumes the stored session id and omits it when fresh', async () => {
@@ -238,6 +255,31 @@ describe('openSession', () => {
     expect((await canUseTool('WebFetch', { url: 'https://x' }, { signal })).behavior).toBe('deny')
     const out = await hooks.PreToolUse[0].hooks[0]({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/tmp/x.md' } }, 't1', { signal })
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  it('agrees with the hook on padded and symlinked write paths', async () => {
+    const dir = paperDir(root, 'p1')
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'mg-agent-outside-'))
+    await symlink(outside, path.join(dir, 'out'))
+    ;(await createRunner(opts).openSession('p1', null, false)).close()
+    const { canUseTool, hooks } = sdk.state.calls[0].options
+    const signal = new AbortController().signal
+    const cases: Array<[string, Record<string, unknown>, boolean]> = [
+      ['Write', { file_path: ` ${os.homedir()}/.bashrc` }, false],
+      ['Edit', { file_path: ' ~/.zshrc' }, false],
+      ['Write', { file_path: '\t~/.bashrc\r\n' }, false],
+      ['Write', { file_path: '   ' }, false],
+      ['Write', { file_path: 'out/x.md' }, false],
+      ['Write', { file_path: ` ${dir}/../x.md` }, false],
+      ['Write', { file_path: ' notes.md\n' }, true],
+      ['Edit', { file_path: `\t${dir}/notes.md` }, true],
+    ]
+    for (const [name, input, allowed] of cases) {
+      const label = `${name} ${JSON.stringify(input)}`
+      expect((await canUseTool(name, input, { signal })).behavior, label).toBe(allowed ? 'allow' : 'deny')
+      const out = await hooks.PreToolUse[0].hooks[0]({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input }, 't', { signal })
+      expect(out.hookSpecificOutput?.permissionDecision === 'deny', label).toBe(!allowed)
+    }
   })
 })
 

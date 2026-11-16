@@ -39,10 +39,33 @@ async function realpathLoose(p: string): Promise<string> {
   }
 }
 
-// Expands ~, resolves against paperDir and follows symlinks of the nearest existing ancestor.
+// Trims like the CLI, expands ~ and ~/, and resolves against paperDir without following symlinks.
+function expandToolPath(raw: string, paperDir: string, home: string): string {
+  const p = raw.trim()
+  const expanded = p === '~' ? home : p.startsWith('~/') ? path.join(home, p.slice(2)) : p
+  return path.resolve(paperDir, expanded)
+}
+
+// Trims, expands ~, resolves against paperDir and follows symlinks of the nearest existing ancestor.
 export async function resolveToolPath(raw: string, paperDir: string, home: string): Promise<string> {
-  const expanded = raw === '~' ? home : raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw
-  return realpathLoose(path.resolve(paperDir, expanded))
+  return realpathLoose(expandToolPath(raw, paperDir, home))
+}
+
+const plainPath = (raw: unknown): raw is string => typeof raw === 'string' && raw.trim() !== '' && !raw.includes('://')
+
+// True when a tool write to `raw` lands inside paperDir once trimmed, expanded and symlink-resolved.
+export async function writeAllowed(raw: unknown, paperDir: string, home: string): Promise<boolean> {
+  if (!plainPath(raw)) return false
+  const [target, realPaper] = await Promise.all([resolveToolPath(raw, paperDir, home), resolveToolPath(paperDir, paperDir, home)])
+  return insideDir(target, realPaper)
+}
+
+// True when the lexical or resolved path is private, or the resolved path lies in a resolved private location.
+async function privateTarget(lexical: string, target: string, home: string): Promise<boolean> {
+  const realHome = await realpathLoose(path.resolve(home))
+  if (isPrivatePath(lexical, home) || isPrivatePath(lexical, realHome) || isPrivatePath(target, realHome)) return true
+  const locations = await Promise.all([...PRIVATE_DIRS, ...PRIVATE_FILES].map((p) => realpathLoose(path.join(realHome, p))))
+  return locations.some((l) => insideDir(target, l))
 }
 
 type HookInput = { tool_name: string; tool_input: Record<string, unknown> }
@@ -54,29 +77,27 @@ const deny = (reason: string) => ({
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 const SEARCH_TOOLS = new Set(['Glob', 'Grep'])
 
-// PreToolUse hook: writes stay in paperDir, reads stay in paperDir or readDirs minus private paths, unknown tools are denied.
-export function fenceHook(paperDir: string, home: string, readDirs: string[] = []): (input: HookInput) => Promise<Record<string, unknown>> {
+// PreToolUse hook: writes stay in paperDir; Read and Glob reach paperDir, readDirs and grepDirs, Grep only paperDir and grepDirs, minus private paths; unknown tools are denied.
+export function fenceHook(paperDir: string, home: string, readDirs: string[] = [], grepDirs: string[] = []): (input: HookInput) => Promise<Record<string, unknown>> {
   return async ({ tool_name, tool_input }) => {
-    const realHome = await resolveToolPath(home, paperDir, home)
-    const realPaper = await resolveToolPath(paperDir, paperDir, home)
     if (WRITE_TOOLS.has(tool_name)) {
-      const raw = tool_input.file_path ?? tool_input.notebook_path
-      if (typeof raw !== 'string' || raw === '' || raw.includes('://')) return deny('Writes need a plain file path')
-      const target = await resolveToolPath(raw, paperDir, home)
-      return insideDir(target, realPaper) ? {} : deny('Writes are limited to the paper folder')
+      const allowed = await writeAllowed(tool_input.file_path ?? tool_input.notebook_path, paperDir, home)
+      return allowed ? {} : deny('Writes are limited to the paper folder')
     }
     if (tool_name === 'Read' || SEARCH_TOOLS.has(tool_name)) {
       const raw = tool_name === 'Read' ? tool_input.file_path : (tool_input.path ?? paperDir)
-      if (typeof raw !== 'string' || raw === '' || raw.includes('://')) return deny('Reads need a plain path')
-      if (SEARCH_TOOLS.has(tool_name)) {
-        const pattern = tool_input.pattern
-        if (typeof pattern === 'string' && (path.isAbsolute(pattern) || pattern.startsWith('~'))) return deny('Search patterns must be relative')
-        if (tool_name === 'Glob' && typeof pattern === 'string' && pattern.split(/[\\/]/).includes('..')) return deny('Search patterns must stay inside the search root')
+      if (!plainPath(raw)) return deny('Reads need a plain path')
+      if (SEARCH_TOOLS.has(tool_name) && typeof tool_input.pattern === 'string') {
+        const pattern = tool_input.pattern.trim()
+        if (path.isAbsolute(pattern) || pattern.startsWith('~')) return deny('Search patterns must be relative')
+        if (tool_name === 'Glob' && pattern.split(/[\\/]/).includes('..')) return deny('Search patterns must stay inside the search root')
       }
-      const target = await resolveToolPath(raw, paperDir, home)
-      const roots = [realPaper, ...(await Promise.all(readDirs.map((d) => resolveToolPath(d, paperDir, home))))]
+      const lexical = expandToolPath(raw, paperDir, home)
+      const target = await realpathLoose(lexical)
+      const dirs = [paperDir, ...grepDirs, ...(tool_name === 'Grep' ? [] : readDirs)]
+      const roots = await Promise.all(dirs.map((d) => resolveToolPath(d, paperDir, home)))
       if (!roots.some((r) => insideDir(target, r))) return deny('That path is outside the allowed folders')
-      if (isPrivatePath(target, realHome)) return deny('That path is private')
+      if (await privateTarget(lexical, target, home)) return deny('That path is private')
       return {}
     }
     return deny(`${tool_name} is not allowed`)
