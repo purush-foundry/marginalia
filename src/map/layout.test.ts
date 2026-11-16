@@ -35,17 +35,11 @@ describe('layout', () => {
     expect(layout(fixture())).toEqual(layout(fixture()))
   })
 
-  it('adding a node keeps every other start direction', () => {
-    const nodes = Array.from({ length: 20 }, (_, i) => node(`u${i}`, []))
-    const g: MapGraph = { nodes, edges: [], topics: [] }
+  it('adding a node moves no other start position', () => {
+    const g = fixture()
     const before = layout(g, { iterations: 0 })
-    const after = layout({ ...g, nodes: [...nodes, node('zz', [])] }, { iterations: 0 })
-    const c = MAP_SIZE / 2
-    for (const n of nodes) {
-      const p = before[n.pdfId]
-      const q = after[n.pdfId]
-      expect(Math.atan2(q.y - c, q.x - c)).toBeCloseTo(Math.atan2(p.y - c, p.x - c), 2)
-    }
+    const after = layout({ ...g, nodes: [...g.nodes, node('zz', ['alpha'])] }, { iterations: 0 })
+    for (const n of g.nodes) expect(after[n.pdfId]).toEqual(before[n.pdfId])
   })
 
   it('pins a node exactly', () => {
@@ -87,12 +81,18 @@ describe('layout', () => {
     expect(a.q.y).toBeCloseTo(MAP_SIZE / 2 + 0.36 * MAP_SIZE)
   })
 
-  it('an untagged paper linked to both topics ends near the centre', () => {
+  it('an untagged paper with no edges ends near the centre', () => {
     const g = fixture()
     g.nodes.push(node('lone', []))
-    for (const n of g.nodes.slice(0, 20)) g.edges.push({ id: `l-${n.pdfId}`, from: 'lone', to: n.pdfId, rel: 'related' })
     const p = layout(g).lone
     expect(dist(p, { x: MAP_SIZE / 2, y: MAP_SIZE / 2 })).toBeLessThan(MAP_SIZE / 4)
+  })
+
+  it('tagged papers stay near their primary anchor', () => {
+    const g = fixture()
+    const ring = anchors(anchoredTopics(g))
+    const pos = layout(g)
+    for (const n of g.nodes) expect(dist(pos[n.pdfId], ring[n.topics[0]])).toBeLessThan(0.3 * MAP_SIZE)
   })
 
   it('a warm start barely moves a settled layout', () => {

@@ -7,15 +7,16 @@ type Pt = { x: number; y: number }
 
 const RING_RADIUS = 0.36
 const K_SCALE = 0.9
+const K_CAP = 0.06
 const REPULSION_RANGE = 2
-const TOPIC_GRAVITY = 0.08
-const CENTRE_GRAVITY = 0.01
+const TOPIC_GRAVITY = 0.3
+const CENTRE_GRAVITY = 0.05
 const DEFAULT_ITERATIONS = 200
 const WARM_ITERATIONS = 40
 const COOL_ITERATIONS = 120
 const START_TEMP_FRACTION = 0.1
 const END_TEMP_DIVISOR = 8
-const START_SPREAD = 0.5
+const START_SPREAD = 0.12
 const MARGIN = 10
 const EPSILON = 1e-6
 const SECONDARY_WEIGHT = 2
@@ -81,7 +82,7 @@ export function layout(graph: MapGraph, opts: LayoutOptions = {}): Positions {
   const nodes = [...graph.nodes].sort((a, b) => (a.pdfId < b.pdfId ? -1 : a.pdfId > b.pdfId ? 1 : 0))
   const n = nodes.length
   if (n === 0) return {}
-  const k = K_SCALE * Math.sqrt((size * size) / n)
+  const k = Math.min(K_SCALE * Math.sqrt((size * size) / n), K_CAP * size)
   const centre: Pt = { x: size / 2, y: size / 2 }
   const ring = anchors(anchoredTopics(graph), size)
   const lo = MARGIN
@@ -100,14 +101,10 @@ export function layout(graph: MapGraph, opts: LayoutOptions = {}): Positions {
     return { x: (SECONDARY_WEIGHT * hit[0].x + mx) / w, y: (SECONDARY_WEIGHT * hit[0].y + my) / w }
   })
 
-  const topicCount = new Map<string, number>()
-  for (const nd of nodes) if (nd.topics[0]) topicCount.set(nd.topics[0], (topicCount.get(nd.topics[0]) ?? 0) + 1)
-
   const rngs = nodes.map(nd => mulberry32(hash32(nd.pdfId)))
   const pos: Pt[] = nodes.map((nd, i) => {
     const rng = rngs[i]
-    const nTopic = targets[i] ? (topicCount.get(nd.topics[0]) ?? 1) : 1
-    const r = rng() * START_SPREAD * k * Math.sqrt(nTopic)
+    const r = rng() * START_SPREAD * size
     const theta = rng() * 2 * Math.PI
     const base = targets[i] ?? centre
     const start = { x: base.x + r * Math.cos(theta), y: base.y + r * Math.sin(theta) }
