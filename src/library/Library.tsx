@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { authState } from '../drive/auth'
 import { childrenOf, isCached, library, loadSidecar, pathTo, sidecarRevision, syncLibrary, syncState } from '../drive/library'
 import { Icon } from '../app/icons'
-import { folderHash, paperHash } from '../app/route'
+import { folderHash, mapHash, paperHash } from '../app/route'
 import { connectDrive, formatBytes } from '../app/Settings'
 import { settingsOpen } from '../app/ui'
 import type { ReadStatus } from '../types'
@@ -38,6 +38,9 @@ function SyncHeader() {
           Reconnect Drive
         </button>
       )}
+      <a class="btn" href={mapHash} aria-label="Map">
+        <Icon name="map" />
+      </a>
       <button
         type="button"
         class="btn"

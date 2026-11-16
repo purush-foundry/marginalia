@@ -1,10 +1,11 @@
-// App shell: onboarding, library or reader by route, settings sheet, toast, theme and root gesture hooks.
+// App shell: onboarding, library, map or reader by route, settings sheet, toast, theme and root gesture hooks.
 import { signal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
 import { authState, maybeRenew } from '../drive/auth'
 import { library, startAutoSync } from '../drive/library'
 import { fingerDraws, nightInk } from '../ink/tools'
 import { Library } from '../library/Library'
+import { MapView } from '../map/MapView'
 import { Onboarding } from './Onboarding'
 import { applyUpdate, updateReady } from './pwa'
 import { route } from './route'
@@ -77,6 +78,7 @@ function Screen() {
   if (!hasLibrary || choosingRoot.value) return <Onboarding step="root" />
   const r = route.value
   if (r.kind === 'paper') return <ReaderRoute id={r.id} />
+  if (r.kind === 'map') return <MapView />
   return <Library folderId={r.kind === 'library' ? r.folderId : undefined} />
 }
 
