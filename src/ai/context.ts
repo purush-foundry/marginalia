@@ -31,7 +31,7 @@ export const CITATION = /["“]([^"“”\n]{1,800}?)["”]\s*\(p\.\s*(\d+)\)/
 
 const SYSTEM_PROMPT = [
   'You are reading a research paper together with the user. They have selected a passage, equation or figure on one page and are asking about it.',
-  'The whole paper is provided page by page, each page inside <page n="…"> tags. The selected passage is repeated in a separate message with its page and marked between << and >>; when they selected a region instead, you are also given an image of it.',
+  'The whole paper is provided page by page, each page inside <page n="…"> tags. The selected passage is repeated in a separate content block with its page and marked between << and >>; when they selected a region instead, you are also given an image of it.',
   'References such as "Section 5", "Eq. 3" or "Fig. 2" must be resolved by reading that part of the paper, wherever it is.',
   'Support your answer by quoting the paper text verbatim in the form "quoted words" (p. N), where N is the page number. Quote only words that appear in the provided text, and keep quotes short.',
   'If the answer is not supported by the provided text, say so plainly. If you then add background from general knowledge, label it as such.',
@@ -94,7 +94,7 @@ function renderPaper(pages: PageText[], title: string | null, truncatedFrom: num
 
 /** The page-tagged paper text, identical for every thread on the paper; drops trailing pages (never `keepPage`) past PAPER_CONTEXT_MAX_CHARS. */
 export function paperBlock(paper: PageText[], title: string | null, keepPage?: number): { text: string; truncated: boolean; words: number } {
-  let used = 0
+  let used = paper.find((p) => p.page === keepPage)?.text.length ?? 0
   let firstDropped: number | null = null
   const kept = paper.filter((p) => {
     if (p.page === keepPage) return true

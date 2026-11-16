@@ -145,8 +145,23 @@ describe('whole-paper request', () => {
     expect(truncated).toBe(true)
     expect(text).toContain('<page n="5">')
     expect(text).not.toContain('<page n="4">')
-    expect(text).toContain('<truncated from_page="4"/>')
+    expect(text).toContain('<truncated from_page="3"/>')
     expect(text).toContain('<paper pages="5">')
+  })
+
+  it('keeps the total page text within the cap when the selected page is mid-paper', () => {
+    const big = Array.from({ length: 5 }, (_, i) => page('x'.repeat(200_000), i + 1))
+    const { text, truncated } = paperBlock(big, null, 3)
+    expect(truncated).toBe(true)
+    expect(text).toContain('<truncated from_page="4"/>')
+    expect(text).not.toContain('<page n="4">')
+    expect(text).toContain('<page n="3">')
+    expect((text.match(/x/g) ?? []).length).toBeLessThanOrEqual(600_000)
+  })
+
+  it('writes the title line only when there is a title', () => {
+    expect(paperBlock([page('a', 1)], 'My Title').text.startsWith('Paper: My Title\n<paper')).toBe(true)
+    expect(paperBlock([page('a', 1)], null).text).not.toContain('Paper:')
   })
 
   it('empty pages stay tagged', () => {
