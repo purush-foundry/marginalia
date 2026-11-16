@@ -4,6 +4,7 @@ import { GIST_MAX_CHARS } from '../config'
 import { useDraft } from '../lib/draft'
 import { paperHash, navigate } from '../app/route'
 import type { LinkRel } from '../types'
+import type { TopicChange } from './data'
 import type { MapEdge, MapGraph, MapNode, MapVerdict } from './model'
 
 const STATUS_LABEL = { unread: 'Unread', reading: 'Reading', done: 'Done' } as const
@@ -29,7 +30,7 @@ export interface CardProps {
   node: MapNode
   graph: MapGraph
   onGist(text: string): void
-  onTopics(ids: string[]): void
+  onTopics(change: TopicChange): void
   onLink(): void
   onPin(): void
   onUnpin(): void
@@ -77,7 +78,7 @@ export function Card(props: CardProps) {
   const addTopic = () => {
     const t = topic.trim()
     setTopic('')
-    if (t && !node.topics.includes(t)) props.onTopics([...node.topics, t])
+    if (t) props.onTopics({ add: t })
   }
 
   return (
@@ -106,7 +107,7 @@ export function Card(props: CardProps) {
         {node.topics.map((t) => (
           <span key={t} class="mg-map-chip">
             {t}
-            <button type="button" aria-label={`Remove ${t}`} onClick={() => props.onTopics(node.topics.filter((x) => x !== t))}>
+            <button type="button" aria-label={`Remove ${t}`} onClick={() => props.onTopics({ remove: t })}>
               ×
             </button>
           </span>

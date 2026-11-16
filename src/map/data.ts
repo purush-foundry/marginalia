@@ -11,6 +11,15 @@ export function withTopics(s: Sidecar, ids: string[], t: number): Sidecar {
   return { ...s, topics: { ids, updatedAt: t } }
 }
 
+export type TopicChange = { add: string } | { remove: string }
+
+// Returns the sidecar with one topic added or removed at stamp t, starting from `fallback` when it has no topics yet.
+export function withTopicChange(s: Sidecar, change: TopicChange, fallback: string[], t: number): Sidecar {
+  const ids = s.topics?.ids ?? fallback
+  if ('add' in change) return withTopics(s, ids.includes(change.add) ? ids : [...ids, change.add], t)
+  return withTopics(s, ids.filter((id) => id !== change.remove), t)
+}
+
 // Returns the sidecar pinned at the point, or unpinned (negative sentinel) when null.
 export function withPin(s: Sidecar, pin: { x: number; y: number } | null, t: number): Sidecar {
   return { ...s, pin: pin ? { x: pin.x, y: pin.y, updatedAt: t } : { x: -1, y: -1, updatedAt: t } }

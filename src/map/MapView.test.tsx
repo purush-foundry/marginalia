@@ -189,6 +189,28 @@ describe('MapView', () => {
     expect(lastSave('c')).toBeUndefined()
   })
 
+  it('two quick topic edits on the card keep both', async () => {
+    await mount({ a: ['vision'] })
+    await tap('a')
+    const field = () => root.querySelector<HTMLInputElement>('.mg-map-card input[aria-label="Add topic"]')!
+    const typeTopic = (t: string) => {
+      act(() => {
+        field().value = t
+        field().dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() => {
+        field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      })
+    }
+    typeTopic('x')
+    typeTopic('y')
+    await vi.waitFor(() => expect(lastSave('a')?.topics?.ids).toEqual(['vision', 'x', 'y']))
+    await vi.waitFor(() => expect(root.querySelector('.mg-map-card button[aria-label="Remove y"]')).not.toBeNull())
+    act(() => root.querySelector<HTMLButtonElement>('.mg-map-card button[aria-label="Remove vision"]')!.click())
+    typeTopic('z')
+    await vi.waitFor(() => expect(lastSave('a')?.topics?.ids).toEqual(['x', 'y', 'z']))
+  })
+
   it('a topic chip dims non-matching nodes without moving them', async () => {
     await mount({ a: ['vision'], b: ['language'], c: ['vision'] })
     const before = ['a', 'b', 'c'].map((id) => dot(id).getAttribute('cx'))

@@ -8,7 +8,7 @@ import { library, sidecarRevision } from '../drive/library'
 import { newId, now } from '../lib/ids'
 import type { LinkRel, ReadStatus, Sidecar } from '../types'
 import { Card } from './Card'
-import { updateSidecar, withGist, withLink, withoutLink, withPin, withTopics } from './data'
+import { updateSidecar, withGist, withLink, withoutLink, withPin, withTopicChange } from './data'
 import { useGestures } from './gestures'
 import { ArrowMarker, EdgeLayer, HullLayer, LabelLayer, NodeLayer, type Shade } from './Layers'
 import { anchoredTopics, type Positions } from './layout'
@@ -282,7 +282,7 @@ export function MapView() {
           node={sel}
           graph={graph}
           onGist={(text) => void edit(sel.pdfId, (s, t) => withGist(s, text, t))}
-          onTopics={(ids) => void edit(sel.pdfId, (s, t) => withTopics(s, ids, t))}
+          onTopics={(change) => void edit(sel.pdfId, (s, t) => withTopicChange(s, change, sel.topics, t))}
           onLink={startLink}
           onPin={() => pos[sel.pdfId] && void pinAt(sel.pdfId, pos[sel.pdfId])}
           onUnpin={() => void pinAt(sel.pdfId, null)}

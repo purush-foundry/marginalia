@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptySidecar, type PaperLink } from '../types'
-import { updateSidecar, withGist, withLink, withoutLink, withPin, withTopics } from './data'
+import { updateSidecar, withGist, withLink, withoutLink, withPin, withTopicChange, withTopics } from './data'
 
 const mocks = vi.hoisted(() => ({ loadSidecar: vi.fn(), saveSidecar: vi.fn() }))
 vi.mock('../drive/library', () => mocks)
@@ -15,6 +15,15 @@ describe('pure sidecar edits', () => {
     expect(withGist(base(), 'hi', 5).gist).toEqual({ text: 'hi', updatedAt: 5 })
     expect(withTopics(base(), ['a'], 6).topics).toEqual({ ids: ['a'], updatedAt: 6 })
     expect(withPin(base(), { x: 0.2, y: 0.3 }, 7).pin).toEqual({ x: 0.2, y: 0.3, updatedAt: 7 })
+  })
+
+  it('adds or removes one topic from the stored ids, else from the fallback', () => {
+    const tagged = withTopics(base(), ['a'], 1)
+    expect(withTopicChange(tagged, { add: 'b' }, ['n'], 2).topics).toEqual({ ids: ['a', 'b'], updatedAt: 2 })
+    expect(withTopicChange(tagged, { add: 'a' }, [], 2).topics!.ids).toEqual(['a'])
+    expect(withTopicChange(tagged, { remove: 'a' }, ['n'], 3).topics).toEqual({ ids: [], updatedAt: 3 })
+    expect(withTopicChange(base(), { add: 'b' }, ['n'], 4).topics).toEqual({ ids: ['n', 'b'], updatedAt: 4 })
+    expect(withTopicChange(base(), { remove: 'n' }, ['n', 'm'], 5).topics!.ids).toEqual(['m'])
   })
 
   it('unpins with a negative sentinel', () => {
