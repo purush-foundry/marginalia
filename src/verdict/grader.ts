@@ -52,6 +52,8 @@ export async function currentSkillHash(): Promise<string> {
   return hostSkillHash.value() ?? (await skillHash(SKILL_TEXT))
 }
 
+class HostGradeError extends Error {}
+
 // Grades with the host, falling back to direct when the host fails or is absent.
 async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> {
   const paper = await deps.paper(pdfId)
@@ -66,7 +68,8 @@ async function gradeWith(pdfId: string, deps: GraderDeps): Promise<VerdictNote> 
   }
   const direct = deps.direct()
   if (direct) return direct(paper)
-  throw hostError ?? new Error('No grader available: set an API key or pair a host')
+  if (hostError) throw new HostGradeError(messageOf(hostError), { cause: hostError })
+  throw new Error('No grader available: set an API key or pair a host')
 }
 
 const inFlight = new Map<string, Promise<VerdictNote>>()
@@ -139,7 +142,7 @@ async function remoteVerdict(pdfId: string): Promise<boolean> {
   }
 }
 
-// Handles one candidate; resolves true when another pass should follow.
+// Handles one candidate; resolves true when another pass should follow; a failed remote check or host-only grade ends the pass unrecorded.
 async function passOnce(deps: GraderDeps, gen: number): Promise<boolean> {
   if (gen !== generation || !settings.peek().gradeOnThisDevice || (!deps.host() && !deps.direct())) return false
   const [next, ...rest] = await candidates()
@@ -151,7 +154,7 @@ async function passOnce(deps: GraderDeps, gen: number): Promise<boolean> {
       await gradeAndSave(next, deps)
     }
   } catch (err) {
-    if (err instanceof RemoteCheckError) return false
+    if (err instanceof RemoteCheckError || err instanceof HostGradeError) return false
     gradeErrors.value = { ...gradeErrors.peek(), [next]: messageOf(err) }
   }
   return rest.length > 0
@@ -174,7 +177,7 @@ function schedulePass(deps: GraderDeps, gen: number): void {
       if (rerun && active) {
         rerun = false
         const { deps: liveDeps, gen: liveGen } = active
-        setTimeout(() => schedulePass(liveDeps, liveGen), 0)
+        queueMicrotask(() => schedulePass(liveDeps, liveGen))
       }
     })
 }

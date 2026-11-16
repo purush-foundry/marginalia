@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS, settings } from '../app/settings'
 import type { library } from '../drive/library'
 type LibraryIndex = NonNullable<typeof library.value>
@@ -36,15 +36,15 @@ vi.mock('./runner', async (orig) => ({
   paperInput: async (pdfId: string) => ({ pdfId, name: pdfId, title: null, pages: [], bytes: new ArrayBuffer(0) }),
 }))
 
-const host = vi.hoisted(() => ({ state: null as unknown, hostVerdict: vi.fn() }))
+const host = vi.hoisted(() => ({ state: null as unknown, hostVerdict: vi.fn(), probeHost: vi.fn() }))
 vi.mock('../agent/host', async () => {
   const { signal: sig } = await import('@preact/signals')
   host.state = sig({ status: 'off' })
-  return { hostState: host.state, hostVerdict: host.hostVerdict }
+  return { hostState: host.state, hostVerdict: host.hostVerdict, probeHost: host.probeHost }
 })
 
 import type { HostState } from '../agent/host'
-import { connectHostGrading } from './hostGrader'
+import { connectHostGrading as connectHost } from './hostGrader'
 import {
   canGrade,
   currentSkillHash,
@@ -55,7 +55,7 @@ import {
   outdatedPapers,
   regradeOutdated,
   setHostSkillHash,
-  startGrader,
+  startGrader as startLane,
   ungradedPapers,
   type GraderDeps,
 } from './grader'
@@ -80,14 +80,46 @@ function setPapers(papers: Record<string, string>, verdicts: string[] = []) {
 const paper = async (pdfId: string): Promise<PaperInput> => ({ pdfId, name: pdfId, title: null, pages: [], bytes: new ArrayBuffer(0) })
 const tick = () => new Promise((r) => setTimeout(r, 5))
 
+type Call = { id: string; resolve: (n?: VerdictNote) => void; reject: (e: Error) => void }
+const cleanups: (() => void)[] = []
+const allCalls: Call[] = []
+
+// Starts a grader that afterEach stops.
+function startGrader(deps?: GraderDeps): () => void {
+  const stop = startLane(deps)
+  cleanups.push(stop)
+  return stop
+}
+
+// Plugs the host grader in until afterEach unplugs it.
+function connectHostGrading(): () => void {
+  const unplug = connectHost()
+  cleanups.push(unplug)
+  return unplug
+}
+
 function deferredGrader() {
-  const calls: { id: string; resolve: (n?: VerdictNote) => void; reject: (e: Error) => void }[] = []
+  const calls: Call[] = []
   const grader = (p: PaperInput) =>
     new Promise<VerdictNote>((resolve, reject) => {
-      calls.push({ id: p.pdfId, resolve: (n = note()) => resolve(n), reject })
+      const call = { id: p.pdfId, resolve: (n = note()) => resolve(n), reject }
+      calls.push(call)
+      allCalls.push(call)
     })
   return { calls, grader }
 }
+
+// Stops every grader and resolves every deferred call until the lane is idle.
+afterEach(async () => {
+  for (const stop of cleanups.splice(0)) stop()
+  for (let seen = -1; seen !== allCalls.length; ) {
+    seen = allCalls.length
+    for (const call of allCalls) call.resolve()
+    await tick()
+  }
+  allCalls.length = 0
+  hostSig.value = { status: 'off' }
+})
 
 beforeEach(() => {
   lib.notes.clear()
@@ -98,6 +130,7 @@ beforeEach(() => {
   libSig.value = null
   settings.value = { ...DEFAULT_SETTINGS, gradeOnThisDevice: true, gradingSince: 0, anthropicApiKey: 'k' }
   setHostSkillHash(() => null)
+  host.probeHost.mockReset()
 })
 
 describe('startGrader', () => {
@@ -107,16 +140,13 @@ describe('startGrader', () => {
     const d = deferredGrader()
     const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
     const stop = startGrader(deps)
-    await tick()
-    expect(d.calls.map((c) => c.id)).toEqual([b])
+    await vi.waitFor(() => expect(d.calls.map((c) => c.id)).toEqual([b]))
     expect(grading.value).toBe(b)
     d.calls[0].resolve()
-    await tick()
-    expect(d.calls.map((c) => c.id)).toEqual([b, a])
+    await vi.waitFor(() => expect(d.calls.map((c) => c.id)).toEqual([b, a]))
     d.calls[1].resolve()
-    await tick()
-    expect(lib.saved).toEqual([b, a])
-    expect(grading.value).toBeNull()
+    await vi.waitFor(() => expect(lib.saved).toEqual([b, a]))
+    await vi.waitFor(() => expect(grading.value).toBeNull())
     stop()
   })
 
@@ -126,8 +156,9 @@ describe('startGrader', () => {
     setPapers({ [old]: '2026-01-01T00:00:00Z', [fresh]: '2026-02-01T00:00:00Z' })
     const d = deferredGrader()
     const stop = startGrader({ host: () => null, direct: () => d.grader, paper })
-    await tick()
-    d.calls[0]?.resolve()
+    await vi.waitFor(() => expect(d.calls).toHaveLength(1))
+    d.calls[0].resolve()
+    await vi.waitFor(() => expect(lib.saved).toEqual([fresh]))
     await tick()
     expect(d.calls.map((c) => c.id)).toEqual([fresh])
     expect(await ungradedPapers()).toContain(old)
@@ -157,7 +188,7 @@ describe('startGrader', () => {
       return note()
     }
     const stop = startGrader({ host: () => null, direct: () => direct, paper })
-    await tick()
+    await vi.waitFor(() => expect(lib.saved).toEqual([b]))
     libSig.value = { ...libSig.value! }
     await tick()
     expect(gradeErrors.value[a]).toBe('boom')
@@ -171,7 +202,7 @@ describe('startGrader', () => {
     const host = vi.fn(async () => note('host'))
     const direct = vi.fn(async () => note('direct'))
     const stop = startGrader({ host: () => host, direct: () => direct, paper })
-    await tick()
+    await vi.waitFor(() => expect(lib.saved).toEqual([a]))
     expect(host).toHaveBeenCalledTimes(1)
     expect(direct).not.toHaveBeenCalled()
     stop()
@@ -185,10 +216,30 @@ describe('startGrader', () => {
     })
     const direct = vi.fn(async () => note('direct'))
     const stop = startGrader({ host: () => host, direct: () => direct, paper })
-    await tick()
+    await vi.waitFor(() => expect(lib.saved).toEqual([a]))
     expect(direct).toHaveBeenCalledTimes(1)
     expect(gradeErrors.value[a]).toBeUndefined()
-    expect(lib.saved).toEqual([a])
+    stop()
+  })
+
+  it('a failing host with no direct grader ends the pass without recording errors and retries later', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const [a, b] = [uid(), uid()]
+    setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-02-01T00:00:00Z' })
+    let up = false
+    const host = vi.fn(async () => {
+      if (!up) throw new Error('host down')
+      return note('host')
+    })
+    const stop = startGrader({ host: () => host, direct: () => null, paper })
+    await vi.waitFor(() => expect(host).toHaveBeenCalledTimes(1))
+    await tick()
+    expect(host).toHaveBeenCalledTimes(1)
+    expect(gradeErrors.value).toEqual({})
+    up = true
+    libSig.value = { ...libSig.value! }
+    await vi.waitFor(() => expect(lib.saved).toEqual([a, b]))
+    expect(gradeErrors.value).toEqual({})
     stop()
   })
 
@@ -210,13 +261,12 @@ describe('one lane', () => {
     const d = deferredGrader()
     const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
     const stop = startGrader(deps)
-    await tick()
+    await vi.waitFor(() => expect(d.calls).toHaveLength(1))
     const manual = gradeNow(b, deps)
     await tick()
     expect(d.calls.map((c) => c.id)).toEqual([a])
     d.calls[0].resolve()
-    await tick()
-    expect(d.calls.map((c) => c.id)).toEqual([a, b])
+    await vi.waitFor(() => expect(d.calls.map((c) => c.id)).toEqual([a, b]))
     d.calls[1].resolve()
     await manual
     stop()
@@ -228,7 +278,7 @@ describe('one lane', () => {
     const d = deferredGrader()
     const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
     const stop = startGrader(deps)
-    await tick()
+    await vi.waitFor(() => expect(d.calls).toHaveLength(1))
     const manual = gradeNow(a, deps)
     d.calls[0].resolve()
     await manual
@@ -241,9 +291,10 @@ describe('one lane', () => {
     setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-02-01T00:00:00Z' })
     const d = deferredGrader()
     const stop = startGrader({ host: () => null, direct: () => d.grader, paper })
-    await tick()
+    await vi.waitFor(() => expect(d.calls).toHaveLength(1))
     stop()
     d.calls[0].resolve()
+    await vi.waitFor(() => expect(lib.saved).toHaveLength(1))
     await tick()
     expect(d.calls).toHaveLength(1)
   })
@@ -254,15 +305,14 @@ describe('one lane', () => {
     const d = deferredGrader()
     const deps: GraderDeps = { host: () => null, direct: () => d.grader, paper }
     const stop = startGrader(deps)
-    await tick()
+    await vi.waitFor(() => expect(d.calls).toHaveLength(1))
     stop()
     const stop2 = startGrader(deps)
     setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-04-01T00:00:00Z' })
     d.calls[0].resolve()
-    await tick()
-    expect(d.calls.map((c) => c.id)).toEqual([a, b])
+    await vi.waitFor(() => expect(d.calls.map((c) => c.id)).toEqual([a, b]))
     d.calls[1].resolve()
-    await tick()
+    await vi.waitFor(() => expect(lib.saved).toEqual([a, b]))
     stop2()
   })
 
@@ -273,6 +323,7 @@ describe('one lane', () => {
     vi.mocked(lib2.hasRemoteVerdict).mockRejectedValueOnce(new Error('signed out'))
     const direct = vi.fn(async () => note())
     const stop = startGrader({ host: () => null, direct: () => direct, paper })
+    await vi.waitFor(() => expect(lib2.hasRemoteVerdict).toHaveBeenCalledWith(a))
     await tick()
     expect(gradeErrors.value).toEqual({})
     expect(direct).not.toHaveBeenCalled()
@@ -332,32 +383,63 @@ describe('host grading', () => {
     const a = uid()
     setPapers({ [a]: '2026-03-01T00:00:00Z' })
     host.hostVerdict.mockResolvedValue(markdown)
-    const unplug = connectHostGrading()
-    const stop = startGrader()
+    connectHostGrading()
+    startGrader()
     await tick()
     expect(canGrade()).toBe(false)
     expect(host.hostVerdict).not.toHaveBeenCalled()
     hostSig.value = ready
     expect(canGrade()).toBe(true)
-    await tick()
+    await vi.waitFor(() => expect(lib.notes.get(a)).toBeDefined())
     expect(host.hostVerdict).toHaveBeenCalledWith(a, expect.objectContaining({ pdfId: a, name: a }))
     expect(lib.notes.get(a)).toMatchObject({ verdict: 'skim', oneLine: 'Fine', topics: ['a'], skill: 'hosthash', model: 'claude-host' })
     expect(await currentSkillHash()).toBe('hosthash')
     hostSig.value = { status: 'unreachable' }
     expect(canGrade()).toBe(false)
     expect(await currentSkillHash()).toBe(await skillHash(SKILL_TEXT))
-    stop()
-    unplug()
   })
 
   it('a host note that does not parse is a clear error', async () => {
     settings.value = { ...settings.value, anthropicApiKey: '' }
     const a = uid()
     host.hostVerdict.mockResolvedValue('not a note')
-    const unplug = connectHostGrading()
+    connectHostGrading()
     hostSig.value = ready
     await expect(gradeNow(a)).rejects.toThrow(/agent host's note could not be parsed/)
     expect(lib.saved).toEqual([])
-    unplug()
+    expect(host.probeHost).not.toHaveBeenCalled()
+  })
+
+  it('a host that dies mid-pass with no key records no errors, is probed, and grades once it is back', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const [a, b] = [uid(), uid()]
+    setPapers({ [a]: '2026-03-01T00:00:00Z', [b]: '2026-02-01T00:00:00Z' })
+    host.hostVerdict.mockRejectedValue(new TypeError('Failed to fetch'))
+    host.probeHost.mockImplementation(async () => (hostSig.value = { status: 'unreachable' }))
+    connectHostGrading()
+    startGrader()
+    hostSig.value = ready
+    await vi.waitFor(() => expect(host.probeHost).toHaveBeenCalled())
+    await tick()
+    expect(host.hostVerdict).toHaveBeenCalledTimes(1)
+    expect(gradeErrors.value).toEqual({})
+    expect(canGrade()).toBe(false)
+    host.hostVerdict.mockResolvedValue(markdown)
+    hostSig.value = ready
+    await vi.waitFor(() => expect(lib.saved).toEqual([a, b]))
+    expect(gradeErrors.value).toEqual({})
+  })
+
+  it('a host with no Claude credentials is not plugged in', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: '' }
+    const a = uid()
+    setPapers({ [a]: '2026-03-01T00:00:00Z' })
+    connectHostGrading()
+    startGrader()
+    hostSig.value = { status: 'ready', info: { ...ready.info, auth: 'none' } }
+    await tick()
+    expect(canGrade()).toBe(false)
+    expect(host.hostVerdict).not.toHaveBeenCalled()
+    expect(await currentSkillHash()).toBe(await skillHash(SKILL_TEXT))
   })
 })
