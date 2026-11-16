@@ -185,11 +185,13 @@ export function MapView() {
 
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {})
   onKey.current = (e) => {
-    const el = e.target as HTMLElement | null
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+    const el = e.target instanceof HTMLElement ? e.target : null
+    if (el && (el.matches('input, textarea, select') || el.isContentEditable)) {
       if (e.key === 'Escape') el.blur()
       return
     }
+    if (el?.closest('button, a') && e.key !== 'Escape') return
     if (e.key === '/') {
       e.preventDefault()
       search.current?.focus()

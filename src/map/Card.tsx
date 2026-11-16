@@ -1,5 +1,5 @@
 // Side card for the selected paper: gist, topics, links and the map actions.
-import { useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import { paperHash, navigate } from '../app/route'
 import type { LinkRel } from '../types'
 import type { MapEdge, MapGraph, MapNode, MapVerdict } from './model'
@@ -43,8 +43,35 @@ function VerdictChip({ verdict }: { verdict: MapVerdict }) {
   return <span class={`mg-map-verdict mg-map-verdict-${verdict}`}>{VERDICT_LABEL[verdict]}</span>
 }
 
+// A text field's draft that saves its trimmed text on blur and on unmount when it differs from the last saved text.
+function useDraft(initial: string, save: (text: string) => void) {
+  const [value, setValue] = useState(initial)
+  const text = useRef(initial)
+  const saved = useRef(initial)
+  const onSave = useRef(save)
+  onSave.current = save
+  const commit = () => {
+    const t = text.current.trim()
+    if (t === saved.current) return
+    saved.current = t
+    onSave.current(t)
+  }
+  useEffect(() => commit, [])
+  return {
+    value,
+    onInput: (e: { currentTarget: { value: string } }) => {
+      text.current = e.currentTarget.value
+      setValue(text.current)
+    },
+    onBlur: (e: { currentTarget: { value: string } }) => {
+      text.current = e.currentTarget.value
+      commit()
+    },
+  }
+}
+
 function LinkRow({ edge, self, graph, onEdit, onRemove }: { edge: MapEdge; self: string; graph: MapGraph; onEdit(note: string): void; onRemove(): void }) {
-  const [note, setNote] = useState(edge.note ?? '')
+  const note = useDraft(edge.note ?? '', onEdit)
   const out = edge.from === self
   const other = graph.nodes.find((n) => n.pdfId === (out ? edge.to : edge.from))
   return (
@@ -58,9 +85,7 @@ function LinkRow({ edge, self, graph, onEdit, onRemove }: { edge: MapEdge; self:
           type="text"
           aria-label="Link phrase"
           placeholder="Linking phrase"
-          value={note}
-          onInput={(e) => setNote(e.currentTarget.value)}
-          onBlur={(e) => e.currentTarget.value.trim() !== (edge.note ?? '') && onEdit(e.currentTarget.value.trim())}
+          {...note}
         />
         <button type="button" class="btn" aria-label="Delete link" onClick={onRemove}>
           Delete
@@ -72,7 +97,7 @@ function LinkRow({ edge, self, graph, onEdit, onRemove }: { edge: MapEdge; self:
 
 export function Card(props: CardProps) {
   const { node, graph } = props
-  const [gist, setGist] = useState(node.gist)
+  const gist = useDraft(node.gist, props.onGist)
   const [topic, setTopic] = useState('')
   const links = graph.edges.filter((e) => e.from === node.pdfId || e.to === node.pdfId)
 
@@ -101,9 +126,7 @@ export function Card(props: CardProps) {
         placeholder="Your one line on this paper"
         maxLength={GIST_MAX}
         rows={2}
-        value={gist}
-        onInput={(e) => setGist(e.currentTarget.value)}
-        onBlur={(e) => e.currentTarget.value.trim() !== node.gist && props.onGist(e.currentTarget.value.trim())}
+        {...gist}
       />
       {node.oneLine && <p class="mg-muted">{node.oneLine}</p>}
       <div class="mg-map-topics">

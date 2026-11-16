@@ -44,3 +44,31 @@ describe('updateSidecar', () => {
     expect(mocks.saveSidecar).toHaveBeenCalledWith('p', out)
   })
 })
+
+describe('updateSidecar on the same paper twice', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('keeps both edits when the second starts before the first has saved', async () => {
+    let stored = base()
+    mocks.loadSidecar.mockImplementation(async () => {
+      const snapshot = stored
+      await new Promise((r) => setTimeout(r, 10))
+      return snapshot
+    })
+    mocks.saveSidecar.mockImplementation((_id, s) => {
+      stored = s
+    })
+    await Promise.all([updateSidecar('p', (s) => withGist(s, 'g', 3)), updateSidecar('p', (s) => withTopics(s, ['t'], 4))])
+    expect(stored.gist).toEqual({ text: 'g', updatedAt: 3 })
+    expect(stored.topics).toEqual({ ids: ['t'], updatedAt: 4 })
+  })
+
+  it('runs the next edit after one that throws', async () => {
+    mocks.loadSidecar.mockResolvedValue(base())
+    const failed = updateSidecar('p', () => {
+      throw new Error('boom')
+    })
+    await expect(failed).rejects.toThrow('boom')
+    await expect(updateSidecar('p', (s) => withGist(s, 'g', 5))).resolves.toMatchObject({ gist: { text: 'g', updatedAt: 5 } })
+  })
+})

@@ -1,7 +1,7 @@
 import { render } from 'preact'
 import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { emptySidecar, type LibraryIndex, type Sidecar } from '../types'
+import { emptySidecar, type LibraryIndex, type PaperLink, type Sidecar } from '../types'
 
 const lib = vi.hoisted(() => ({ sidecars: {} as Record<string, Sidecar> }))
 vi.mock('../drive/library', async () => {
@@ -39,11 +39,15 @@ const TITLES: Record<string, string> = {
   c: 'Flow Matching For Generative Modeling',
 }
 
-function seed(topics: Record<string, string[]> = {}) {
+function seed(topics: Record<string, string[]> = {}, links: Record<string, PaperLink[]> = {}) {
   const papers: LibraryIndex['papers'] = {}
   for (const id of Object.keys(TITLES)) {
     papers[id] = { id, name: `${TITLES[id]}.pdf`, mimeType: 'application/pdf', parents: [], modifiedTime: '', version: '1' }
-    lib.sidecars[id] = { ...emptySidecar(id, `${id}.pdf`, 1), ...(topics[id] ? { topics: { ids: topics[id], updatedAt: 1 } } : {}) }
+    lib.sidecars[id] = {
+      ...emptySidecar(id, `${id}.pdf`, 1),
+      ...(topics[id] ? { topics: { ids: topics[id], updatedAt: 1 } } : {}),
+      ...(links[id] ? { links: links[id] } : {}),
+    }
   }
   ;(library as unknown as { value: LibraryIndex | null }).value = { rootId: 'r', rootName: 'r', folders: {}, papers, sidecars: {}, syncedAt: 0 }
 }
@@ -80,8 +84,8 @@ async function click(label: string) {
   await act(async () => button(label).click())
 }
 
-async function mount(topics?: Record<string, string[]>) {
-  seed(topics)
+async function mount(topics?: Record<string, string[]>, links?: Record<string, PaperLink[]>) {
+  seed(topics, links)
   await act(async () => render(<MapView />, root))
   await vi.waitFor(() => expect(root.querySelectorAll('circle.mg-map-dot')).toHaveLength(3))
 }
@@ -111,6 +115,38 @@ describe('MapView', () => {
       area.blur()
     })
     await vi.waitFor(() => expect(lastSave('a')?.gist).toEqual({ text: 'the transformer', updatedAt: expect.any(Number) }))
+  })
+
+  it('saves a typed gist when another node is tapped without a blur', async () => {
+    await mount()
+    await tap('a')
+    await act(async () => {
+      const area = root.querySelector<HTMLTextAreaElement>('.mg-map-card textarea')!
+      area.value = 'the transformer'
+      area.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await tap('b')
+    await vi.waitFor(() => expect(lastSave('a')?.gist).toEqual({ text: 'the transformer', updatedAt: expect.any(Number) }))
+  })
+
+  it('saves a typed link phrase when another node is tapped without a blur', async () => {
+    await mount({}, { a: [{ kind: 'link', id: 'l1', to: 'b', rel: 'related', createdAt: 1, updatedAt: 1 }] })
+    await tap('a')
+    await act(async () => {
+      const phrase = root.querySelector<HTMLInputElement>('.mg-map-card input[aria-label="Link phrase"]')!
+      phrase.value = 'same benchmark'
+      phrase.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await tap('c')
+    await vi.waitFor(() => expect(lastSave('a')?.links).toEqual([expect.objectContaining({ id: 'l1', note: 'same benchmark' })]))
+  })
+
+  it('does not save an unchanged gist when the card closes', async () => {
+    await mount()
+    await tap('a')
+    await tap('b')
+    await act(async () => void (await new Promise((r) => setTimeout(r, 0))))
+    expect(lastSave('a')).toBeUndefined()
   })
 
   it('stores a directed link on the first paper', async () => {
@@ -191,6 +227,39 @@ describe('MapView', () => {
     })
     const opacity = (id: string) => dot(id).closest('g.mg-map-node')!.getAttribute('opacity')
     expect(['a', 'b', 'c'].map(opacity)).toEqual(['0.15', '0.15', '1'])
+  })
+
+  it('Enter, arrows and l on a focused button stay with the button', async () => {
+    await mount()
+    await tap('a')
+    const hash = location.hash
+    const neighbours = button('Neighbours')
+    neighbours.focus()
+    for (const key of ['Enter', 'ArrowRight', 'l']) {
+      await act(async () => void neighbours.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })))
+    }
+    expect(location.hash).toBe(hash)
+    expect(root.querySelector('.mg-map-hint')).toBeNull()
+    expect(root.querySelector('.mg-map-card h2')!.textContent).toBe(TITLES.a)
+  })
+
+  it('a held modifier key does not start link mode', async () => {
+    await mount()
+    await tap('a')
+    for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
+      await act(async () => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', [mod]: true })))
+    }
+    expect(root.querySelector('.mg-map-hint')).toBeNull()
+  })
+
+  it('Esc on a focused button still cancels link mode', async () => {
+    await mount()
+    await tap('a')
+    await click('Link')
+    const cancel = button('Cancel')
+    cancel.focus()
+    await act(async () => void cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(root.querySelector('.mg-map-hint')).toBeNull()
   })
 
   it('Esc leaves link mode and brings the card back', async () => {

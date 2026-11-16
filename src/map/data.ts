@@ -28,9 +28,17 @@ export function withoutLink(s: Sidecar, id: string, t: number): Sidecar {
   return { ...s, links: (s.links ?? []).map((l) => (l.id === id ? { ...l, deleted: true, updatedAt: t } : l)) }
 }
 
-/** Loads, edits and saves a sidecar that may not be open in a store. */
-export async function updateSidecar(pdfId: string, edit: (s: Sidecar) => Sidecar): Promise<Sidecar> {
-  const next = edit(await loadSidecar(pdfId))
-  await saveSidecar(pdfId, next)
-  return next
+const queues = new Map<string, Promise<unknown>>()
+
+/** Loads, edits and saves a sidecar that may not be open in a store; edits to one paper run one after another. */
+export function updateSidecar(pdfId: string, edit: (s: Sidecar) => Sidecar): Promise<Sidecar> {
+  const run = (queues.get(pdfId) ?? Promise.resolve()).then(async () => {
+    const next = edit(await loadSidecar(pdfId))
+    saveSidecar(pdfId, next)
+    return next
+  })
+  const tail = run.catch(() => undefined)
+  queues.set(pdfId, tail)
+  void tail.then(() => queues.get(pdfId) === tail && queues.delete(pdfId))
+  return run
 }
