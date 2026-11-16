@@ -1010,9 +1010,38 @@ describe('Reader agent', () => {
     )
     expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
 
-    await act(async () => pointerDown(document.body))
+    await act(async () => pointerDown(root.querySelector('.mg-term textarea')!))
     expect(button('Green')).toBeNull()
     expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
+  })
+
+  test('a selection made before Agent is clicked is attached, and closing the terminal drops it', async () => {
+    host.hostState.value = READY
+    const props = await open()
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'Attention', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => pointerDown(button('Agent')!))
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term-attach')?.textContent).toContain('“Attention” p. 1')
+
+    await act(async () => root.querySelector<HTMLButtonElement>('.mg-term-close')!.click())
+    expect(root.querySelector('.mg-term')).toBeNull()
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term')).not.toBeNull()
+    expect(root.querySelector('.mg-term-attach')).toBeNull()
+  })
+
+  test('a selection dismissed elsewhere is not attached to a terminal opened later', async () => {
+    host.hostState.value = READY
+    const props = await open()
+    await act(async () =>
+      props.onSelection({ page: 1, boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }], text: 'Attention', endRect: new DOMRect(100, 300, 40, 16), kind: 'text' }),
+    )
+    await act(async () => pointerDown(document.body))
+    await act(async () => button('Agent')!.click())
+    expect(root.querySelector('.mg-term')).not.toBeNull()
+    expect(root.querySelector('.mg-term-attach')).toBeNull()
   })
 
   test('an agent thread opened from the sidebar with no host mounts the read-only terminal', async () => {

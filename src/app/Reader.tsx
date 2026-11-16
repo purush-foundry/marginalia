@@ -562,6 +562,15 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
     if (barText && barPage) setAttach({ text: barText, page: barPage })
   }, [barText, barPage])
 
+  // Drops the attachment on any press outside the terminal and its toolbar button.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.mg-term-wrap, .mg-toolbar button[aria-label="Agent"]')) setAttach(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [])
+
   const toNotes = (page: number, box: Box) => {
     const shown = showNotes
     void (async () => {
@@ -851,7 +860,10 @@ function ReaderView({ pdfId, loaded }: { pdfId: string; loaded: Loaded }) {
               attach={attach}
               live={hostState.value.status === 'ready'}
               onCite={onCite}
-              onClose={() => setAgent(null)}
+              onClose={() => {
+                setAgent(null)
+                setAttach(null)
+              }}
             />
           </div>
         )}
