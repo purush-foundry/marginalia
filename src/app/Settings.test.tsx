@@ -3,16 +3,25 @@ import { act } from 'preact/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { settings } from './settings'
 
+const mocks = vi.hoisted(() => ({
+  ungraded: ['a', 'b', 'c'],
+  outdated: ['d', 'e'],
+  gradeUngraded: vi.fn(),
+  regradeOutdated: vi.fn(),
+  showToast: vi.fn(),
+  canGrade: vi.fn(() => false),
+}))
+vi.mock('./ui', async (orig) => ({ ...(await orig<typeof import('./ui')>()), showToast: mocks.showToast }))
 vi.mock('../verdict/grader', async () => {
   const { signal } = await import('@preact/signals')
   return {
-    grading: signal(null),
-    canGrade: () => true,
+    grading: signal<string | null>(null),
+    canGrade: mocks.canGrade,
     currentSkillHash: async () => 'abc123',
-    ungradedPapers: async () => ['a', 'b', 'c'],
-    outdatedPapers: async () => ['d', 'e'],
-    gradeUngraded: vi.fn(),
-    regradeOutdated: vi.fn(),
+    ungradedPapers: async () => mocks.ungraded,
+    outdatedPapers: async () => mocks.outdated,
+    gradeUngraded: mocks.gradeUngraded,
+    regradeOutdated: mocks.regradeOutdated,
   }
 })
 import { Settings } from './Settings'
@@ -27,6 +36,7 @@ afterEach(() => {
   act(() => render(null, root))
   root.remove()
   vi.unstubAllGlobals()
+  mocks.showToast.mockReset()
   settings.value = { ...settings.value, anthropicApiKey: '' }
 })
 
@@ -90,7 +100,43 @@ describe('Settings', () => {
     const labels = [...root.querySelectorAll('label')].map((l) => l.textContent ?? '')
     expect(labels.some((t) => t.startsWith('Grade new papers on this device'))).toBe(true)
     await vi.waitFor(() => expect(root.textContent).toContain('Skill abc123 · 3 ungraded · 2 from an older skill'))
-    expect(button('Grade 3 ungraded').disabled).toBe(false)
+    expect(button('Grade 3 ungraded')).toBeTruthy()
     expect(button('Regenerate 2 outdated')).toBeTruthy()
+  })
+
+  test('the grading buttons are disabled without a runner and enable when a key is added', async () => {
+    await act(async () => render(<Settings />, root))
+    await vi.waitFor(() => expect(button('Grade 3 ungraded')).toBeTruthy())
+    expect(button('Grade 3 ungraded').disabled).toBe(true)
+    expect(button('Regenerate 2 outdated').disabled).toBe(true)
+    await act(async () => {
+      settings.value = { ...settings.value, anthropicApiKey: 'sk-ant-x' }
+    })
+    expect(button('Grade 3 ungraded').disabled).toBe(false)
+    expect(button('Regenerate 2 outdated').disabled).toBe(false)
+  })
+
+  test('the buttons run their jobs and toast the count', async () => {
+    settings.value = { ...settings.value, anthropicApiKey: 'sk-ant-x' }
+    mocks.gradeUngraded.mockResolvedValue(3)
+    mocks.regradeOutdated.mockResolvedValue(1)
+    await act(async () => render(<Settings />, root))
+    await vi.waitFor(() => expect(button('Grade 3 ungraded')).toBeTruthy())
+    await act(async () => button('Grade 3 ungraded').click())
+    expect(mocks.gradeUngraded).toHaveBeenCalled()
+    expect(mocks.showToast).toHaveBeenCalledWith('Graded 3 papers')
+    await act(async () => button('Regenerate 2 outdated').click())
+    expect(mocks.showToast).toHaveBeenCalledWith('Graded 1 paper')
+  })
+
+  test('a button is hidden when its count is zero', async () => {
+    mocks.ungraded = []
+    mocks.outdated = ['d']
+    await act(async () => render(<Settings />, root))
+    await vi.waitFor(() => expect(root.textContent).toContain('0 ungraded · 1 from an older skill'))
+    expect(button('Grade 0 ungraded')).toBeUndefined()
+    expect(button('Regenerate 1 outdated')).toBeTruthy()
+    mocks.ungraded = ['a', 'b', 'c']
+    mocks.outdated = ['d', 'e']
   })
 })

@@ -242,6 +242,7 @@ function ClaudeSection() {
 function GradingControls() {
   const [counts, setCounts] = useState<{ hash: string; ungraded: number; outdated: number } | null>(null)
   const busy = grading.value
+  const runnable = Boolean(settings.value.anthropicApiKey) || canGrade()
   const revision = sidecarRevision.value
   useEffect(() => {
     let live = true
@@ -260,7 +261,7 @@ function GradingControls() {
       (n) => showToast(`Graded ${n} ${n === 1 ? 'paper' : 'papers'}`),
       (err: unknown) => showToast(err instanceof Error ? err.message : String(err)),
     )
-  const disabled = busy !== null || !canGrade()
+  const disabled = busy !== null || !runnable
   return (
     <>
       <Toggle label="Grade new papers on this device" field="gradeOnThisDevice" />
