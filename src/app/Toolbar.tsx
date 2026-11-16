@@ -1,4 +1,4 @@
-// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes (a Notes toggle below 700 px), undo/redo of the active pane, night, sidebar, threads, export.
+// Reader toolbar: back, title or Snip hint, Snip, Paper · Both · Notes (a Notes toggle below 700 px), undo/redo of the active pane, night, sidebar, agent, threads, export.
 import type { ReadonlySignal, Signal } from '@preact/signals'
 import { Icon, type IconName } from './icons'
 import type { NotesLayout } from './settings'
@@ -26,6 +26,8 @@ export interface ToolbarProps {
   onToggleNight(): void
   onToggleSidebar(): void
   onThreads(): void
+  /** Opens the agent terminal; the button shows only when this is given. */
+  onAgent?: () => void
   onExport(): void
 }
 
@@ -101,6 +103,7 @@ export function Toolbar(props: ToolbarProps) {
         <ToolButton icon="redo" label="Redo" disabled={!history.canRedo.value} onClick={() => history.redo()} />
         <ToolButton icon="moon" label="Night mode" pressed={props.nightMode} onClick={props.onToggleNight} />
         <ToolButton icon="sidebar" label="Sidebar" pressed={props.sidebarOpen} onClick={props.onToggleSidebar} />
+        {props.onAgent && <ToolButton icon="terminal" label="Agent" onClick={props.onAgent} />}
         <button type="button" class="btn mg-tool" aria-label="Ask threads" title="Ask threads" onClick={props.onThreads}>
           <Icon name="chat" />
           {props.threadCount > 0 && <span class="mg-count">{props.threadCount}</span>}

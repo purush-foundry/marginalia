@@ -1,4 +1,4 @@
-// Reader sidebar: outline, highlights with a colour filter, Ask threads, and the paper's done toggle.
+// Reader sidebar: outline, highlights with a colour filter, Ask and agent threads, and the paper's done toggle.
 import { useEffect, useState } from 'preact/hooks'
 import type { AnnotationStore } from '../annot/store'
 import type { OutlineItem, PdfDoc } from '../pdf/document'
@@ -28,6 +28,11 @@ const TABS: Array<{ id: SidebarTab; label: string }> = [
 function excerpt(text: string, max = 140): string {
   const t = text.replace(/\s+/g, ' ').trim()
   return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t
+}
+
+/** True for a whole-paper thread held by the agent terminal. */
+export function isAgentThread(t: Thread): boolean {
+  return t.anchor.page === 0 && t.model === 'agent'
 }
 
 export function firstBox(h: Highlight): Box {
@@ -116,11 +121,14 @@ function ThreadsTab({ store, onOpen }: { store: AnnotationStore; onOpen(t: Threa
       {threads.map((t) => (
         <li key={t.id}>
           <button type="button" class="mg-row" onClick={() => onOpen(t)}>
-            <Icon name="chat" />
+            <Icon name={isAgentThread(t) ? 'terminal' : 'chat'} />
             <span class="mg-hl-body">
-              <span>{t.anchor.text ? excerpt(t.anchor.text, 100) : `Area on p.${t.anchor.page}`}</span>
+              <span>
+                {isAgentThread(t) ? 'Whole paper · agent' : t.anchor.text ? excerpt(t.anchor.text, 100) : `Area on p.${t.anchor.page}`}
+              </span>
               <span class="mg-muted">
-                p.{t.anchor.page} · {t.messages.length} message{t.messages.length === 1 ? '' : 's'}
+                {isAgentThread(t) ? '' : `p.${t.anchor.page} · `}
+                {t.messages.length} message{t.messages.length === 1 ? '' : 's'}
               </span>
             </span>
           </button>
