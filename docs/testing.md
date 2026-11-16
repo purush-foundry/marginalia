@@ -193,6 +193,27 @@ v3 Phase B added:
 - `src/pdf/Viewer.test.tsx` — a lasso press off the text collapses a text selection and the bar's
   selection is reported gone.
 
+What v4 added (`npm run host:check` typechecks the host; its tests run with the rest):
+
+- `src/ai/context.test.ts` — the whole-paper block for Ask: page tags, the cap on the total
+  including the selected page, and which pages are dropped first.
+- `src/verdict/note.test.ts`, `skill.test.ts`, `runner.test.ts` — the note parses and serialises
+  without losing quoted values, the skill hash, and the direct grader's request and checks.
+- `src/verdict/grader.test.ts` — new papers graded newest first, one at a time; failures recorded
+  once; the host preferred, a host failure falling back to direct without an error; the host
+  grading when it is ready with no API key, and a host note that does not parse is a clear error.
+- `src/verdict/VerdictTab.test.tsx` — the note, Regenerate, the outdated notice, Grade now when a
+  runner appears, and the gist field saving on blur and on close.
+- `src/drive/library.test.ts`, `api.test.ts` — `.worth-reading.md` companions upload, pull and
+  merge; a clean device takes a hand edit from Drive.
+- `src/map/*.test.ts(x)` — sidecar map fields and their merge, the deterministic layout, the
+  viewport maths, the graph with each paper's verdict, and the view: card, gist, links, pins,
+  filters and search.
+- `src/agent/*.test.ts(x)`, `src/lib/sse.test.ts` — the host client's pairing and probe states,
+  SSE parsing, the terminal's turns, tool lines, cost footer, slash commands and saved threads.
+- `host/src/*.test.ts` — SDK messages to events, SSE framing, bearer and CORS checks, the read and
+  write fence, sessions, and verdict note checks.
+
 ## Checked in headless Chrome (not on a device)
 
 Against `dist/` served under `/marginalia/`, with a seeded library and cached `attention.pdf`:
@@ -329,3 +350,27 @@ Not yet run; do these before calling v1 done.
 - [ ] On the laptop: select PDF text, then click in the PDF margin; the selection and its bar go.
 - [ ] Thumbnails: long-press-drag on the iPad reorders without scrolling the strip.
 - [ ] A rectangle drawn with draw-and-hold has straight edges and sharp corners.
+
+### v4
+
+- [ ] The first **Connect** in Settings → Agent host on the laptop shows Chrome's prompt to reach
+      this device; after allowing it the section reads Connected with the model and skill, and a
+      reload connects without asking again.
+- [ ] Grade a paper from the iPad (drop a new PDF in the folder, or **Grade now** in the Verdict
+      tab); after the laptop's next sync the note shows in its library chip and Verdict tab, and
+      `<paper>.worth-reading.md` sits beside the PDF in Drive.
+- [ ] Edit that `.worth-reading.md` by hand in Drive; the edit shows on a device after its next
+      sync.
+- [ ] With the host paired, a new paper is graded by the host (the note's model is the host's);
+      stop the host and the next paper is graded with the API key.
+- [ ] On the laptop, **Agent** opens the terminal: a turn streams text, tool lines with their
+      summaries, and the cost footer; Esc stops a running turn.
+- [ ] `/clear` starts a new session; close the terminal, open the saved agent thread from Threads,
+      and the conversation carries on where it was.
+- [ ] Map on the iPad: pan and pinch zoom; press and hold a paper then drag to pin it; link two
+      papers with a phrase; type a gist, tap another paper, and the gist is still there when you
+      come back.
+- [ ] The gist typed in the map shows in the reader's Verdict tab as **Your gist**, and the other
+      way round.
+- [ ] Settings → Claude shows **Grade N ungraded** for the back catalogue and grades it; after the
+      skill changes, **Regenerate M outdated** rewrites the older notes.

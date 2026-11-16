@@ -516,3 +516,36 @@ graded from the iPad appears on the laptop; the terminal on a 13" laptop; the ma
 - The SSE keep-alive interval and reconnect backoff.
 - How the Library decides "newest first" when `modifiedTime` ties.
 - Markdown renderer additions needed for the note (tables stay unsupported).
+
+## Decisions during the build
+
+- **Read fence is an allowlist.** The agent reads only the paper's folder, the repo's `skills/` and
+  owner folders (`--read`, else `MARGINALIA_READ_DIRS`, else `~/Documents`, `~/Desktop`,
+  `~/ToRead`), with the private-path denylist applied inside and unknown tools denied; a denylist
+  alone was bypassable.
+- **Grep roots are the paper's folder and `skills/` only.** The CLI's Grep always searches hidden
+  files, so in an owner folder it would return `.env` and key contents; owner folders stay
+  reachable through Glob and Read, which check each file.
+- **`--allow-bash` runs Bash unfenced and auto-approved.** It is an explicit opt-in; the host warns
+  at start and the README states the consequences.
+- **Automatic grading covers new papers only.** Papers older than the device's `gradingSince` are
+  the back catalogue, graded from Settings on request, so the first v4 launch does not grade the
+  whole library.
+- **A clean device takes the Drive copy of a note (`preferRemoteWhenClean`).** Merging on equal or
+  older `generated` kept the local copy, so a hand edit in Drive never showed; a dirty local note
+  still merges by `generated`.
+- **The host's skill hash is authoritative while it is connected.** Notes compare against it and
+  host-graded notes are stamped with it; without the host the bundled skill's hash is used.
+- **An ended session is reopened by resuming its id.** The server treats an ended `Session` as
+  absent, so closing and reopening the panel restores the conversation instead of needing
+  `/clear`.
+- **Agent threads carry `Thread.session`.** The saved thread holds the SDK session id the host
+  was given, so opening the thread again resumes that session.
+- **`/paper` sends a re-read instruction.** The agent re-reads the paper from its folder instead of
+  the browser sending 600k characters through a message.
+- **Map search fits on Enter.** Typing dims the non-matches and Enter fits all matches, rather than
+  zooming to the best hit, because the match set is the useful unit.
+- **Authors are not on the map card.** `MapNode` has no authors; the card already carries title,
+  year and verdict.
+- **Layout constants were revised** (start radius, `k` cap, gravities); §2 already carries the
+  built values.
